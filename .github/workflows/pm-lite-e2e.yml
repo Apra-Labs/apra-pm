@@ -82,19 +82,25 @@ jobs:
           done
           echo "skill + 4 agents present under $CFG"
 
-      - name: Pre-flight - CLI auth + skill visible
+      # The capability pm-lite lives on: dispatching a subagent headlessly. This is
+      # exactly what stalled agy (subagent invoke -> timeout). Catch it here in ~3 min
+      # instead of a full-sprint timeout; a clean return also proves start + auth.
+      - name: Pre-flight - subagent dispatch works
         shell: bash
         run: |
           P='${{ steps.prov.outputs.provider }}'
-          PROMPT="Reply with exactly: PMLITE-READY. Then list your available skills separated by commas."
+          PROMPT="Dispatch ONE subagent (use your agent/subagent/task mechanism) whose only job is to reply with the exact text SUBAGENT-OK. Wait for it to finish, then print its reply and the text PMLITE-READY. Do nothing else."
           case "$P" in
-            claude) out=$(claude -p "$PROMPT" --model haiku 2>&1) ;;
-            gemini) out=$(gemini -p "$PROMPT" --model auto --skip-trust 2>&1) ;;
-            agy)    out=$(agy -p "$PROMPT" --dangerously-skip-permissions 2>&1) ;;
+            claude) cmd=(claude -p "$PROMPT" --permission-mode acceptEdits) ;;
+            gemini) cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
+            agy)    cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
           esac
+          out=$(timeout 180 "${cmd[@]}" 2>&1); rc=$?
           echo "$out"
-          echo "$out" | grep -q "PMLITE-READY" || { echo "::error::$P did not respond -- start/auth issue"; exit 1; }
-          echo "$out" | grep -qi "pm-lite"      || echo "::warning::$P did not list the pm-lite skill"
+          if [ $rc -eq 124 ]; then echo "::error::$P hung dispatching a subagent (timeout) -- pm-lite cannot run on this provider/config"; exit 1; fi
+          echo "$out" | grep -q "PMLITE-READY" || { echo "::error::$P produced no response -- start/auth issue"; exit 1; }
+          echo "$out" | grep -q "SUBAGENT-OK"  || { echo "::error::$P responded but the subagent never returned -- subagent dispatch broken"; exit 1; }
+          echo "$P: subagent dispatch OK"
 
       - name: Run e2e
         shell: bash
