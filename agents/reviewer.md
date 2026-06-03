@@ -21,7 +21,7 @@ Review scope covers all phases from Phase 1 through the current phase -- not jus
 3. Read PLAN.md, requirements.md, and any design docs in the worktree -- verify code aligns with requirements intent, not just plan mechanics
 4. `git diff` the relevant commits against the base branch
 5. Check each completed task against its "done" criteria in PLAN.md
-6. Run the project build step and linter check first, then run ALL tests (unit, integration, e2e). All of them must pass -- if any fail, CHANGES NEEDED.
+6. Confirm the working tree is clean first: `git status --porcelain` must be empty. If it is not, the branch is incomplete -- uncommitted or untracked files (list them) -- so CHANGES NEEDED. A clean tree means your tests run on exactly the committed state. Then run the project build step and linter check, then run ALL tests (unit, integration, e2e). All of them must pass -- if any fail, CHANGES NEEDED.
 7. If the repository has a remote with CI, verify CI is green for the latest commit; if CI is red, CHANGES NEEDED regardless of code quality. (A local-only repo has no CI -- rely on the suite you ran in step 6.)
 8. Check for regressions in previously approved phases
 

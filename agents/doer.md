@@ -29,7 +29,11 @@ Tasks with type "verify" are checkpoints. When you reach one:
 3. Update progress.json with test results and issues found
 4. Commit your work. If the repository has a remote, push it; otherwise the shared
    worktree object database already exposes your commits to the reviewer.
-5. STOP -- do not continue. Report status so the orchestrator can review.
+5. Run `git status --porcelain`. It must be empty. A non-empty result means you left
+   uncommitted or untracked files -- commit everything the work needs (or remove
+   genuine scratch) until the tree is clean. The reviewer tests the committed state,
+   so anything left uncommitted is missing from the review. A clean tree is part of done.
+6. STOP -- do not continue. Report status so the orchestrator can review.
 
 ## Branch Hygiene
 The orchestrator created your branch and worktree. If asked to rebase on the base

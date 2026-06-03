@@ -7,8 +7,17 @@ progress, review); beads holds the tracking.
 ## One project, one DB
 
 An orchestrator manages one project, so there is one beads DB for that project and
-one **epic per sprint**. Run `bd` from the project repo root (`bd init` once,
-idempotent). Tasks reference their track via assignee or label.
+one **epic per sprint**. The DB is a local `.beads/` at the **base checkout** (the
+orchestrator's repo root) -- not inside any track worktree. The orchestrator runs
+every `bd` command from there and is the DB's only writer: agents never touch beads;
+they write `progress.json` on their branch, and the orchestrator syncs that into
+beads.
+
+The DB persists on disk across sessions, so it survives without being committed.
+Committing it is optional and only shares issue history across machines; if you do,
+commit it on the base or integration branch -- keeping it off the track feature
+branches so parallel tracks share one DB. Tasks reference their track via assignee
+or label.
 
 ## Lifecycle hooks (not optional)
 

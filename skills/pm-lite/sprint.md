@@ -112,8 +112,13 @@ track runs its OWN full pipeline (`planner` -> `plan-reviewer` -> `doer` ->
    beads, every task carries its track (assignee or label) so the tree shows which
    track owns what.
 3. **Integrate.** When a track is APPROVED, merge its branch into the integration
-   base branch (never the trunk): `git -C <repo> merge <track-branch>`. Notify
-   dependent tracks to rebase on the updated base.
+   base branch (never the trunk): `git -C <repo> merge <track-branch>`. Merge code
+   only -- the per-track tracking files (`PLAN.md`, `progress.json`, `feedback.md`,
+   `requirements.md`, `design.md`) are sprint scaffolding for that one track and stay
+   on its branch. Drop them before the merge (e.g. `git rm` on the track branch, or
+   resolve the merge in favour of removing them) so two tracks never collide on a
+   same-named tracking file. beads holds the cross-track record, so nothing durable
+   is lost. Notify dependent tracks to rebase on the updated base.
 4. **Finish.** When all tracks are merged: raise one PR from the integration branch,
    confirm CI, remove all worktrees.
 

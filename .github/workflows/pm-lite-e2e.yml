@@ -1,52 +1,60 @@
 name: pm-lite-e2e
 
-# Drives the pm-lite skill headless against the fleet-e2e-toy repo, one suite per
-# provider/OS. Provider CLIs (claude/gemini/agy) and their auth are not available on
-# stock GitHub runners, so this targets self-hosted runners that already have the
-# CLI installed and authenticated. Manual trigger.
+# Drives the pm-lite skill headless against the fleet-e2e-toy repo, one suite per run.
+# Runs on the same self-hosted runners as the fleet e2e (labels: self-hosted +
+# fleet-windows / fleet-linux / fleet-macos), which already have the provider CLI
+# installed and authenticated, plus node, git, and beads (bd). Manual trigger.
+#
+# Secrets: none. The provider CLI auth lives on the runner, the sprint is local-only
+# (no push, no PR), and the toy is cloned read-only using the runner's git access.
 
 on:
   workflow_dispatch:
     inputs:
-      provider:
-        description: claude | gemini | agy
-        required: true
-        default: claude
-        type: choice
-        options: [claude, gemini, agy]
       suite:
-        description: optional single suite id (e.g. s1.2); blank = all suites for this host OS
-        required: false
-        default: ""
+        description: 'Suite to run. s1.x = Claude, s7.x = Gemini, s8.x = AGY; .1/.2/.3 = Windows/Linux/macOS.'
+        required: true
+        type: choice
+        options: [s1.1, s1.2, s1.3, s7.1, s7.2, s7.3, s8.1, s8.2, s8.3]
 
 jobs:
   e2e:
-    # Self-hosted runner labelled with the provider; it must have the CLI + auth,
-    # plus git, node 20+, and beads (bd) on PATH.
-    runs-on: [self-hosted, "pm-lite-${{ inputs.provider }}"]
+    name: 'pm-lite e2e - ${{ inputs.suite }}'
+    env:
+      GEMINI_CLI_TRUST_WORKSPACE: "true"
+    runs-on:
+      - self-hosted
+      - ${{ endsWith(inputs.suite, '.1') && 'fleet-windows'
+         || endsWith(inputs.suite, '.2') && 'fleet-linux'
+         || 'fleet-macos' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: Derive provider from suite
+        id: prov
+        shell: bash
+        run: |
+          case "${{ inputs.suite }}" in
+            s1*) P=claude ;;
+            s7*) P=gemini ;;
+            s8*) P=agy ;;
+            *) echo "::error::unknown suite ${{ inputs.suite }}"; exit 1 ;;
+          esac
+          echo "provider=$P" >> "$GITHUB_OUTPUT"
 
       - name: Install pm-lite skill
         shell: bash
-        run: node install.mjs --llm "${{ inputs.provider }}" --force
+        run: node install.mjs --llm "${{ steps.prov.outputs.provider }}" --force
 
       - name: Run e2e
         shell: bash
-        run: |
-          ARGS="--provider ${{ inputs.provider }}"
-          if [ -n "${{ inputs.suite }}" ]; then ARGS="--suite ${{ inputs.suite }}"; fi
-          node e2e/run-e2e.mjs $ARGS
+        run: node e2e/run-e2e.mjs --suite "${{ inputs.suite }}"
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pm-lite-e2e-${{ inputs.provider }}
+          name: pm-lite-e2e-${{ inputs.suite }}
           path: e2e-results/
           if-no-files-found: ignore

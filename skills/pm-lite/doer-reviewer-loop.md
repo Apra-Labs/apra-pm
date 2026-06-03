@@ -14,8 +14,10 @@ PLAN approved, beads tasks created, progress.json written
        Dispatch the doer (background) with the task's assigned model -> doer executes
        the phase's pending tasks in order, commits each, STOPS at the VERIFY checkpoint.
     2. On doer completion: read progress.json. If a task is blocked -> handle the
-       blocker. Otherwise close the phase's completed tasks in beads and dispatch
-       the reviewer (background, strongest model).
+       blocker. Assert the worktree is clean (`git status --porcelain` empty); a dirty
+       tree means the doer left uncommitted work -- send it back to commit before any
+       review. Otherwise close the phase's completed tasks in beads and dispatch the
+       reviewer (background, strongest model).
     3. On reviewer completion: read the feedback.md verdict.
          APPROVED       -> advance to the next phase (or Completion if last).
          CHANGES NEEDED -> create one beads task per HIGH finding (assigned to the

@@ -82,7 +82,6 @@ plan/progress harness.
 
 ## Open questions
 
-- Where exactly the per-project beads DB lives relative to the repo and worktrees.
 - Whether `design.md` is mandatory for every sprint or only when complexity warrants
   it (likely: required for full sprints, skipped for lightweight ones).
 - The exact command-verb surface and how `recover` reconstructs in-flight state from
