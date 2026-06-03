@@ -1,7 +1,7 @@
 {
   "description": "pm-lite e2e suites. Each suite drives the pm-lite skill headless on one machine (no members, no MCP) through a full plan -> doer-review loop on the fleet-e2e-toy repo, picking ready P1 beads issues. Suite groups are by provider: s1=Claude, s7=Gemini, s8=AGY; the .1/.2/.3 sub-variants are the OS matrix.",
   "toy": "https://github.com/Apra-Labs/fleet-e2e-toy",
-  "checkpoints": ["repo-setup", "discover", "plan", "sprint", "verify"],
+  "checkpoints": ["repo-setup", "discover", "plan", "sprint", "verify", "pr"],
   "terminal": "done",
   "suites": [
     { "id": "s1.1", "provider": "claude", "os": "windows", "cli": "claude" },

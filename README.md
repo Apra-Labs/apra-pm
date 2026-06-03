@@ -68,9 +68,11 @@ low-risk work it uses a lightweight single-cycle path instead of the full harnes
 
 ## E2E
 
-`e2e/run-e2e.mjs` clones the toy repo, renders the scenario with the repo path,
-invokes the provider CLI headless with the skill installed, and reads the
-`checkpoints.json` the orchestrator writes.
+`e2e/run-e2e.mjs` clones the toy repo, renders the scenario with the repo path and
+a unique branch, invokes the provider CLI headless with the skill installed, and
+reads the `checkpoints.json` the orchestrator writes. The sprint runs the full
+lifecycle -- it pushes the branch and raises a real PR on the toy (no merge); the
+runner closes that PR and deletes the branch afterward (use `--keep-pr` to retain).
 
 ```
 node install.mjs --llm claude
@@ -83,8 +85,11 @@ as the Windows/Linux/macOS matrix (`e2e/suites.json`). CLI flags vary by tool;
 override a provider's command with e.g.
 `PMLITE_E2E_CMD_CLAUDE="claude -p {PROMPT} --permission-mode acceptEdits"`.
 
+Pushing the branch and opening the PR needs write access to the toy: set
+`GH_TOKEN` / `E2E_GH_TOKEN`, or rely on the runner's ambient git + gh credentials.
+
 CI: `.github/workflows/pm-lite-e2e.yml` (manual trigger; needs a self-hosted runner
-with the provider CLI authenticated, plus node 20+ and `bd`).
+with the provider CLI authenticated, plus node 20+, `bd`, and `secrets.E2E_GH_TOKEN`).
 
 ## Contributing
 

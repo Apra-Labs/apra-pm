@@ -5,8 +5,9 @@ name: pm-lite-e2e
 # fleet-windows / fleet-linux / fleet-macos), which already have the provider CLI
 # installed and authenticated, plus node, git, and beads (bd). Manual trigger.
 #
-# Secrets: none. The provider CLI auth lives on the runner, the sprint is local-only
-# (no push, no PR), and the toy is cloned read-only using the runner's git access.
+# Secrets: E2E_GH_TOKEN -- write access to the toy, used to push the sprint branch
+# and open a PR (no merge). The runner closes the PR and deletes the branch after.
+# Provider CLI auth lives on the runner itself.
 
 on:
   workflow_dispatch:
@@ -49,6 +50,8 @@ jobs:
 
       - name: Run e2e
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.E2E_GH_TOKEN }}
         run: node e2e/run-e2e.mjs --suite "${{ inputs.suite }}"
 
       - name: Upload results
