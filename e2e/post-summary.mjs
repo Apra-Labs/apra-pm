@@ -15,14 +15,28 @@ function buildReport(results) {
   lines.push('');
 
   // Results + inspection links
-  lines.push('| Suite | Provider | OS | Result | Commits | Notes |');
-  lines.push('|-------|----------|----|--------|---------|-------|');
+  lines.push('| Suite | Provider | OS | Result | Gates | Commits | Notes |');
+  lines.push('|-------|----------|----|--------|-------|---------|-------|');
   for (const r of results) {
     const link = r.pr ? `[PR #${r.pr.number} (${r.pr.commits.length} commits)](${r.pr.commitsUrl})` : '_none_';
     const notes = (r.notes || '').replace(/\|/g, '\\|');
-    lines.push(`| ${r.id} | ${r.provider} | ${r.os} | ${r.status} | ${link} | ${notes} |`);
+    const gates = Array.isArray(r.gates) ? `${r.gates.filter((g) => g.pass).length}/${r.gates.length}` : 'n/a';
+    lines.push(`| ${r.id} | ${r.provider} | ${r.os} | ${r.status} | ${gates} | ${link} | ${notes} |`);
   }
   lines.push('');
+
+  // Validation gates -- the independent proof a disciplined sprint happened.
+  if (results.some((r) => Array.isArray(r.gates))) {
+    lines.push('### Validation gates');
+    lines.push('');
+    for (const r of results) {
+      if (!Array.isArray(r.gates)) continue;
+      lines.push(`**${r.id}**`);
+      lines.push('');
+      for (const g of r.gates) lines.push(`- ${g.pass ? 'PASS' : 'FAIL'} \`${g.name}\` -- ${(g.detail || '').replace(/\|/g, '\\|')}`);
+      lines.push('');
+    }
+  }
 
   const counts = results.reduce((a, r) => ((a[r.status] = (a[r.status] || 0) + 1), a), {});
   const tally = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');

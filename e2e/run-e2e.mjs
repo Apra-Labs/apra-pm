@@ -36,6 +36,7 @@ import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseCheckpointsFile, checkpointsHaveTerminal, parseTelemetryFile, diagnoseFailure } from './extract-results.mjs';
+import { validateSprint } from './validate-sprint.mjs';
 import { postSummary } from './post-summary.mjs';
 
 const E2E = path.dirname(fileURLToPath(import.meta.url));
@@ -167,7 +168,7 @@ function runAgy(cmd, args, cwd, logPath, repo, terminal, timeoutS) {
 }
 
 function runSuite(suite, timeoutS, keepPr) {
-  const res = { id: suite.id, provider: suite.provider, os: suite.os, status: '', notes: '', checkpoints: [], pr: null, telemetry: null };
+  const res = { id: suite.id, provider: suite.provider, os: suite.os, status: '', notes: '', checkpoints: [], pr: null, telemetry: null, gates: null };
   const { bin } = commandFor(suite.provider, '');
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
@@ -209,20 +210,32 @@ function runSuite(suite, timeoutS, keepPr) {
   res.work = work;
   res.telemetry = parseTelemetryFile(logPath, suite.provider);
 
+  // Capture the PR (URL + commits) and run the independent validation gates BEFORE
+  // teardown, while the branch still exists on origin.
+  res.pr = capturePr(branch, token);
+  let gatesPass = false;
+  if (!timedOut) {
+    const v = validateSprint({ repo, branch, pr: res.pr });
+    res.gates = v.gates;
+    gatesPass = v.pass;
+  }
+
   if (timedOut) {
     const why = diagnoseFailure(logPath);
     res.status = 'FAIL';
     res.notes = `timed out after ${timeoutS}s; ${why || cp.reason || ''}`.trim();
-  } else if (cp.pass) {
+  } else if (cp.pass && gatesPass) {
     res.status = 'PASS';
-    res.notes = 'all checkpoints passed';
-  } else {
+    res.notes = 'checkpoints + all validation gates passed';
+  } else if (!cp.pass) {
     res.status = 'FAIL';
     res.notes = cp.reason || diagnoseFailure(logPath) || 'incomplete';
+  } else {
+    const failed = (res.gates || []).filter((g) => !g.pass).map((g) => g.name);
+    res.status = 'FAIL';
+    res.notes = `validation gates failed: ${failed.join(', ')}`;
   }
 
-  // Capture the PR (URL + commits) before teardown so the summary can link to it.
-  res.pr = capturePr(branch, token);
   if (!keepPr) teardownPr(branch, token);
   return res;
 }
