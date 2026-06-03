@@ -43,11 +43,8 @@ Rules:
   - The orchestrator copies each task's model into `progress.json` and dispatches the doer on it verbatim
   - Plan review and code review always run on the strongest model available -- you do not assign those
 - **The plan is the elaboration, not the summary:** requirements.md uses terse human language with intentional ambiguity. PLAN.md must resolve that ambiguity -- every edge case decided, every behaviour specified, every acceptance criterion precise enough that two developers would implement the same thing. Referencing requirements.md for background is fine; deferring a decision to it is not.
-- **Group same-model tasks within a phase:** order a phase's tasks from the weakest model to the strongest, so consecutive same-model tasks form a streak the orchestrator can run in one doer dispatch and a model change marks a new dispatch. Avoid alternating back to a weaker model mid-phase; if a dependency forces a stronger-model task before a weaker one, split the phase at that boundary. Cross-phase order does not matter.
-  ```
-  weak -> weak -> mid -> mid -> strong -> VERIFY   [VALID]
-  weak -> mid -> weak -> VERIFY                     [INVALID]  (split into two phases)
-  ```
+- **Group same-model tasks into streaks:** the orchestrator runs a run of consecutive same-model tasks as one doer dispatch (a streak); a model change starts a new dispatch. Order tasks by dependency first; where dependencies leave freedom, place same-model tasks next to each other so they batch into one dispatch and fewer contexts are rebuilt. There is no required ordering by model strength -- any model may follow any model, because each dispatch starts fresh and reads only what its tasks need (a weaker-model streak after a stronger-model streak is fine).
+- **Keep each streak within its model's context budget:** a streak's tasks share one fresh dispatch, so their combined context must fit the model that streak runs on. If grouping several tasks under a weaker model would exceed what it can hold, split them into separate dispatches (each starts fresh) rather than forcing them into one.
 
 ### PHASE 2 -- FRONT-LOAD FOUNDATIONS
 
@@ -75,7 +72,7 @@ Check your draft against these failure modes:
 - Phase boundary at wrong place -- does this phase mix unrelated subsystems that could be reviewed independently? Or does it split a cohesive unit across two phases?
 - Untracked work -- re-read every task description, note, and comment in your draft. Does any sentence say "X will also need to change", "X must be updated", or "X is a prerequisite"? If yes and there is no task that does that work, either add the task or explicitly state it is out of scope.
 - Missing blocker -- does this task depend on anything that another task produces or puts in place? If yes, that task must be listed in Blockers, even if the phase order implies it.
-- Model alternation within a phase -- does any task run on a weaker model than a task before it in the same phase? If yes, reorder (if dependencies allow) or split the phase at that point. Cross-phase order does not matter.
+- Model batching -- are same-model tasks scattered when dependencies would allow grouping them into a streak? If so, reorder to cluster them and cut dispatches. And does any single-model streak bundle so much work that its combined context might exceed that model's budget? If so, split it.
 
 ### PHASE 4 -- REFINE
 

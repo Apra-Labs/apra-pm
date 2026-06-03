@@ -33,10 +33,11 @@ mid-loop.
 The planner assigned each task an exact `model` in `PLAN.md`, copied into
 `progress.json`. Read the next pending task's `model` and dispatch the doer with it
 verbatim. A phase may span models across its tasks; run one doer dispatch per model
-streak (consecutive tasks sharing a model), so a phase whose tasks go weak -> mid ->
-strong becomes up to three doer dispatches, each on its own model, the last carrying
-through to the VERIFY checkpoint. The reviewer is always dispatched on the strongest
-model available.
+streak (a run of consecutive tasks sharing a model), in dependency order. A phase
+with three model groups becomes up to three doer dispatches, each on its own model;
+any model may follow any model, since each dispatch starts fresh. The dispatch whose
+streak reaches the VERIFY task carries through it. The reviewer is always dispatched
+on the strongest model available.
 
 ## Dispatch in the background
 

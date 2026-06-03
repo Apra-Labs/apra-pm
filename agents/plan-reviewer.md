@@ -16,7 +16,7 @@ You are reviewing a plan in PLAN.md against requirements.md and any design docs 
 4. Is the riskiest assumption validated in Task 1?
 5. Later tasks reuse early abstractions (DRY)?
 6. Are phase boundaries drawn at cohesion boundaries -- each phase is a coherent unit producing a reviewable, testable increment (tasks share a data model, code path, or design decision)?
-7. Does every work task have a concrete model assigned, sized to its complexity, with same-model tasks grouped within a phase (weakest to strongest, no alternating back to a weaker model mid-phase) so dispatches batch cleanly?
+7. Does every work task have a concrete model assigned, sized to its complexity? Are same-model tasks clustered (where dependencies allow) so they batch into streaks, and does each streak fit its model's context budget? Order is dependency-driven -- any model may follow any model, so do not flag a weaker-model streak that follows a stronger one.
 8. Each task completable in one dispatch?
 9. Dependencies satisfied in order?
 10. Any vague tasks that two developers would interpret differently?
