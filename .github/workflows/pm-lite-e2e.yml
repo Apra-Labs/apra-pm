@@ -3,7 +3,7 @@ name: pm-lite-e2e
 # Drives the pm-lite skill headless against the fleet-e2e-toy repo, one suite per
 # provider/OS. Provider CLIs (claude/gemini/agy) and their auth are not available on
 # stock GitHub runners, so this targets self-hosted runners that already have the
-# CLI installed and authenticated (same model as the apra-fleet e2e). Manual trigger.
+# CLI installed and authenticated. Manual trigger.
 
 on:
   workflow_dispatch:
