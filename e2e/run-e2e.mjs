@@ -41,7 +41,8 @@ const scenarioTpl = fs.readFileSync(path.join(E2E, 'scenario.md'), 'utf-8');
 const CLI = {
   claude: ['claude', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
   gemini: ['gemini', '-p', '{PROMPT}', '--model', 'auto', '--skip-trust'],
-  agy: ['agy', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
+  // agy print mode defaults to a 5m wait; a full sprint is ~30m, so raise it.
+  agy: ['agy', '--print-timeout=40m', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
 };
 
 const hostOs = () => (process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux');
@@ -52,7 +53,7 @@ function which(bin) {
 }
 
 function parseArgs() {
-  const a = { suite: null, provider: null, timeout: 1800, keepPr: false };
+  const a = { suite: null, provider: null, timeout: 2700, keepPr: false };
   const v = process.argv.slice(2);
   for (let i = 0; i < v.length; i++) {
     if (v[i] === '--suite') a.suite = v[++i];
