@@ -1,4 +1,5 @@
 name: pm-lite-e2e
+run-name: pm-lite E2E ${{ inputs.suite }} - ${{ github.ref_name }}
 
 # Drives the pm-lite skill headless against the fleet-e2e-toy repo, one suite per run.
 # Runs on the same self-hosted runners as the fleet e2e (labels: self-hosted +
