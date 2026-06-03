@@ -34,10 +34,9 @@ The planner assigned each task an exact `model` in `PLAN.md`, copied into
 `progress.json`. Read the next pending task's `model` and dispatch the doer with it
 verbatim. A phase may span models across its tasks; run one doer dispatch per model
 streak (a run of consecutive tasks sharing a model), in dependency order. A phase
-with three model groups becomes up to three doer dispatches, each on its own model;
-any model may follow any model, since each dispatch starts fresh. The dispatch whose
-streak reaches the VERIFY task carries through it. The reviewer is always dispatched
-on the strongest model available.
+with three model groups becomes up to three doer dispatches, each on its own model.
+The dispatch whose streak reaches the VERIFY task carries through it. The reviewer is
+always dispatched on the strongest model available.
 
 ## Dispatch in the background
 
@@ -48,8 +47,8 @@ completion as it arrives -- track A's reviewer can run while track B's doer is
 still working.
 
 When an agent finishes, the orchestrator's FIRST action is to read state from git
-and beads (`progress.json`, `feedback.md`, `git log <base>..<branch>`, `bd show`)
--- never trust memory of what was dispatched.
+and beads (`progress.json`, `feedback.md`, `git log <base>..<branch>`, `bd show`);
+those are the source of truth for what was dispatched and where it landed.
 
 ## Telemetry -- token cost per dispatch
 
@@ -128,19 +127,19 @@ earlier findings were addressed. Overwrite feedback.md with your verdict (APPROV
 or CHANGES NEEDED) and commit it. <transport line>.
 ```
 
-## The resume-equivalent
+## Continuity between dispatches
 
 Each dispatch is a fresh subagent run; continuity comes from the files it reads.
 Two ways to continue:
 
 - **Default: fresh dispatch.** Dispatch a new agent of the right role; it
   reconstructs context from `progress.json`, `PLAN.md`, `feedback.md`, and
-  `git log`. Robust, and the right choice across phase boundaries and role
-  switches. The agents are written to begin with a context-recovery `git log`.
+  `git log`. This is robust and the right choice across phase boundaries and role
+  switches -- the agents begin with a context-recovery `git log`.
 - **Tight iteration: continue the same agent.** For a quick same-worktree, same-role
   turn -- e.g. the doer addressing review findings it just produced context for --
-  continue the SAME agent instance (preserving its context) rather than dispatching
-  fresh. Use this only within one worktree and one role; never across a role switch.
+  continue the SAME agent instance, which keeps its context. Use this within one
+  worktree and one role; switch roles with a fresh dispatch.
 
 ## Safeguards
 

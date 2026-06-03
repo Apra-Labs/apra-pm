@@ -157,7 +157,7 @@ and beads.
 
 - `worktrees.md` -- worktree topology, parallel-track layout, lifecycle, transport.
 - `doer-reviewer-loop.md` -- the dispatch loop: per-role prompt templates,
-  background handling, the resume-equivalent, and safeguards.
+  background handling, continuity between dispatches, and safeguards.
 - `sprint.md` -- full lifecycle: requirements, design, planning, execution, deploy,
   completion, sprint selection, parallel-track integration, and recovery.
 - `beads.md` -- the task-DB backbone: epic/task lifecycle, findings-as-tasks,
