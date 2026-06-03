@@ -44,9 +44,57 @@ jobs:
           esac
           echo "provider=$P" >> "$GITHUB_OUTPUT"
 
+      # agy is not on PATH by default; add its standard install dir for later steps.
+      - name: Locate agy CLI
+        if: ${{ steps.prov.outputs.provider == 'agy' }}
+        shell: bash
+        run: |
+          if   [ "$RUNNER_OS" = "Linux"   ]; then echo "$HOME/.local/share/agy/bin" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "macOS"   ]; then echo "$HOME/Library/Application Support/agy/bin" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "Windows" ]; then echo "$(cygpath -w "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}/agy/bin")" >> "$GITHUB_PATH"
+          fi
+
       - name: Install pm-lite skill
         shell: bash
         run: node install.mjs --llm "${{ steps.prov.outputs.provider }}" --force
+
+      # Pre-flight checks isolate "CLI/auth/skill not ready" from "the sprint failed".
+      - name: Pre-flight - tools present
+        shell: bash
+        run: |
+          node --version
+          git --version
+          bd --version || { echo "::error::beads (bd) not found on PATH"; exit 1; }
+          P='${{ steps.prov.outputs.provider }}'
+          "$P" --version 2>&1 | head -1 || { echo "::error::$P CLI not found or not working"; exit 1; }
+
+      - name: Pre-flight - skill + agents installed
+        shell: bash
+        run: |
+          case '${{ steps.prov.outputs.provider }}' in
+            claude) CFG="$HOME/.claude" ;;
+            gemini) CFG="$HOME/.gemini" ;;
+            agy)    CFG="$HOME/.gemini/antigravity-cli" ;;
+          esac
+          test -f "$CFG/skills/pm-lite/SKILL.md" || { echo "::error::pm-lite skill missing at $CFG/skills/pm-lite"; exit 1; }
+          for a in planner plan-reviewer doer reviewer; do
+            test -f "$CFG/agents/$a.md" || { echo "::error::agent $a missing at $CFG/agents"; exit 1; }
+          done
+          echo "skill + 4 agents present under $CFG"
+
+      - name: Pre-flight - CLI auth + skill visible
+        shell: bash
+        run: |
+          P='${{ steps.prov.outputs.provider }}'
+          PROMPT="Reply with exactly: PMLITE-READY. Then list your available skills separated by commas."
+          case "$P" in
+            claude) out=$(claude -p "$PROMPT" --model haiku 2>&1) ;;
+            gemini) out=$(gemini -p "$PROMPT" --model auto --skip-trust 2>&1) ;;
+            agy)    out=$(agy -p "$PROMPT" --dangerously-skip-permissions 2>&1) ;;
+          esac
+          echo "$out"
+          echo "$out" | grep -q "PMLITE-READY" || { echo "::error::$P did not respond -- start/auth issue"; exit 1; }
+          echo "$out" | grep -qi "pm-lite"      || echo "::warning::$P did not list the pm-lite skill"
 
       - name: Run e2e
         shell: bash

@@ -36,10 +36,12 @@ const cfg = JSON.parse(fs.readFileSync(path.join(E2E, 'suites.json'), 'utf-8'));
 const scenarioTpl = fs.readFileSync(path.join(E2E, 'scenario.md'), 'utf-8');
 
 // Default headless command per provider. {PROMPT} is replaced with the scenario.
+// The autonomy flags matter: without them the CLI stalls on permission/trust gates
+// (e.g. when dispatching a subagent) and times out. Override with PMLITE_E2E_CMD_<P>.
 const CLI = {
   claude: ['claude', '-p', '{PROMPT}', '--permission-mode', 'acceptEdits'],
-  gemini: ['gemini', '-p', '{PROMPT}', '--yolo'],
-  agy: ['agy', '-p', '{PROMPT}'],
+  gemini: ['gemini', '-p', '{PROMPT}', '--model', 'auto', '--skip-trust'],
+  agy: ['agy', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
 };
 
 const hostOs = () => (process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux');
