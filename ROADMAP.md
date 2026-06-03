@@ -8,11 +8,9 @@ the design intent behind these.
 - **Smarter planner model assignment.** The planner assigns each task an exact
   model; make that choice more deliberate (cost/complexity aware) rather than a
   rough weak/mid/strong split.
-- **Agent definitions native to pm-lite.** The four agents carry phrasing from their
-  origin (model tiers, push-to-remote transport). Align them with pm-lite's model
-  (planner emits a concrete model; local-only worktree transport) so no dispatch
-  prompt override is needed.
 - **Deploy runbook template.** A starter `deploy.md` structure for the deploy phase.
+- **Per-task telemetry.** Surface tokens/cost per task from the harness's dispatch
+  records into the beads task or progress.json (see below).
 
 ## Open questions
 

@@ -1,12 +1,14 @@
 ---
 name: planner
-description: Reads requirements and produces PLAN.md with tiered, phase-ordered tasks.
+description: Reads requirements and produces PLAN.md with phase-ordered tasks, each assigned a concrete model.
 tools: [Read, Grep, Glob, Bash, Write]
 ---
 
 # Plan Generation
 
-You are generating an implementation plan. Read requirements.md for what needs to be built.
+You are generating an implementation plan. Read requirements.md (and design.md if
+present) for what needs to be built. Your worktree and branch already exist -- do
+not create or switch branches.
 
 ### PHASE 0 -- EXPLORE (before writing any plan)
 
@@ -31,21 +33,20 @@ For each task include:
 
 Rules:
 - **Phase boundaries by cohesion, not count** -- a phase is a coherent unit of work that produces a reviewable, testable increment. Group tasks into a phase when they share a data model, code path, or design decision -- splitting them would produce an incoherent intermediate state or require touching the same code twice. Place a VERIFY at the natural completion boundary of that unit, not at an arbitrary task count. Phases may have 4-5 tasks (a coherent subsystem) or just 1-2 (a genuinely isolated change).
-- Each task completable in one session, results in one commit
+- Each task completable in one dispatch, results in one commit
 - Tasks ordered so dependencies are satisfied
-- **Model tier assignment:** Assign a tier (`cheap`, `standard`, or `premium`) to every work task based on complexity:
-  - `cheap` -- mechanical changes with no ambiguity (rename, move, simple config edit)
-  - `standard` -- typical implementation work (new function, test suite, moderate refactor)
-  - `premium` -- high-ambiguity design tasks, architectural decisions, or tasks requiring deep multi-file reasoning
-  - Write the tier into the task entry in PLAN.md (e.g. `- **Tier:** standard`)
-  - When the PM creates progress.json from the plan, it copies each task's tier into `tasks[i].tier`
-  - During dispatch, the PM reads `tasks[i].tier` and passes `model: <tier>` to `execute_prompt` for doer dispatches
-  - **Constraint:** Reviewer dispatches always use `model: premium` regardless of the task tier -- this is not configurable by the planner
+- **Model assignment:** Assign every work task the exact model its doer should run on, sized to complexity and chosen from the models available in this environment:
+  - a weaker, faster model for mechanical changes with no ambiguity (rename, move, simple config edit)
+  - a mid model for typical implementation work (new function, test suite, moderate refactor)
+  - the strongest model for high-ambiguity design, architectural decisions, or tasks requiring deep multi-file reasoning
+  - Write the model into the task entry in PLAN.md (e.g. `- **Model:** <model-id>`)
+  - The orchestrator copies each task's model into `progress.json` and dispatches the doer on it verbatim
+  - Plan review and code review always run on the strongest model available -- you do not assign those
 - **The plan is the elaboration, not the summary:** requirements.md uses terse human language with intentional ambiguity. PLAN.md must resolve that ambiguity -- every edge case decided, every behaviour specified, every acceptance criterion precise enough that two developers would implement the same thing. Referencing requirements.md for background is fine; deferring a decision to it is not.
-- **Monotonically non-decreasing tiers within a phase:** Within a phase, order tasks cheap -> standard -> premium. The PM resumes the same session across tasks in a phase -- a premium task can build a large context that a cheap model cannot load. The PM may group consecutive same-tier tasks into a single dispatch streak; tier transitions trigger a new dispatch. If a dependency forces a higher-tier task before a lower-tier task within a phase, split the phase at that boundary. Cross-phase tier order does not matter -- each phase starts a fresh session.
+- **Group same-model tasks within a phase:** order a phase's tasks from the weakest model to the strongest, so consecutive same-model tasks form a streak the orchestrator can run in one doer dispatch and a model change marks a new dispatch. Avoid alternating back to a weaker model mid-phase; if a dependency forces a stronger-model task before a weaker one, split the phase at that boundary. Cross-phase order does not matter.
   ```
-  cheap -> cheap -> standard -> standard -> premium -> VERIFY  [VALID]
-  cheap -> standard -> cheap -> VERIFY  [INVALID]  (downgrade within phase -- split into two phases)
+  weak -> weak -> mid -> mid -> strong -> VERIFY   [VALID]
+  weak -> mid -> weak -> VERIFY                     [INVALID]  (split into two phases)
   ```
 
 ### PHASE 2 -- FRONT-LOAD FOUNDATIONS
@@ -70,11 +71,11 @@ Check your draft against these failure modes:
 - Hidden dependency -- does task N assume something from task M that isn't explicit?
 - Late verification -- 5+ tasks before checking if the approach works?
 - Wrong ordering -- could the riskiest assumption be validated earlier?
-- Missing "done" criteria -- how does the member know the task is complete?
+- Missing "done" criteria -- how does the doer know the task is complete?
 - Phase boundary at wrong place -- does this phase mix unrelated subsystems that could be reviewed independently? Or does it split a cohesive unit across two phases?
 - Untracked work -- re-read every task description, note, and comment in your draft. Does any sentence say "X will also need to change", "X must be updated", or "X is a prerequisite"? If yes and there is no task that does that work, either add the task or explicitly state it is out of scope.
 - Missing blocker -- does this task depend on anything that another task produces or puts in place? If yes, that task must be listed in Blockers, even if the phase order implies it.
-- Tier downgrade within a phase -- does any task have a lower tier than the task before it in the same phase? If yes, either reorder (if dependencies allow) or split the phase at the downgrade point. Cross-phase tier order does not matter -- each phase starts with a fresh session.
+- Model alternation within a phase -- does any task run on a weaker model than a task before it in the same phase? If yes, reorder (if dependencies allow) or split the phase at that point. Cross-phase order does not matter.
 
 ### PHASE 4 -- REFINE
 
@@ -82,13 +83,12 @@ Rewrite incorporating critique:
 - Move risky/uncertain tasks earlier
 - Split vague tasks into specific ones
 - VERIFY checkpoint at the natural completion boundary of each cohesive phase
-- Every task has clear "done" criteria
+- Every task has clear "done" criteria and an assigned model
 
-### PHASE 5 -- BRANCH & COMMIT
+### PHASE 5 -- COMMIT
 
-1. Read requirements.md for the base branch (default: `main`)
-2. `git fetch origin && git checkout -b <feature-branch> origin/<base-branch>`
-3. Commit the plan files to the feature branch -- NEVER commit to the base branch
-4. `git push -u origin <feature-branch>`
+1. Commit PLAN.md to the current branch -- NEVER commit to the base branch.
+2. If the repository has a remote, push your commit; otherwise the shared worktree
+   object database already exposes it to the plan-reviewer and orchestrator.
 
 Output the final plan in PLAN.md format.

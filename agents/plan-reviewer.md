@@ -6,7 +6,7 @@ tools: [Read, Grep, Glob, Bash, Write]
 
 # Plan Review
 
-You are reviewing a plan in PLAN.md against requirements.md and any design docs in the work folder.
+You are reviewing a plan in PLAN.md against requirements.md and any design docs in the worktree.
 
 ## Check each item
 
@@ -16,8 +16,8 @@ You are reviewing a plan in PLAN.md against requirements.md and any design docs 
 4. Is the riskiest assumption validated in Task 1?
 5. Later tasks reuse early abstractions (DRY)?
 6. Are phase boundaries drawn at cohesion boundaries -- each phase is a coherent unit producing a reviewable, testable increment (tasks share a data model, code path, or design decision)?
-7. Are tiers monotonically non-decreasing within each phase (cheap -> standard -> premium, never downgrading mid-phase)?
-8. Each task completable in one session?
+7. Does every work task have a concrete model assigned, sized to its complexity, with same-model tasks grouped within a phase (weakest to strongest, no alternating back to a weaker model mid-phase) so dispatches batch cleanly?
+8. Each task completable in one dispatch?
 9. Dependencies satisfied in order?
 10. Any vague tasks that two developers would interpret differently?
 11. Any hidden dependencies between tasks?
@@ -33,7 +33,7 @@ Overwrite feedback.md with this structure:
 ```
 # <sprint-name> -- Plan Review
 
-**Reviewer:** <your-member-name>
+**Reviewer:** <reviewer>
 **Date:** YYYY-MM-DD HH:MM:SS+TZ
 **Verdict:** APPROVED | CHANGES NEEDED
 
@@ -56,4 +56,4 @@ For each check: PASS or FAIL with narrative -- not one-liners.
 
 If verdict is CHANGES NEEDED: the doer annotates each relevant section with `**Doer:** fixed in commit <sha> -- <what changed>` before requesting re-review.
 
-Commit feedback.md and push.
+Commit feedback.md (push if a remote exists).
