@@ -90,13 +90,22 @@ When every phase (of every track) is APPROVED:
    requirement was drawn from -- with `bd close <issue-id> ...`. Closing the epic
    alone leaves those open. Record the PR link on the epic once raised (see
    `beads.md`).
-3. **Drop sprint scaffolding** -- on the track branch, `git rm` the tracking files
-   (`requirements.md`, `design.md`, `PLAN.md`, `progress.json`, `feedback.md`) and
-   commit as the orchestrator identity `pm-lite`. They are the inter-agent message
-   bus, not product; beads holds the durable record. The PR's net diff must carry
-   product changes only -- the files stay visible in the branch history, which is the
-   proof the planner/reviewer loop actually ran. (Same drop the parallel-track flow
-   does before integrating.)
+3. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
+   only. The tracking files (`requirements.md`, `design.md`, `PLAN.md`,
+   `progress.json`, `feedback.md` -- and any case variant such as `plan.md`/
+   `progress.md` the repo itself may already ship) are the inter-agent message bus,
+   not product; beads holds the durable record, and they stay visible in the branch
+   history as proof the loop ran. For each such file, decide by whether it existed on
+   the base branch:
+   - **Sprint created it** (absent on base): `git rm` it.
+   - **The repo already had it** (present on base, the sprint only touched it):
+     restore it to base content -- `git checkout <base> -- <file>` -- so the diff
+     shows no change. Never delete a file the repo shipped.
+
+   Commit as the orchestrator identity `pm-lite`. Then VERIFY:
+   `git diff --name-only <base>...<branch>` must list no tracking-file name in any
+   case. If one remains, repeat until the net diff is product only. (Same drop the
+   parallel-track flow does before integrating.)
 4. **Raise the PR** -- run the PR command directly: open a PR from the (integration)
    branch to the base, then watch checks until CI is green. For a local-only sprint
    there is no PR -- report the branch and its `git diff <base>...<branch>` instead.
@@ -142,9 +151,10 @@ For 1-3 tasks completable in one sitting, skip the full harness:
 3. Dispatch the `doer` (model sized to the work) for the task(s); it commits.
 4. Dispatch the `reviewer` (strongest model); read the verdict. `CHANGES NEEDED` ->
    doer fixes -> re-review. `APPROVED` -> close the beads tasks and the delivered
-   source issues, `git rm` the scaffolding files (`requirements.md`, `PLAN.md`,
-   `progress.json`, `feedback.md`) and commit as `pm-lite`, raise the PR (or report
-   the diff for local-only), remove the worktree.
+   source issues, clean the sprint scaffolding from the PR (see Completion step 3 --
+   `git rm` sprint-created tracking files, restore any the repo already shipped, then
+   verify the net diff is product only) and commit as `pm-lite`, raise the PR (or
+   report the diff for local-only), remove the worktree.
 
 No `PLAN.md`/`progress.json` harness; beads + git carry the state. Promote to a full
 sprint if the work turns out larger than expected.

@@ -16,6 +16,8 @@
 // evaluateGates() is pure (takes gathered facts, returns verdicts) so it is unit
 // testable; validateSprint() gathers those facts from a git clone + the PR object.
 import { spawnSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 const SCAFFOLD = ['requirements.md', 'plan.md', 'feedback.md', 'progress.json'];
 const baseName = (p) => p.split('/').pop().toLowerCase();
@@ -44,7 +46,7 @@ export function evaluateGates(d) {
   const expected = d.expectedIssues ?? 3;
   const closed = d.closedP1 || [];
   add('beads-closed', closed.length >= expected,
-    `${closed.length} P1 issue(s) closed on branch${closed.length ? ': ' + closed.join(', ') : ''}`);
+    `${closed.length} of the picked P1 issue(s) closed${closed.length ? ': ' + closed.join(', ') : ''}`);
 
   return { gates, pass: gates.every((g) => g.pass) };
 }
@@ -58,18 +60,37 @@ function git(repo, args) {
 const isP1 = (o) => o && (o.priority === 1 || o.priority === '1' || String(o.priority).toUpperCase() === 'P1');
 const isClosed = (o) => o && String(o.status).toLowerCase() === 'closed';
 
-function readBeads(repo, ref) {
+function parseBeadsJsonl(text, map) {
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try { const o = JSON.parse(t); if (o.id) map.set(o.id, o); } catch { /* skip */ }
+  }
+  return map;
+}
+
+// Baseline issue state from the base branch (pristine, before the sprint).
+function readBeadsRef(repo, ref) {
   const map = new Map();
   let names = (git(repo, ['ls-tree', '--name-only', `${ref}:.beads`]).stdout || '')
     .split('\n').map((s) => s.trim()).filter((s) => s.endsWith('.jsonl'));
   if (!names.length) names = ['issues.jsonl'];
+  for (const n of names) parseBeadsJsonl(git(repo, ['show', `${ref}:.beads/${n}`]).stdout || '', map);
+  return map;
+}
+
+// Post-run issue state from the ON-DISK .beads DB at the base checkout. The
+// orchestrator runs every `bd close` here (the DB is deliberately kept OFF the track
+// branch -- see beads.md), so closures never appear in the branch diff. Read the
+// working-tree DB to see what was actually closed.
+function readBeadsDisk(repo) {
+  const map = new Map();
+  const dir = join(repo, '.beads');
+  let names;
+  try { names = readdirSync(dir).filter((f) => f.endsWith('.jsonl')); } catch { return map; }
+  if (!names.length) names = ['issues.jsonl'];
   for (const n of names) {
-    const out = git(repo, ['show', `${ref}:.beads/${n}`]).stdout || '';
-    for (const line of out.split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      try { const o = JSON.parse(t); if (o.id) map.set(o.id, o); } catch { /* skip */ }
-    }
+    try { parseBeadsJsonl(readFileSync(join(dir, n), 'utf-8'), map); } catch { /* skip */ }
   }
   return map;
 }
@@ -96,9 +117,11 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   const touchedBasenames = (git(repo, ['log', range, '--name-only', '--pretty=format:']).stdout || '')
     .split('\n').map((s) => s.trim()).filter(Boolean).map(baseName);
 
-  // beads issues that were open P1 at base and are closed at head
-  const baseB = readBeads(repo, base);
-  const headB = readBeads(repo, head);
+  // beads issues that were open P1 at base and are closed after the sprint.
+  // Baseline comes from the base branch; "closed now" comes from the on-disk DB
+  // (where `bd close` writes), not the branch -- the DB lives off the track branch.
+  const baseB = readBeadsRef(repo, base);
+  const headB = readBeadsDisk(repo);
   const closedP1 = [];
   for (const [id, bo] of baseB) {
     if (isP1(bo) && !isClosed(bo) && isClosed(headB.get(id))) closedP1.push(id);
