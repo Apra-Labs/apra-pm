@@ -1,0 +1,23 @@
+{
+  "sprint": "<sprint-name>",
+  "track": "<track-name>",
+  "branch": "<feature-branch>",
+  "base": "<base-branch>",
+  "worktree": "<absolute worktree path>",
+  "transport": "remote | local",
+  "epic": "<beads epic id>",
+  "lastDispatchedPhase": null,
+  "tasks": [
+    {
+      "id": "T1.1",
+      "phase": 1,
+      "title": "<short title>",
+      "model": "<exact model the planner assigned to this task>",
+      "type": "work | verify",
+      "status": "pending | in_progress | completed | blocked",
+      "bead": "<beads task id>",
+      "commit": null,
+      "notes": ""
+    }
+  ]
+}

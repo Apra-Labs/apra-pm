@@ -1,0 +1,19 @@
+{
+  "description": "pm-lite e2e suites. Each suite drives the pm-lite skill headless on one machine (no members, no MCP) through a full plan -> doer-review loop on the fleet-e2e-toy repo, picking ready P1 beads issues. Suite groups mirror the apra-fleet convention: s1=Claude, s7=Gemini, s8=AGY; the .1/.2/.3 sub-variants are the OS matrix.",
+  "toy": "https://github.com/Apra-Labs/fleet-e2e-toy",
+  "checkpoints": ["repo-setup", "discover", "plan", "sprint", "verify"],
+  "terminal": "done",
+  "suites": [
+    { "id": "s1.1", "provider": "claude", "os": "windows", "cli": "claude" },
+    { "id": "s1.2", "provider": "claude", "os": "linux",   "cli": "claude" },
+    { "id": "s1.3", "provider": "claude", "os": "macos",   "cli": "claude" },
+
+    { "id": "s7.1", "provider": "gemini", "os": "windows", "cli": "gemini" },
+    { "id": "s7.2", "provider": "gemini", "os": "linux",   "cli": "gemini" },
+    { "id": "s7.3", "provider": "gemini", "os": "macos",   "cli": "gemini" },
+
+    { "id": "s8.1", "provider": "agy", "os": "windows", "cli": "agy" },
+    { "id": "s8.2", "provider": "agy", "os": "linux",   "cli": "agy" },
+    { "id": "s8.3", "provider": "agy", "os": "macos",   "cli": "agy" }
+  ]
+}

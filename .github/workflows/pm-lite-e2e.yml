@@ -1,0 +1,52 @@
+name: pm-lite-e2e
+
+# Drives the pm-lite skill headless against the fleet-e2e-toy repo, one suite per
+# provider/OS. Provider CLIs (claude/gemini/agy) and their auth are not available on
+# stock GitHub runners, so this targets self-hosted runners that already have the
+# CLI installed and authenticated (same model as the apra-fleet e2e). Manual trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: claude | gemini | agy
+        required: true
+        default: claude
+        type: choice
+        options: [claude, gemini, agy]
+      suite:
+        description: optional single suite id (e.g. s1.2); blank = all suites for this host OS
+        required: false
+        default: ""
+
+jobs:
+  e2e:
+    # Self-hosted runner labelled with the provider; it must have the CLI + auth,
+    # plus git, node 20+, and beads (bd) on PATH.
+    runs-on: [self-hosted, "pm-lite-${{ inputs.provider }}"]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pm-lite skill
+        shell: bash
+        run: node install.mjs --llm "${{ inputs.provider }}" --force
+
+      - name: Run e2e
+        shell: bash
+        run: |
+          ARGS="--provider ${{ inputs.provider }}"
+          if [ -n "${{ inputs.suite }}" ]; then ARGS="--suite ${{ inputs.suite }}"; fi
+          node e2e/run-e2e.mjs $ARGS
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pm-lite-e2e-${{ inputs.provider }}
+          path: e2e-results/
+          if-no-files-found: ignore
