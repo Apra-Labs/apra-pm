@@ -83,6 +83,9 @@ function runSuite(suite, timeoutS) {
   if (clone.status !== 0) { res.status = 'FAIL'; res.notes = `clone failed: ${(clone.stderr || '').trim().slice(0, 200)}`; return res; }
   git(['-C', repo, 'config', 'user.email', 'e2e@pm-lite']);
   git(['-C', repo, 'config', 'user.name', 'pm-lite-e2e']);
+  // Make the clone genuinely local-only so the skill's transport detection does
+  // not push the sprint work back to the toy's origin.
+  git(['-C', repo, 'remote', 'remove', 'origin']);
 
   const prompt = scenarioTpl.replaceAll('{{REPO}}', repo.replace(/\\/g, '/'));
   const { bin: cmd, args } = commandFor(suite.provider, prompt);
