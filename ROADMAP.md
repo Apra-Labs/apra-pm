@@ -9,8 +9,10 @@ the design intent behind these.
   model; make that choice more deliberate (cost/complexity aware) rather than a
   rough weak/mid/strong split.
 - **Deploy runbook template.** A starter `deploy.md` structure for the deploy phase.
-- **Per-task telemetry.** Surface tokens/cost per task from the harness's dispatch
-  records into the beads task or progress.json (see below).
+- **Per-dispatch telemetry.** The `progress.json` `dispatches` ledger schema is in
+  place (role, model, phase, tasks, tokens). Wire the orchestrator to populate it
+  from the harness's completion usage, and aggregate the three buckets (doer,
+  review, orchestration). Capture quality depends on what each harness reports.
 
 ## Open questions
 

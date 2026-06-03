@@ -50,6 +50,26 @@ When an agent finishes, the orchestrator's FIRST action is to read state from gi
 and beads (`progress.json`, `feedback.md`, `git log <base>..<branch>`, `bd show`)
 -- never trust memory of what was dispatched.
 
+## Telemetry -- token cost per dispatch
+
+A dispatch is the metering unit: one `Agent` call runs one subagent and returns one
+usage figure for everything it did (a single task or a same-model streak). When the
+harness reports usage on completion, append one record to the `dispatches` ledger in
+`progress.json` (see `tpl-progress.json`):
+
+```
+{ "seq": N, "role": "doer", "model": "<model>", "phase": P,
+  "tasks": ["T2","T3"], "tokens": <subagent tokens>, "toolUses": <n>, "ms": <n> }
+```
+
+Cost is attributed to the dispatch (the streak), not to individual tasks -- so no
+per-task dispatch overhead is needed. The three cost buckets fall out by grouping
+the ledger by role: **doer** dispatches (implementation), **plan-reviewer +
+reviewer** dispatches (review), and the orchestrator's own main-loop usage
+(orchestration), which is not a subagent and so is tracked at the session level, not
+in this ledger. If the harness does not report per-subagent usage, record what it
+provides and leave the rest null.
+
 ## Per-role prompt templates
 
 Everything the agent needs is in the prompt plus the committed files in its
