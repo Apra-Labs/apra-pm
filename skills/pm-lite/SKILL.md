@@ -155,8 +155,9 @@ and beads.
   See `sprint.md` Deploy.
 - **backlog** / **tasks** -- manage deferred items and view the task tree via beads.
   See `beads.md`.
-- **cleanup** -- close the beads epic, raise the PR, remove the track worktrees.
-  See `sprint.md` Completion.
+- **cleanup** -- close the beads epic and the delivered source issues, drop the
+  sprint scaffolding files (so the PR's net diff is product only), raise the PR, and
+  remove the track worktrees. See `sprint.md` Completion.
 
 ## Sub-documents
 

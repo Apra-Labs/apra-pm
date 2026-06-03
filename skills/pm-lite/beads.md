@@ -57,11 +57,14 @@ bd create "fix: <finding>" -p 0 --parent <epic-id> --assignee <track>
 ```
 Close it when the reviewer clears the finding.
 
-**At completion** -- close the epic and link the PR:
+**At completion** -- close the epic, close the delivered source issues, link the PR:
 ```
-bd close <epic-id>
+bd close <epic-id> <source-issue-id> [<source-issue-id> ...]
 bd note <epic-id> "PR: <url>"
 ```
+The source issues are the ready backlog items the sprint's requirement was drawn
+from. Closing the epic alone leaves them open, so the backlog never reflects the
+delivered work -- close them here too.
 
 ## Findings are never lost
 

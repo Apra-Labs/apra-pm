@@ -35,7 +35,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseCheckpointsFile, checkpointsHaveTerminal, parseTelemetryFile, diagnoseFailure } from './extract-results.mjs';
+import { parseTelemetryFile, diagnoseFailure } from './extract-results.mjs';
 import { validateSprint } from './validate-sprint.mjs';
 import { postSummary } from './post-summary.mjs';
 
@@ -95,7 +95,11 @@ function capturePr(branch, token) {
       url: j.url,
       state: j.state,
       commitsUrl: `${j.url}/commits`,
-      commits: (j.commits || []).map((c) => ({ sha: String(c.oid || '').slice(0, 7), msg: c.messageHeadline || '' })),
+      commits: (j.commits || []).map((c) => ({
+        sha: String(c.oid || '').slice(0, 7),
+        msg: c.messageHeadline || '',
+        author: (c.authors && c.authors[0] && (c.authors[0].name || c.authors[0].login)) || '',
+      })),
     };
   } catch { return null; }
 }
@@ -146,18 +150,19 @@ function appendAgyTranscript(cwd, logPath) {
 }
 
 // agy -p stops after each text response, so a full sprint needs resuming until the
-// terminal checkpoint lands. Returns { timedOut }.
-function runAgy(cmd, args, cwd, logPath, repo, terminal, timeoutS) {
+// sprint is done. The terminal signal is the PR itself (cleanup raises it), checked
+// via `isDone()`. Returns { timedOut }.
+function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
   const first = spawnSync(cmd, args, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
   fs.writeFileSync(logPath, `${first.stdout || ''}\n---STDERR---\n${first.stderr || ''}`);
   appendAgyTranscript(cwd, logPath);
   if (first.error && first.error.code === 'ETIMEDOUT') return { timedOut: true };
 
   for (let i = 1; i <= 4; i++) {
-    if (checkpointsHaveTerminal(path.join(repo, 'checkpoints.json'), terminal)) break;
-    console.log(`[agy] resume attempt ${i} -- terminal "${terminal}" not yet in checkpoints.json`);
+    if (isDone()) break;
+    console.log(`[agy] resume attempt ${i} -- no PR raised yet`);
     const cont = ['--print-timeout=40m', '--continue', '-p',
-      'Continue from where you left off. Complete all remaining checkpoints without stopping, then write the terminal checkpoint.',
+      'Continue the sprint from where you left off. Finish the pm-lite start and cleanup commands without stopping, so a PR is raised.',
       '--dangerously-skip-permissions'];
     const r = spawnSync(cmd, cont, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
     fs.appendFileSync(logPath, `\n---RESUME ${i}---\n${r.stdout || ''}\n${r.stderr || ''}`);
@@ -168,7 +173,7 @@ function runAgy(cmd, args, cwd, logPath, repo, terminal, timeoutS) {
 }
 
 function runSuite(suite, timeoutS, keepPr) {
-  const res = { id: suite.id, provider: suite.provider, os: suite.os, status: '', notes: '', checkpoints: [], pr: null, telemetry: null, gates: null };
+  const res = { id: suite.id, provider: suite.provider, os: suite.os, status: '', notes: '', pr: null, telemetry: null, gates: null };
   const { bin } = commandFor(suite.provider, '');
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
@@ -197,43 +202,33 @@ function runSuite(suite, timeoutS, keepPr) {
   console.log(`[${suite.id}] ${cmd} (cwd ${work}, branch ${branch}) ...`);
   let timedOut = false;
   if (suite.provider === 'agy') {
-    ({ timedOut } = runAgy(cmd, args, work, logPath, repo, cfg.terminal, timeoutS));
+    ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
   } else {
     const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
     fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
     timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
   }
 
-  const cp = parseCheckpointsFile(path.join(repo, 'checkpoints.json'), cfg.terminal, cfg.checkpoints);
-  res.checkpoints = cp.checkpoints;
   res.branch = branch;
   res.work = work;
   res.telemetry = parseTelemetryFile(logPath, suite.provider);
 
   // Capture the PR (URL + commits) and run the independent validation gates BEFORE
-  // teardown, while the branch still exists on origin.
+  // teardown, while the branch still exists on origin. The gates -- not any
+  // self-reported checkpoint -- are the sole arbiter of success.
   res.pr = capturePr(branch, token);
-  let gatesPass = false;
-  if (!timedOut) {
-    const v = validateSprint({ repo, branch, pr: res.pr });
-    res.gates = v.gates;
-    gatesPass = v.pass;
-  }
+  const v = validateSprint({ repo, branch, pr: res.pr });
+  res.gates = v.gates;
 
-  if (timedOut) {
-    const why = diagnoseFailure(logPath);
-    res.status = 'FAIL';
-    res.notes = `timed out after ${timeoutS}s; ${why || cp.reason || ''}`.trim();
-  } else if (cp.pass && gatesPass) {
+  if (v.pass) {
     res.status = 'PASS';
-    res.notes = 'checkpoints + all validation gates passed';
-  } else if (!cp.pass) {
-    res.status = 'FAIL';
-    res.notes = cp.reason || diagnoseFailure(logPath) || 'incomplete';
+    res.notes = 'all validation gates passed';
   } else {
-    const failed = (res.gates || []).filter((g) => !g.pass).map((g) => g.name);
+    const failed = res.gates.filter((g) => !g.pass).map((g) => g.name);
     res.status = 'FAIL';
-    res.notes = `validation gates failed: ${failed.join(', ')}`;
+    const why = timedOut ? `timed out after ${timeoutS}s; ` : '';
+    res.notes = `${why}gates failed: ${failed.join(', ')}`.trim();
+    if (timedOut && !res.pr) res.notes += `; ${diagnoseFailure(logPath)}`.replace(/; $/, '');
   }
 
   if (!keepPr) teardownPr(branch, token);

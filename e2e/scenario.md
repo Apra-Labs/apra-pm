@@ -1,60 +1,35 @@
-# pm-lite e2e scenario -- fleet-e2e-toy sprint
+# pm-lite e2e -- drive one disciplined sprint on the toy
 
-You are the orchestrator. Use the **pm-lite** skill to drive a full sprint on the
-repository already cloned at `{{REPO}}` (base branch: `main`, remote `origin` ->
-the toy). Run the track on branch `{{BRANCH}}`. Do not write code yourself; dispatch
-the planner, plan-reviewer, doer, and reviewer subagents per the skill. Push your
-work to `origin`; at the end raise a PR and do NOT merge it.
+You are the orchestrator. Use the **pm-lite** skill to run ONE full sprint on the
+repository already cloned at `{{REPO}}` (base branch `main`, remote `origin` -> the
+toy), as a single track on branch `{{BRANCH}}`. Do not write code yourself -- run the
+pm-lite commands below and let the skill's planner / plan-reviewer / doer / reviewer
+agents do the work.
 
-## Checkpoints
+Keep it simple: run the three commands in order and keep your turn alive until each
+finishes. Do not stop or wait for the user between them.
 
-Record each checkpoint by APPENDING one JSON object per line to `checkpoints.json`
-in `{{REPO}}`. Do NOT print CHECKPOINT lines as plain text -- some CLIs exit on that.
+## 1. plan
 
-```
-# unix
-printf '%s\n' '{"id":"repo-setup","status":"PASS","notes":"one short note"}' >> {{REPO}}/checkpoints.json
-```
-```
-# windows
-Add-Content -Path {{REPO}}\checkpoints.json -Value '{"id":"repo-setup","status":"PASS","notes":"one short note"}'
-```
+Run `bd ready` in `{{REPO}}` and take the top **3 ready P1 issues**. Run the pm-lite
+**plan** command with those 3 issues as the requirement (list their ids and full
+text). This writes `requirements.md`, dispatches the planner, loops the plan-reviewer
+to APPROVED, creates the beads epic + tasks, and writes `progress.json` -- all on
+`{{BRANCH}}`.
 
-Step ids in order: `repo-setup`, `discover`, `plan`, `sprint`, `verify`, `pr`,
-`done`. Write `done` last. If a step fails, write that id with `"status":"FAIL"` and
-a note, then stop. After each checkpoint, immediately continue to the next step.
+## 2. start
 
-## T1 -- repo-setup
+Run the pm-lite **start** command to drive the doer-review loop for every phase to
+APPROVED. The doer implements one task at a time and commits each; the reviewer
+returns a verdict; iterate until APPROVED.
 
-Confirm `{{REPO}}` is on `main` with a clean tree and a working `origin` remote.
-Detect the project's test/build command. -> checkpoint `repo-setup`.
+## 3. cleanup
 
-## T2 -- discover
+Run the pm-lite **cleanup** command: close the beads epic and the 3 delivered issues,
+drop the sprint scaffolding files, push `{{BRANCH}}` to `origin`, and raise a PR from
+`{{BRANCH}}` into `main`. Do NOT merge it.
 
-Run `bd ready` in `{{REPO}}`. Pick 3 ready P1 issues. Write `requirements.md`
-capturing exactly those issues (full detail, not summaries). -> checkpoint `discover`.
-
-## T3 -- plan
-
-Run the pm-lite plan loop: create the track worktree for branch `{{BRANCH}}` off
-`main`, dispatch the planner (which assigns a model per task), then loop the
-plan-reviewer until APPROVED. Create the beads tasks from PLAN.md and generate
-`progress.json`. -> checkpoint `plan`.
-
-## T4 -- sprint
-
-Run the doer-review loop to completion: the doer implements the planned tasks and
-stops at the VERIFY checkpoint with the project's test suite passing; the reviewer
-reviews the diff and returns a verdict; iterate doer<->reviewer until the reviewer
-APPROVES. -> checkpoint `sprint`.
-
-## T5 -- verify
-
-Confirm `{{BRANCH}}` carries the committed work and the project's test suite passes
-against it. -> checkpoint `verify`.
-
-## T6 -- pr
-
-Push `{{BRANCH}}` to `origin` and raise a pull request from `{{BRANCH}}` into `main`
-(`gh pr create`). Do NOT merge it. Confirm the branch is on `origin` and the PR
-exists; record the PR URL in the note. -> checkpoint `pr`, then checkpoint `done`.
+That is the whole run. Success is judged independently from the resulting branch and
+PR -- a real PR with 10+ commits, the scaffolding files present in history but not in
+the PR's net diff, and the 3 picked issues closed. So just run the three commands
+faithfully and let the skill keep the sprint disciplined.

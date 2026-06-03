@@ -64,7 +64,7 @@ function buildReport(results) {
     if (!r.pr || !r.pr.commits.length) continue;
     lines.push(`<details><summary>${r.id}: ${r.pr.commits.length} commits -> PR #${r.pr.number}</summary>`);
     lines.push('');
-    for (const c of r.pr.commits) lines.push(`- \`${c.sha}\` ${c.msg.replace(/\|/g, '\\|')}`);
+    for (const c of r.pr.commits) lines.push(`- \`${c.sha}\` ${c.author ? `**${c.author}** ` : ''}${c.msg.replace(/\|/g, '\\|')}`);
     lines.push('');
     lines.push(`[View all commits](${r.pr.commitsUrl})`);
     lines.push('');
