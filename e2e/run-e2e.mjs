@@ -39,7 +39,7 @@ const scenarioTpl = fs.readFileSync(path.join(E2E, 'scenario.md'), 'utf-8');
 // The autonomy flags matter: without them the CLI stalls on permission/trust gates
 // (e.g. when dispatching a subagent) and times out. Override with PMLITE_E2E_CMD_<P>.
 const CLI = {
-  claude: ['claude', '-p', '{PROMPT}', '--permission-mode', 'acceptEdits'],
+  claude: ['claude', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
   gemini: ['gemini', '-p', '{PROMPT}', '--model', 'auto', '--skip-trust'],
   agy: ['agy', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
 };

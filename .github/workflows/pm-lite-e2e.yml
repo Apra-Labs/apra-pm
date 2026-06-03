@@ -91,7 +91,7 @@ jobs:
           P='${{ steps.prov.outputs.provider }}'
           PROMPT="Dispatch ONE subagent (use your agent/subagent/task mechanism) whose only job is to reply with the exact text SUBAGENT-OK. Wait for it to finish, then print its reply and the text PMLITE-READY. Do nothing else."
           case "$P" in
-            claude) cmd=(claude -p "$PROMPT" --permission-mode acceptEdits) ;;
+            claude) cmd=(claude -p "$PROMPT" --dangerously-skip-permissions) ;;
             gemini) cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
             agy)    cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
           esac

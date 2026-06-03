@@ -49,10 +49,10 @@ skip design and note in `requirements.md` that none was needed.
 
 ## Phase 3 -- Plan (loop)
 
-1. Dispatch `planner` (background, strongest model). It explores, drafts,
+1. Dispatch `planner` (inline, strongest model). It explores, drafts,
    self-critiques, writes `PLAN.md` with an exact `model` assigned to every work
    task, and commits.
-2. Loop: dispatch `plan-reviewer` (background, strongest model). Read the
+2. Loop: dispatch `plan-reviewer` (inline, strongest model). Read the
    `feedback.md` verdict. `CHANGES NEEDED` -> dispatch `planner` to revise ->
    re-review. `APPROVED` -> continue.
 3. Push the plan into beads: one task per `PLAN.md` item under the epic, with
@@ -107,8 +107,9 @@ track runs its OWN full pipeline (`planner` -> `plan-reviewer` -> `doer` ->
    change, that track stops and the orchestrator serializes the revision (one track
    revises; dependents wait until it merges).
 2. **Fan out.** Create one worktree + branch per track. Run each track's plan loop
-   and execute loop independently. Dispatch in the background and handle completions
-   as they arrive -- track A's reviewer may run while track B's doer works. In
+   and execute loop independently. Dispatch one pipeline per track and poll them to
+   completion within the turn -- track A's reviewer may run while track B's doer
+   works -- keeping the turn alive until their results are in. In
    beads, every task carries its track (assignee or label) so the tree shows which
    track owns what.
 3. **Integrate.** When a track is APPROVED, merge its branch into the integration

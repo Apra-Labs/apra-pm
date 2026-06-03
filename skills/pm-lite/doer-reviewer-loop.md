@@ -1,6 +1,7 @@
 # Doer-Reviewer Loop
 
-The execute-phase loop for one track. Every dispatch is a background subagent call;
+The execute-phase loop for one track. Every dispatch is an inline subagent call (its
+result returns in the same turn);
 every handoff is a file committed on the track's branch; every task transition is
 recorded in beads. (The plan loop that precedes this -- planner / plan-reviewer --
 is in `sprint.md`.)
@@ -11,17 +12,17 @@ is in `sprint.md`.)
 PLAN approved, beads tasks created, progress.json written
   for each phase in PLAN.md:
     1. Claim the phase's first pending task in beads (status in_progress).
-       Dispatch the doer (background) with the task's assigned model -> doer executes
+       Dispatch the doer (inline) with the task's assigned model -> doer executes
        the phase's pending tasks in order, commits each, STOPS at the VERIFY checkpoint.
     2. On doer completion: read progress.json. If a task is blocked -> handle the
        blocker. Assert the worktree is clean (`git status --porcelain` empty); a dirty
        tree means the doer left uncommitted work -- send it back to commit before any
        review. Otherwise close the phase's completed tasks in beads and dispatch the
-       reviewer (background, strongest model).
+       reviewer (inline, strongest model).
     3. On reviewer completion: read the feedback.md verdict.
          APPROVED       -> advance to the next phase (or Completion if last).
          CHANGES NEEDED -> create one beads task per HIGH finding (assigned to the
-                           track), dispatch the doer to fix (background) -> back to
+                           track), dispatch the doer to fix (inline) -> back to
                            step 2. Close each finding task when the reviewer clears it.
   All phases APPROVED -> Completion (see sprint.md).
 ```
@@ -40,15 +41,17 @@ with three model groups becomes up to three doer dispatches, each on its own mod
 The dispatch whose streak reaches the VERIFY task carries through it. The reviewer is
 always dispatched on the strongest model available.
 
-## Dispatch in the background
+## Dispatch and wait inline
 
-Dispatch each subagent non-blocking so the orchestrator stays responsive; the
-harness re-invokes the orchestrator when the agent finishes. With multiple tracks,
-fan out a batch of background dispatches (one per active track) and handle each
-completion as it arrives -- track A's reviewer can run while track B's doer is
-still working.
+Dispatch each subagent and wait for its result in the same turn -- the dispatch
+returns the agent's result to you inline. Run the loop sequentially this way: one
+dispatch, its result, the next. NEVER end your turn while a dispatched agent still
+owes you a result; in a headless run nothing re-invokes you, so ending the turn
+parks the sprint. With multiple tracks, dispatch one per active track and poll them
+to completion within the turn -- track A's reviewer can run while track B's doer
+works -- but keep the turn alive until you have collected their results.
 
-When an agent finishes, the orchestrator's FIRST action is to read state from git
+After each agent returns, the orchestrator's FIRST action is to read state from git
 and beads (`progress.json`, `feedback.md`, `git log <base>..<branch>`, `bd show`);
 those are the source of truth for what was dispatched and where it landed.
 

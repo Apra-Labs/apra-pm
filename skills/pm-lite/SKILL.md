@@ -61,15 +61,16 @@ files, so concurrent tracks never collide. See `worktrees.md` for topology and
 
 ## Dispatch
 
-Each dispatch is one background subagent call. It carries everything the agent
+Each dispatch is one inline subagent call. It carries everything the agent
 needs in the prompt, since agents share the filesystem:
 
 - **Role** -- one of the four above.
 - **Prompt** -- pins the track's worktree (absolute path + branch) and states the
   task. Per-role templates are in `doer-reviewer-loop.md`.
-- **Background** -- dispatch non-blocking so the orchestrator stays responsive and
-  is re-invoked when the agent finishes. For parallel tracks, fan out a batch of
-  background dispatches and handle completions as they arrive.
+- **Inline** -- dispatch a subagent and receive its result in the same turn, then
+  act on it; run the loop sequentially this way. For parallel tracks, dispatch
+  several at once and poll them to completion within the turn. Keep the turn alive
+  until the results are in -- do not end it expecting to be re-invoked.
 - **Model** -- the exact model the planner assigned to this task (see Model
   assignment); the orchestrator passes it through verbatim.
 
@@ -105,8 +106,12 @@ Fixed rules:
    on every completion and after any restart. See `sprint.md` Recovery.
 3. One worktree per track. Create it before dispatching the track; remove it at
    cleanup. See `worktrees.md`.
-4. Dispatch in the background and stay responsive; the harness re-invokes you when
-   an agent finishes.
+4. Keep your turn alive until the dispatched work returns. A subagent dispatch
+   returns the agent's result to you inline -- wait for it within the same turn and
+   then act on it. NEVER end your turn while a dispatched agent still owes you a
+   result: in a non-interactive (headless) run nothing re-invokes you, so ending the
+   turn parks the sprint forever. For parallel tracks, dispatch several at once and
+   poll them to completion within the turn -- still without ending it.
 5. Run each track's loop autonomously. After a plan is APPROVED, start execution.
    At every VERIFY checkpoint, immediately dispatch the reviewer. Do not wait for
    the user between doer and reviewer handoffs. Escalate only on genuine ambiguity,
@@ -157,7 +162,7 @@ and beads.
 
 - `worktrees.md` -- worktree topology, parallel-track layout, lifecycle, transport.
 - `doer-reviewer-loop.md` -- the dispatch loop: per-role prompt templates,
-  background handling, continuity between dispatches, and safeguards.
+  inline dispatch, continuity between dispatches, and safeguards.
 - `sprint.md` -- full lifecycle: requirements, design, planning, execution, deploy,
   completion, sprint selection, parallel-track integration, and recovery.
 - `beads.md` -- the task-DB backbone: epic/task lifecycle, findings-as-tasks,
