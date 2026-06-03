@@ -1,101 +1,89 @@
-# pm-lite -- Direction and Design Intent
+# pm-lite -- Design Intent
 
-Status: direction agreed, not yet implemented. This doc is the north star for
-evolving `skills/pm-lite`; it records decisions so later work does not re-litigate
-them. It deliberately does not prescribe implementation detail.
+The decisions behind pm-lite's design, recorded so later work does not
+re-litigate them. For how to use the skill, see `skills/pm-lite/SKILL.md`.
 
-## Vision
+## Lineage
 
-`pm-lite` plus the four agents (`planner`, `plan-reviewer`, `doer`, `reviewer`)
-will **replace** the current `pm` skill. The orchestrator and all four agents run
-in one session under a single provider (all Claude, or all AGY -- never mixed),
-and drive a sprint through the plan-review and doer-review loops to APPROVED and a
-PR. The orchestrator never writes code.
+pm-lite descends from the fleet `pm` skill and runs the same plan -> doer -> review
+workflow. The rework: it runs from a single session with local subagents and git
+worktrees rather than remote members over a server, and keeps all state in git and
+beads. If you know the `pm` skill, pm-lite is its standalone, server-free successor;
+this doc and the skill itself otherwise stand on their own.
 
-## State model -- git and beads only
+## What pm-lite is
 
-There are **no orchestrator-side status files**. The `pm` skill's `status.md`
-(per-project tracker) and `projects.md` (multi-project registry) are dropped
-entirely. All sprint state lives in exactly two places:
+One orchestrator session drives a project's development by dispatching four
+subagents -- `planner`, `plan-reviewer`, `doer`, `reviewer` -- through the
+plan-review and doer-review loops to APPROVED and a PR. The orchestrator and all
+four agents run in one session under a single provider, sharing the local
+filesystem. The orchestrator never writes code.
 
-- **git, on the feature branch:** `requirements.md`, `design.md`, `PLAN.md`,
-  `progress.json`, `feedback.md`. These are the message bus between agents and the
-  durable record of plan, progress, and review.
+## State model -- git and beads
+
+All sprint state lives in two places:
+
+- **git, on each track's branch:** `requirements.md`, `design.md`, `PLAN.md`,
+  `progress.json`, `feedback.md` -- the message bus between agents and the durable
+  record of intent, plan, progress, and review.
 - **beads (`bd`):** the task database -- epic, tasks, dependencies, assignees,
-  findings, backlog, PR link.
+  review findings, backlog, PR link.
 
-Recovery after an orchestrator restart reads from these two sources only -- never
-from a status file and never from conversation memory.
+Recovery after a restart reads from these two sources, so a compaction or crash is
+survivable: position is always re-derivable from git and beads.
 
-## Scope -- one PM, one project
+## Scope -- one project per orchestrator
 
-A pm-lite orchestrator manages exactly **one project**. There is no central PM
-root, no portfolio view, no cross-project registry. The beads DB is therefore
-per-project (lives with the project), with one epic per sprint. The multi-project
-orchestration that `pm` supported is out of scope by design.
+An orchestrator manages exactly one project. The beads DB is therefore per-project,
+with one epic per sprint. This keeps the model simple: one repo, one task DB, one
+sprint at a time (single or multi-track).
 
-## Beads as the backbone (Group B)
+## Beads as the backbone
 
-beads is required, not optional. It owns all tracking that used to be split
-between `status.md` and beads:
+beads is required, not optional. It owns all tracking:
 
-- One epic per sprint; one task per PLAN.md item, with dependencies wired.
-- Lifecycle hooks: claim/in_progress on dispatch, close at VERIFY.
-- **Reviewer HIGH findings become tracked tasks** assigned back to the doer, so no
+- One epic per sprint; one task per plan item, with dependencies wired.
+- Lifecycle: claim on dispatch, close at VERIFY.
+- Reviewer HIGH findings become tracked tasks assigned back to the track, so no
   finding is lost between review and fix.
-- **Backlog management:** deferred items and unaddressed MEDIUM/LOW findings become
-  low-priority tasks with structured detail; re-prioritize / promote / close.
-- Cross-sprint dependencies and PR linking via beads notes.
-- Recovery and "what is in flight" come from `bd` queries, not a status file.
+- Deferred work and unaddressed MEDIUM/LOW findings become low-priority backlog
+  tasks; promote / re-prioritize / close as needed.
+- "What is in flight" and recovery come from `bd` queries.
 
-## Single-sprint completeness to build (Group A)
+## Parallelism via worktrees
 
-Bring one pm-lite sprint to full parity with pm's single-pair sprint:
+A project may split into independent tracks. Each track gets its own branch and git
+worktree and runs its own full pipeline (`planner` -> `plan-reviewer` -> `doer` ->
+`reviewer`) concurrently with the others. Worktrees share one object database, so a
+commit in one is instantly visible to the orchestrator and to other tracks. Within
+a track the pipeline is sequential; across tracks everything runs in parallel. The
+orchestrator fans out, drives each track's loop, and integrates the tracks at the
+end.
 
-- **Design phase:** a `design.md` step between requirements and plan; the planner
-  consumes it and the reviewer checks code against it. (This is a git artifact on
-  the branch -- consistent with the state model, not a status file.)
-- **Deploy phase:** a `deploy.md` runbook with execute / verify / rollback steps.
-- **Simple-sprint variant + selection:** a lightweight path for 1-3 task work that
-  skips the full PLAN/progress harness, plus guidance on choosing simple vs full
-  vs parallel-track.
-- **Command surface:** explicit verbs (plan / start / status / resume / recover /
-  deploy / backlog / cleanup) -- but every verb reads and writes state through
-  beads and git, NOT a status file. `status` is a `bd` query plus `git log`;
-  `recover` is `bd` plus on-disk `progress.json`/`feedback.md`.
+## Model assignment
 
-Note: the `status.md` item from the original Group A list is **replaced** by
-beads + git, not built.
+The planner assigns each task the exact model to run it on -- a weaker, faster model
+for mechanical work, the strongest for high-ambiguity design -- chosen from the
+models available in the current environment, and writes it into `PLAN.md`. The
+orchestrator dispatches each doer with that model. The planner, plan-reviewer, and
+reviewer always run on the strongest model available, since planning and review are
+the quality gates. Making the planner's model choices smarter is a later refinement.
 
-## Fleet's residual role (optional, not a loop dependency)
+## Lifecycle
 
-pm-lite's core doer-review loop is fully local -- it does not depend on the fleet
-skill or its MCP server for dispatch. Fleet remains available for three specific
-needs, used only when a sprint requires them:
+```
+requirements -> design -> plan (loop) -> execute (doer-review loop)
+             -> deploy (if applicable) -> complete -> PR
+```
 
-- **Secrets / credentials:** the fleet credential store for tasks that need API
-  keys or tokens.
-- **`execute_command`:** running a shell command on a remote member when work is
-  not local.
-- **`execute_prompt` on remote members or other Claude instances:** delegating to a
-  worker that is not in the local session.
+A lightweight path exists for small, low-risk work (1-3 tasks): a concise
+requirements file, a small beads epic, a single doer-review cycle, no full
+plan/progress harness.
 
-This residual role connects to the `enhancements/skill-reorg` branch work. It is an
-optional capability layer, not the transport for the doer-reviewer loop. A sprint
-that needs none of these never touches fleet.
-
-## Explicitly dropped from pm
-
-- `status.md` (per-project tracker) and `projects.md` (registry).
-- Central PM root and multi-project management.
-- Permission composition for the local loop (the harness governs local subagent
-  permissions; role tool-scoping is already in the agent definitions). Permission
-  handling only matters when reaching out to fleet for remote work.
-
-## Open questions (decide before/while implementing)
+## Open questions
 
 - Where exactly the per-project beads DB lives relative to the repo and worktrees.
-- Whether `design.md` is mandatory for every sprint or only when complexity
-  warrants it (likely: required for full sprints, skipped for simple-sprints).
-- Exact command-verb surface and how `recover` reconstructs in-flight state from
+- Whether `design.md` is mandatory for every sprint or only when complexity warrants
+  it (likely: required for full sprints, skipped for lightweight ones).
+- The exact command-verb surface and how `recover` reconstructs in-flight state from
   beads + git after a cold start.

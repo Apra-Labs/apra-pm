@@ -54,8 +54,8 @@ node e2e/run-e2e.mjs --provider claude          # all claude suites for this hos
 node e2e/run-e2e.mjs --suite s1.2               # one suite
 ```
 
-Suites mirror the upstream convention: `s1`=Claude, `s7`=Gemini, `s8`=AGY, with
-`.1/.2/.3` as the Windows/Linux/macOS matrix (`e2e/suites.json`). CLI flags vary by
+Suites are grouped by provider: `s1`=Claude, `s7`=Gemini, `s8`=AGY, with `.1/.2/.3`
+as the Windows/Linux/macOS matrix (`e2e/suites.json`). CLI flags vary by
 tool; override a provider's command with e.g.
 `PMLITE_E2E_CMD_CLAUDE="claude -p {PROMPT} --permission-mode acceptEdits"`.
 
