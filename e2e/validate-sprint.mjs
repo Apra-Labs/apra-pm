@@ -95,6 +95,19 @@ function readBeadsDisk(repo) {
   return map;
 }
 
+// Ask the live bd DB whether an issue is closed, run from the base checkout (where
+// the orchestrator ran every `bd` command). Backend-agnostic: works whether bd is
+// jsonl-native or db-backed. Returns false if bd is absent or the query fails.
+function bdSaysClosed(repo, id) {
+  const r = spawnSync('bd', ['show', id, '--json'], { cwd: repo, encoding: 'utf-8' });
+  if (r.status !== 0 || !r.stdout) return false;
+  try {
+    const o = JSON.parse(r.stdout);
+    const st = o.status ?? o.issue?.status ?? o.Status;
+    return String(st).toLowerCase() === 'closed';
+  } catch { return false; }
+}
+
 // Gather facts from the pushed branch and evaluate. `repo` is the local clone whose
 // origin is the toy; the branch is fetched fresh so this works even though the work
 // was done in a worktree sharing the same .git.
@@ -117,14 +130,23 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   const touchedBasenames = (git(repo, ['log', range, '--name-only', '--pretty=format:']).stdout || '')
     .split('\n').map((s) => s.trim()).filter(Boolean).map(baseName);
 
-  // beads issues that were open P1 at base and are closed after the sprint.
-  // Baseline comes from the base branch; "closed now" comes from the on-disk DB
-  // (where `bd close` writes), not the branch -- the DB lives off the track branch.
+  // beads P1 issues that were open at base and are closed after the sprint.
+  // Baseline (open P1 candidates) comes from the base branch. For "closed now" read
+  // the on-disk DB first (fast, correct when bd is jsonl-native); for any candidate
+  // still showing open there, double-check the live bd DB -- `bd init --from-jsonl`
+  // switches bd to a db backend that leaves issues.jsonl stale, so a closed issue can
+  // still look open in the file (seen on the macOS runner).
   const baseB = readBeadsRef(repo, base);
-  const headB = readBeadsDisk(repo);
+  const candidates = [...baseB].filter(([, o]) => isP1(o) && !isClosed(o)).map(([id]) => id);
+  const diskB = readBeadsDisk(repo);
   const closedP1 = [];
-  for (const [id, bo] of baseB) {
-    if (isP1(bo) && !isClosed(bo) && isClosed(headB.get(id))) closedP1.push(id);
+  const recheck = [];
+  for (const id of candidates) {
+    if (isClosed(diskB.get(id))) closedP1.push(id);
+    else recheck.push(id);
+  }
+  for (const id of recheck) {
+    if (bdSaysClosed(repo, id)) closedP1.push(id);
   }
 
   return evaluateGates({ pr, commitCount, finalFiles, touchedBasenames, closedP1, minCommits, expectedIssues });
