@@ -77,8 +77,8 @@ jobs:
         run: |
           case '${{ steps.prov.outputs.provider }}' in
             claude) CFG="$HOME/.claude"; AGENTS_DIR="$CFG/agents" ;;
-            gemini) CFG="$HOME/.gemini"; AGENTS_DIR="$CFG/config/agents" ;;
-            agy)    CFG="$HOME/.gemini/antigravity-cli"; AGENTS_DIR="$CFG/config/agents" ;;
+            gemini) CFG="$HOME/.gemini"; AGENTS_DIR="$CFG/agents" ;;
+            agy)    CFG="$HOME/.gemini/antigravity-cli"; AGENTS_DIR="$CFG/agents" ;;
           esac
           test -f "$CFG/skills/pm-lite/SKILL.md" || { echo "::error::pm-lite skill missing at $CFG/skills/pm-lite"; exit 1; }
           for a in planner plan-reviewer doer reviewer; do
