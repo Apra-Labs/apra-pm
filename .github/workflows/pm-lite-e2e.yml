@@ -1,4 +1,5 @@
 name: pm-lite-e2e
+run-name: pm-lite E2E ${{ inputs.suite }} - ${{ github.ref_name }}
 
 # Drives the pm-lite skill headless against the fleet-e2e-toy repo, one suite per run.
 # Runs on the same self-hosted runners as the fleet e2e (labels: self-hosted +
@@ -44,11 +45,14 @@ jobs:
           esac
           echo "provider=$P" >> "$GITHUB_OUTPUT"
 
-      # agy is not on PATH by default; add its standard install dir for later steps.
+      # agy is not on PATH by default in the runner's non-login shell (the user's
+      # interactive PATH from .zshrc etc. is not loaded). Its standard installer drops
+      # the binary in ~/.local/bin; older/other layouts are added as fallbacks.
       - name: Locate agy CLI
         if: ${{ steps.prov.outputs.provider == 'agy' }}
         shell: bash
         run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           if   [ "$RUNNER_OS" = "Linux"   ]; then echo "$HOME/.local/share/agy/bin" >> "$GITHUB_PATH"
           elif [ "$RUNNER_OS" = "macOS"   ]; then echo "$HOME/Library/Application Support/agy/bin" >> "$GITHUB_PATH"
           elif [ "$RUNNER_OS" = "Windows" ]; then echo "$(cygpath -w "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}/agy/bin")" >> "$GITHUB_PATH"
@@ -95,7 +99,14 @@ jobs:
             gemini) cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
             agy)    cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
           esac
-          out=$(timeout 180 "${cmd[@]}" 2>&1); rc=$?
+          # macOS ships no GNU `timeout` (it is `gtimeout` from coreutils); fall back
+          # to running without a wrapper rather than dying with exit 127.
+          TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+          if [ -n "$TIMEOUT_BIN" ]; then
+            out=$("$TIMEOUT_BIN" 180 "${cmd[@]}" 2>&1); rc=$?
+          else
+            out=$("${cmd[@]}" 2>&1); rc=$?
+          fi
           echo "$out"
           if [ $rc -eq 124 ]; then echo "::error::$P hung dispatching a subagent (timeout) -- pm-lite cannot run on this provider/config"; exit 1; fi
           echo "$out" | grep -q "PMLITE-READY" || { echo "::error::$P produced no response -- start/auth issue"; exit 1; }

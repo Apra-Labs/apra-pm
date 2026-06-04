@@ -4,8 +4,15 @@
 // For each selected suite: clone the toy repo, render the scenario with the repo
 // path and a unique branch, invoke the provider's CLI headless with the pm-lite
 // skill installed, then read checkpoints.json the orchestrator wrote and decide
-// pass/fail. The sprint pushes to the toy and raises a real PR (no merge); the
-// runner closes that PR and deletes its branch afterward unless --keep-pr.
+// pass/fail. The sprint pushes to the toy and raises a real PR (no merge).
+//
+// Inspection: before tearing the PR down we capture its URL and commit list and
+// print them into the job summary. A closed PR with a deleted branch still serves
+// /pull/<n>/commits on GitHub, so a reviewer can always click through to see exactly
+// how the sprint progressed -- even though teardown keeps the toy tidy.
+//
+// Telemetry: providers are invoked with stream-json output so token usage (in/out,
+// cache) is captured per run and reported in the summary for cost-regression tracking.
 //
 // Usage:
 //   node e2e/run-e2e.mjs [--suite s1.1] [--provider claude|gemini|agy] [--timeout 1800] [--keep-pr]
@@ -28,7 +35,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseCheckpointsFile } from './extract-results.mjs';
+import { parseTelemetryFile, diagnoseFailure } from './extract-results.mjs';
+import { validateSprint } from './validate-sprint.mjs';
 import { postSummary } from './post-summary.mjs';
 
 const E2E = path.dirname(fileURLToPath(import.meta.url));
@@ -37,11 +45,13 @@ const scenarioTpl = fs.readFileSync(path.join(E2E, 'scenario.md'), 'utf-8');
 
 // Default headless command per provider. {PROMPT} is replaced with the scenario.
 // The autonomy flags matter: without them the CLI stalls on permission/trust gates
-// (e.g. when dispatching a subagent) and times out. Override with PMLITE_E2E_CMD_<P>.
+// (e.g. when dispatching a subagent) and times out. stream-json output is what lets
+// us account tokens. Override with PMLITE_E2E_CMD_<P>.
 const CLI = {
-  claude: ['claude', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
-  gemini: ['gemini', '-p', '{PROMPT}', '--model', 'auto', '--skip-trust'],
-  // agy print mode defaults to a 5m wait; a full sprint is ~30m, so raise it.
+  claude: ['claude', '-p', '{PROMPT}', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose', '--max-turns', '100'],
+  gemini: ['gemini', '-p', '{PROMPT}', '--model', 'auto', '--skip-trust', '--output-format', 'stream-json'],
+  // agy print mode defaults to a 5m wait; a full sprint is ~30m, so raise it. agy
+  // emits no stream-json: its transcript is read from disk after exit (see runAgy).
   agy: ['agy', '--print-timeout=40m', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
 };
 
@@ -68,11 +78,38 @@ function parseArgs() {
 // owner/repo slug for gh commands, derived from the toy URL.
 const OWNER_REPO = (cfg.toy.match(/github\.com[/:]([^/]+\/[^/.]+)/) || [])[1] || null;
 
-// Close the e2e PR and delete its branch on the toy -- best effort, so repeated
-// runs do not pile up on the shared public repo.
+function ghEnv(token) { return token ? { ...process.env, GH_TOKEN: token } : process.env; }
+
+// Capture the PR raised for this branch BEFORE teardown: its URL, commit list, and
+// the /commits permalink that survives branch deletion. Best effort.
+function capturePr(branch, token) {
+  if (!OWNER_REPO) return null;
+  const r = spawnSync('gh', ['pr', 'view', branch, '-R', OWNER_REPO, '--json', 'url,number,state,commits'],
+    { encoding: 'utf-8', env: ghEnv(token) });
+  if (r.status !== 0 || !r.stdout) return null;
+  try {
+    const j = JSON.parse(r.stdout);
+    if (!j.url) return null;
+    return {
+      number: j.number,
+      url: j.url,
+      state: j.state,
+      commitsUrl: `${j.url}/commits`,
+      commits: (j.commits || []).map((c) => ({
+        sha: String(c.oid || '').slice(0, 7),
+        msg: c.messageHeadline || '',
+        author: (c.authors && c.authors[0] && (c.authors[0].name || c.authors[0].login)) || '',
+      })),
+    };
+  } catch { return null; }
+}
+
+// Close the e2e PR and delete its branch on the toy -- good housekeeping so repeated
+// runs do not pile up on the shared public repo. The commits stay visible via the
+// captured /pull/<n>/commits URL even after the branch is gone.
 function teardownPr(branch, token) {
   if (!OWNER_REPO) return;
-  const env = token ? { ...process.env, GH_TOKEN: token } : process.env;
+  const env = ghEnv(token);
   spawnSync('gh', ['pr', 'close', branch, '-R', OWNER_REPO, '--delete-branch'], { encoding: 'utf-8', env });
   // Drop the branch even if no PR was opened (failure before the pr step).
   spawnSync('gh', ['api', '-X', 'DELETE', `repos/${OWNER_REPO}/git/refs/heads/${branch}`], { encoding: 'utf-8', env });
@@ -94,13 +131,55 @@ function commandFor(provider, prompt) {
 
 function git(args, opts = {}) { return spawnSync('git', args, { encoding: 'utf-8', ...opts }); }
 
+// agy writes its conversation to disk, not stdout. After it exits we look up the
+// conversation id for the run cwd and dump its transcript.jsonl. Mirrors the proven
+// fleet e2e approach.
+const AGY_TRANSCRIPT_SCRIPT =
+  "const fs=require('fs'),path=require('path');const home=process.env.USERPROFILE||process.env.HOME||'';" +
+  "const cache=JSON.parse(fs.readFileSync(path.join(home,'.gemini','antigravity-cli','cache','last_conversations.json'),'utf8'));" +
+  "const norm=p=>path.resolve(p).toLowerCase().split(path.sep).join('/');const target=norm(process.argv[1]);" +
+  "let id='';for(const k of Object.keys(cache)){if(norm(k)===target){id=cache[k];break;}}" +
+  "if(!id){process.stdout.write('FLEET_TRANSCRIPT_MISSING:NO_CONV\\n');process.exit(0);}" +
+  "const tp=path.join(home,'.gemini','antigravity-cli','brain',id,'.system_generated','logs','transcript.jsonl');" +
+  "if(fs.existsSync(tp)){process.stdout.write('FLEET_TRANSCRIPT_START\\n');process.stdout.write(fs.readFileSync(tp,'utf8'));process.stdout.write('\\nFLEET_TRANSCRIPT_END\\n');}" +
+  "else{process.stdout.write('FLEET_TRANSCRIPT_MISSING:'+id+'\\n');}";
+
+function appendAgyTranscript(cwd, logPath) {
+  const r = spawnSync('node', ['-e', AGY_TRANSCRIPT_SCRIPT, cwd], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 });
+  fs.appendFileSync(logPath, `\n${r.stdout || ''}${r.stderr || ''}`);
+}
+
+// agy -p stops after each text response, so a full sprint needs resuming until the
+// sprint is done. The terminal signal is the PR itself (cleanup raises it), checked
+// via `isDone()`. Returns { timedOut }.
+function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
+  const first = spawnSync(cmd, args, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+  fs.writeFileSync(logPath, `${first.stdout || ''}\n---STDERR---\n${first.stderr || ''}`);
+  appendAgyTranscript(cwd, logPath);
+  if (first.error && first.error.code === 'ETIMEDOUT') return { timedOut: true };
+
+  for (let i = 1; i <= 4; i++) {
+    if (isDone()) break;
+    console.log(`[agy] resume attempt ${i} -- no PR raised yet`);
+    const cont = ['--print-timeout=40m', '--continue', '-p',
+      'Continue the sprint from where you left off. Finish the pm-lite start and cleanup commands without stopping, so a PR is raised.',
+      '--dangerously-skip-permissions'];
+    const r = spawnSync(cmd, cont, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+    fs.appendFileSync(logPath, `\n---RESUME ${i}---\n${r.stdout || ''}\n${r.stderr || ''}`);
+    appendAgyTranscript(cwd, logPath);
+    if (r.error && r.error.code === 'ETIMEDOUT') return { timedOut: true };
+  }
+  return { timedOut: false };
+}
+
 function runSuite(suite, timeoutS, keepPr) {
-  const res = { id: suite.id, provider: suite.provider, os: suite.os, status: '', notes: '', checkpoints: [] };
+  const res = { id: suite.id, provider: suite.provider, os: suite.os, status: '', notes: '', pr: null, telemetry: null, gates: null };
   const { bin } = commandFor(suite.provider, '');
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), `pmlite-e2e-${suite.id}-`));
   const repo = path.join(work, 'repo');
+  const logPath = path.join(work, 'cli.log');
 
   const clone = git(['clone', cfg.toy, repo]);
   if (clone.status !== 0) { res.status = 'FAIL'; res.notes = `clone failed: ${(clone.stderr || '').trim().slice(0, 200)}`; return res; }
@@ -121,15 +200,36 @@ function runSuite(suite, timeoutS, keepPr) {
   const { bin: cmd, args } = commandFor(suite.provider, prompt);
 
   console.log(`[${suite.id}] ${cmd} (cwd ${work}, branch ${branch}) ...`);
-  const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
-  fs.writeFileSync(path.join(work, 'cli.log'), `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
+  let timedOut = false;
+  if (suite.provider === 'agy') {
+    ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
+  } else {
+    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+    fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
+    timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
+  }
 
-  const cp = parseCheckpointsFile(path.join(repo, 'checkpoints.json'), cfg.terminal, cfg.checkpoints);
-  res.checkpoints = cp.checkpoints;
   res.branch = branch;
-  if (r.error && r.error.code === 'ETIMEDOUT') { res.status = 'FAIL'; res.notes = `timed out after ${timeoutS}s; ${cp.reason || ''}`.trim(); }
-  else { res.status = cp.pass ? 'PASS' : 'FAIL'; res.notes = cp.pass ? 'all checkpoints passed' : (cp.reason || 'incomplete'); }
   res.work = work;
+  res.telemetry = parseTelemetryFile(logPath, suite.provider);
+
+  // Capture the PR (URL + commits) and run the independent validation gates BEFORE
+  // teardown, while the branch still exists on origin. The gates -- not any
+  // self-reported checkpoint -- are the sole arbiter of success.
+  res.pr = capturePr(branch, token);
+  const v = validateSprint({ repo, branch, pr: res.pr });
+  res.gates = v.gates;
+
+  if (v.pass) {
+    res.status = 'PASS';
+    res.notes = 'all validation gates passed';
+  } else {
+    const failed = res.gates.filter((g) => !g.pass).map((g) => g.name);
+    res.status = 'FAIL';
+    const why = timedOut ? `timed out after ${timeoutS}s; ` : '';
+    res.notes = `${why}gates failed: ${failed.join(', ')}`.trim();
+    if (timedOut && !res.pr) res.notes += `; ${diagnoseFailure(logPath)}`.replace(/; $/, '');
+  }
 
   if (!keepPr) teardownPr(branch, token);
   return res;
@@ -144,12 +244,22 @@ function main() {
   for (const s of suites) {
     const r = runSuite(s, a.timeout, a.keepPr);
     console.log(`[${r.id}] ${r.status} -- ${r.notes}`);
+    if (r.pr) console.log(`[${r.id}] commits: ${r.pr.commitsUrl}`);
     results.push(r);
   }
 
   const outDir = path.join(E2E, '..', 'e2e-results');
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({ results }, null, 2) + '\n');
+
+  // Copy each run's raw CLI log into the artifact dir so a failed run is inspectable
+  // (the tmp work dir is otherwise discarded by the runner).
+  for (const r of results) {
+    const src = r.work && path.join(r.work, 'cli.log');
+    if (src && fs.existsSync(src)) {
+      try { fs.copyFileSync(src, path.join(outDir, `${r.id}-cli.log`)); } catch { /* non-fatal */ }
+    }
+  }
 
   postSummary(results);
   process.exit(results.some((r) => r.status === 'FAIL') ? 1 : 0);

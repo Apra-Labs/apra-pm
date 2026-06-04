@@ -75,6 +75,21 @@ reviewer** dispatches (review), and the orchestrator's own main-loop usage
 in this ledger. If the harness does not report per-subagent usage, record what it
 provides and leave the rest null.
 
+## Commit identity
+
+So the branch history shows who did what, each role commits under its OWN git
+identity rather than the ambient one. Pass it inline on every commit -- do not rely
+on global config:
+
+```
+git -c user.name='pm-lite-<role>' -c user.email='<role>@pm-lite.local' commit -m "<msg>"
+```
+
+Identities: `pm-lite-planner`, `pm-lite-plan-reviewer`, `pm-lite-doer`,
+`pm-lite-reviewer`. The orchestrator's own git plumbing (requirements.md, design.md,
+progress.json sync, and the completion scaffolding drop) commits as `pm-lite`. Each
+template below restates its identity so the dispatched agent uses it.
+
 ## Per-role prompt templates
 
 Everything the agent needs is in the prompt plus the committed files in its
@@ -91,8 +106,10 @@ design.md if present). Follow your planner instructions: explore, draft, front-l
 foundations, self-critique, refine. Assign every work task the exact model to run
 it on (a weaker/faster model for mechanical tasks, the strongest for hard design),
 chosen from the models available in this environment, and write it as the task's
-Model in PLAN.md. Commit PLAN.md to <branch>. <transport line>. The worktree and
-branch already exist -- do not create or switch branches.
+Model in PLAN.md. Commit PLAN.md to <branch> as identity pm-lite-planner
+(git -c user.name='pm-lite-planner' -c user.email='planner@pm-lite.local' commit).
+<transport line>. The worktree and branch already exist -- do not create or switch
+branches.
 ```
 
 ### plan-reviewer
@@ -101,7 +118,9 @@ branch already exist -- do not create or switch branches.
 You are reviewing a plan. Your worktree is <abs worktree path> on branch <branch>.
 cd there; use absolute paths. Read requirements.md, design.md (if present), and
 PLAN.md. Follow your plan-reviewer instructions. Overwrite feedback.md with your
-verdict (APPROVED or CHANGES NEEDED) and commit it. <transport line>.
+verdict (APPROVED or CHANGES NEEDED) and commit it as identity pm-lite-plan-reviewer
+(git -c user.name='pm-lite-plan-reviewer' -c user.email='plan-reviewer@pm-lite.local'
+commit). <transport line>.
 ```
 
 ### doer
@@ -110,7 +129,9 @@ verdict (APPROVED or CHANGES NEEDED) and commit it. <transport line>.
 You are executing a plan. Your worktree is <abs worktree path> on branch <branch>
 (base <base>). cd there; use absolute paths. Read progress.json and PLAN.md.
 Execute ONLY task(s) <task scope> in phase <N>, one at a time: implement, run fast
-tests after each, commit, update progress.json. If your scope reaches the phase <N>
+tests after each, commit, update progress.json. Make every commit as identity
+pm-lite-doer (git -c user.name='pm-lite-doer' -c user.email='doer@pm-lite.local'
+commit). If your scope reaches the phase <N>
 VERIFY checkpoint, run it -- build, linter, and full test suite -- record results in
 progress.json, then stop. Otherwise stop after the last task in <task scope>.
 <transport line>. Do not start anything beyond <task scope>. The worktree and branch
@@ -129,7 +150,9 @@ phase <N> -- read PLAN.md, progress.json, requirements.md, design.md (if present
 and git diff <base>...<branch>. Run the build, linter, and full test suite. Read
 the prior feedback.md history (git log -- feedback.md) so you account for how
 earlier findings were addressed. Overwrite feedback.md with your verdict (APPROVED
-or CHANGES NEEDED) and commit it. <transport line>.
+or CHANGES NEEDED) and commit it as identity pm-lite-reviewer
+(git -c user.name='pm-lite-reviewer' -c user.email='reviewer@pm-lite.local' commit).
+<transport line>.
 ```
 
 ## Continuity between dispatches
