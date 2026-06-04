@@ -89,7 +89,12 @@ When every phase (of every track) is APPROVED:
    any source beads issues this sprint implemented -- the ready backlog items the
    requirement was drawn from -- with `bd close <issue-id> ...`. Closing the epic
    alone leaves those open. Record the PR link on the epic once raised (see
-   `beads.md`).
+   `beads.md`). Then **persist the closures durably**: with a db backend (e.g. dolt)
+   `bd close` updates only the db and leaves `.beads/issues.jsonl` stale, so export
+   the refreshed state into the track worktree and commit it on the branch --
+   `bd export -o <track-worktree>/.beads/issues.jsonl` (a bare `bd export` only prints
+   to stdout; you MUST pass `-o`), then commit that file in the worktree as `pm-lite`.
+   This carries the closed state into the PR regardless of backend.
 3. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
    only. The tracking files (`requirements.md`, `design.md`, `PLAN.md`,
    `progress.json`, `feedback.md` -- and any case variant such as `plan.md`/

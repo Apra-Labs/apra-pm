@@ -97,13 +97,16 @@ function readBeadsDisk(repo) {
 
 // Ask the live bd DB whether an issue is closed, run from the base checkout (where
 // the orchestrator ran every `bd` command). Backend-agnostic: works whether bd is
-// jsonl-native or db-backed. Returns false if bd is absent or the query fails.
+// jsonl-native or dolt-backed (the dolt backend leaves issues.jsonl stale, so this is
+// the only on-disk source of truth). Returns false if bd is absent or the query fails.
+// NOTE: `bd show --json` returns a single-element ARRAY, not an object.
 function bdSaysClosed(repo, id) {
   const r = spawnSync('bd', ['show', id, '--json'], { cwd: repo, encoding: 'utf-8' });
   if (r.status !== 0 || !r.stdout) return false;
   try {
-    const o = JSON.parse(r.stdout);
-    const st = o.status ?? o.issue?.status ?? o.Status;
+    const parsed = JSON.parse(r.stdout);
+    const o = Array.isArray(parsed) ? parsed[0] : parsed;
+    const st = o?.status ?? o?.issue?.status;
     return String(st).toLowerCase() === 'closed';
   } catch { return false; }
 }
@@ -138,16 +141,17 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   // still look open in the file (seen on the macOS runner).
   const baseB = readBeadsRef(repo, base);
   const candidates = [...baseB].filter(([, o]) => isP1(o) && !isClosed(o)).map(([id]) => id);
+
+  // An issue counts as closed if ANY durable source says so (dolt leaves the file
+  // stale, and the live db may sit in a since-removed worktree, so no single source
+  // is reliable across platforms):
+  //   1. the branch's committed .beads/issues.jsonl (durable if the skill ran `bd export`)
+  //   2. the on-disk .beads/issues.jsonl at the base checkout
+  //   3. the live bd db via `bd show`
+  const headB = readBeadsRef(repo, head);
   const diskB = readBeadsDisk(repo);
-  const closedP1 = [];
-  const recheck = [];
-  for (const id of candidates) {
-    if (isClosed(diskB.get(id))) closedP1.push(id);
-    else recheck.push(id);
-  }
-  for (const id of recheck) {
-    if (bdSaysClosed(repo, id)) closedP1.push(id);
-  }
+  const closedP1 = candidates.filter((id) =>
+    isClosed(headB.get(id)) || isClosed(diskB.get(id)) || bdSaysClosed(repo, id));
 
   return evaluateGates({ pr, commitCount, finalFiles, touchedBasenames, closedP1, minCommits, expectedIssues });
 }

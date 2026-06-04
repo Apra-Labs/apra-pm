@@ -57,14 +57,19 @@ bd create "fix: <finding>" -p 0 --parent <epic-id> --assignee <track>
 ```
 Close it when the reviewer clears the finding.
 
-**At completion** -- close the epic, close the delivered source issues, link the PR:
+**At completion** -- close the epic, close the delivered source issues, persist the
+state, link the PR:
 ```
 bd close <epic-id> <source-issue-id> [<source-issue-id> ...]
+bd export -o <track-worktree>/.beads/issues.jsonl   # refresh the tracked file from the db
 bd note <epic-id> "PR: <url>"
 ```
 The source issues are the ready backlog items the sprint's requirement was drawn
 from. Closing the epic alone leaves them open, so the backlog never reflects the
-delivered work -- close them here too.
+delivered work -- close them here too. With a db backend (dolt) `bd close` does NOT
+update `issues.jsonl`; `bd export -o <file>` rewrites it (a bare `bd export` prints to
+stdout). Commit the refreshed `.beads/issues.jsonl` on the branch so the closures are
+durable and visible in the PR.
 
 ## Findings are never lost
 
