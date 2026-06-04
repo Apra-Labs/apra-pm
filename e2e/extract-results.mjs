@@ -64,9 +64,24 @@ const EMPTY_TELEMETRY = { tokens_in: 0, tokens_out: 0, cache_creation: 0, cache_
 //   agy:    transcript carries no token counts -> reported as unavailable
 export function parseTelemetryFile(file, provider) {
   if (!fs.existsSync(file)) return { ...EMPTY_TELEMETRY };
-  if (provider === 'agy') return { ...EMPTY_TELEMETRY };
 
   const content = fs.readFileSync(file, 'utf-8');
+
+  if (provider === 'agy') {
+    let tIn = 0, tOut = 0, seen = false;
+    // agy output formats the token count at the end of each print response, e.g.:
+    // "Tokens: input=123 output=456"
+    // We sum up all matching instances found in the entire CLI log.
+    const re = /Tokens:\s*input\s*=\s*(\d+)\s+output\s*=\s*(\d+)/gi;
+    let match;
+    while ((match = re.exec(content)) !== null) {
+      tIn += parseInt(match[1], 10);
+      tOut += parseInt(match[2], 10);
+      seen = true;
+    }
+    return { tokens_in: tIn, tokens_out: tOut, cache_creation: 0, cache_read: 0, available: seen };
+  }
+
   let tIn = 0, tOut = 0, cCreate = 0, cRead = 0, seen = false;
 
   for (const line of content.split(/\r?\n/)) {

@@ -139,7 +139,9 @@ function main() {
   }
 
   const skillDest = path.join(cfg.configDir, 'skills', 'pm-lite');
-  const agentsDest = path.join(cfg.configDir, 'agents');
+  const agentsDest = (args.llm === 'claude')
+    ? path.join(cfg.configDir, 'agents')
+    : path.join(cfg.configDir, 'config', 'agents');
   const settingsFile = path.join(cfg.configDir, 'settings.json');
 
   if (fs.existsSync(skillDest) && !args.force) {
