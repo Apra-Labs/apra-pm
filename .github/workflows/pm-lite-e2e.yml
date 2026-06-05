@@ -76,13 +76,13 @@ jobs:
         shell: bash
         run: |
           case '${{ steps.prov.outputs.provider }}' in
-            claude) CFG="$HOME/.claude" ;;
-            gemini) CFG="$HOME/.gemini" ;;
-            agy)    CFG="$HOME/.gemini/antigravity-cli" ;;
+            claude) CFG="$HOME/.claude"; AGENTS_DIR="$CFG/agents" ;;
+            gemini) CFG="$HOME/.gemini"; AGENTS_DIR="$CFG/agents" ;;
+            agy)    CFG="$HOME/.gemini/antigravity-cli"; AGENTS_DIR="$CFG/agents" ;;
           esac
           test -f "$CFG/skills/pm-lite/SKILL.md" || { echo "::error::pm-lite skill missing at $CFG/skills/pm-lite"; exit 1; }
           for a in planner plan-reviewer doer reviewer; do
-            test -f "$CFG/agents/$a.md" || { echo "::error::agent $a missing at $CFG/agents"; exit 1; }
+            test -f "$AGENTS_DIR/$a.md" || { echo "::error::agent $a missing at $AGENTS_DIR"; exit 1; }
           done
           echo "skill + 4 agents present under $CFG"
 
