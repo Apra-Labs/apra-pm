@@ -52,7 +52,11 @@ function buildReport(results) {
     const t = r.telemetry;
     if (t && t.available) {
       const total = (t.tokens_in || 0) + (t.tokens_out || 0);
-      lines.push(`| ${r.id} | ${r.provider} | ${fmt(t.tokens_in)} | ${fmt(t.tokens_out)} | ${fmt(total)} | ${fmt(t.cache_creation)} | ${fmt(t.cache_read)} |`);
+      const provStr = t.estimated ? `${r.provider} (~est)` : r.provider;
+      const inStr = t.estimated ? `~${fmt(t.tokens_in)}` : fmt(t.tokens_in);
+      const outStr = t.estimated ? `~${fmt(t.tokens_out)}` : fmt(t.tokens_out);
+      const totStr = t.estimated ? `~${fmt(total)}` : fmt(total);
+      lines.push(`| ${r.id} | ${provStr} | ${inStr} | ${outStr} | ${totStr} | ${fmt(t.cache_creation)} | ${fmt(t.cache_read)} |`);
     } else {
       lines.push(`| ${r.id} | ${r.provider} | n/a | n/a | n/a | n/a | n/a |`);
     }

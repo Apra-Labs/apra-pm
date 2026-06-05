@@ -69,15 +69,14 @@ export function parseTelemetryFile(file, provider) {
   const content = fs.readFileSync(file, 'utf-8');
 
   if (provider === 'agy') {
+    const ESTIMATED_OVERHEAD_PER_STEP = 1000; // Estimated prompt overhead for tool declarations, system instructions, and workspace schemas passed on each turn.
     let tIn = 0, tOut = 0, seen = false;
-    
-    // Find all conversation IDs from the log content
-    const convIds = new Set();
-    const re = /"conversationId":\s*"([a-f0-9-]+)"/gi;
-    let match;
-    while ((match = re.exec(content)) !== null) {
-      convIds.add(match[1]);
-    }
+
+    // Find ONLY the parent conversation ID by matching the run's work dir against the cache,
+    // exactly as run-e2e.mjs does.
+    const norm = p => path.resolve(p).toLowerCase().split(path.sep).join('/');
+    const target = norm(path.dirname(file));
+    let parentCid = '';
 
     const home = process.env.USERPROFILE || process.env.HOME || '';
     const brainDir = path.join(home, '.gemini', 'antigravity-cli', 'brain');
@@ -87,17 +86,40 @@ export function parseTelemetryFile(file, provider) {
       if (fs.existsSync(cachePath)) {
         const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
         for (const k of Object.keys(cache)) {
-          convIds.add(cache[k]);
+          if (norm(k) === target) {
+            parentCid = cache[k];
+            break;
+          }
         }
       }
     } catch {
       // ignore
     }
 
+    const convIds = new Set();
+    if (parentCid) {
+      convIds.add(parentCid);
+
+      // Parse the parent transcript to find all subagent conversation IDs that were spawned.
+      const parentTranscriptPath = path.join(brainDir, parentCid, '.system_generated', 'logs', 'transcript.jsonl');
+      if (fs.existsSync(parentTranscriptPath)) {
+        try {
+          const parentTranscriptContent = fs.readFileSync(parentTranscriptPath, 'utf-8');
+          const re = /"conversationId":\s*"([a-f0-9-]+)"/gi;
+          let match;
+          while ((match = re.exec(parentTranscriptContent)) !== null) {
+            convIds.add(match[1]);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     for (const cid of convIds) {
       const tp = path.join(brainDir, cid, '.system_generated', 'logs', 'transcript.jsonl');
       if (!fs.existsSync(tp)) continue;
-      
+
       seen = true;
       try {
         const transcriptLines = fs.readFileSync(tp, 'utf-8').split(/\r?\n/);
@@ -105,17 +127,17 @@ export function parseTelemetryFile(file, provider) {
           const trimmed = line.trim();
           if (!trimmed) continue;
           const step = JSON.parse(trimmed);
-          
+
           const source = step.source;
           const stepContent = step.content || '';
           const thinking = step.thinking || '';
-          
+
           if (source === 'MODEL') {
             tOut += Math.ceil((stepContent.length + thinking.length) / 4);
           } else {
             tIn += Math.ceil(stepContent.length / 4);
           }
-          tIn += 1000; // base context overhead per step
+          tIn += ESTIMATED_OVERHEAD_PER_STEP;
         }
       } catch {
         // ignore
@@ -129,7 +151,7 @@ export function parseTelemetryFile(file, provider) {
       seen = true;
     }
 
-    return { tokens_in: tIn, tokens_out: tOut, cache_creation: 0, cache_read: 0, available: seen };
+    return { tokens_in: tIn, tokens_out: tOut, cache_creation: 0, cache_read: 0, available: seen, estimated: true };
   }
 
   let tIn = 0, tOut = 0, cCreate = 0, cRead = 0, seen = false;
