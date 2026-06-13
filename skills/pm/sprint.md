@@ -82,9 +82,14 @@ manual or external step in `deploy.md`.
 
 When every phase (of every track) is APPROVED:
 
-1. **Docs harvest (recommended)** -- dispatch a doer to extract durable knowledge
-   (architecture, design decisions, API contracts) into `docs/`, then a reviewer to
-   check it. Iterate to APPROVED.
+1. **Documentation harvest** -- dispatch a doer to extract long-term knowledge
+   from requirements.md, design.md, and PLAN.md into `docs/`. Structure inside
+   `docs/` is content-driven (e.g. `docs/architecture.md`, `docs/features/<name>.md`).
+   Extract: architecture decisions, feature design, key trade-offs, API contracts.
+   Do NOT extract: task lists, code-line references, debug notes, implementation
+   steps. The doer commits the docs/ output to the branch. Then dispatch a reviewer
+   to verify the harvest captures durable knowledge and nothing transient slipped
+   in. Iterate to APPROVED.
 2. **Close the epic and the delivered issues** -- `bd close <epic-id>`; also close
    any source beads issues this sprint implemented -- the ready backlog items the
    requirement was drawn from -- with `bd close <issue-id> ...`. Closing the epic

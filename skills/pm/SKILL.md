@@ -96,34 +96,104 @@ Fixed rules:
   planner only assigns doer-task models.)
 - A user override always wins.
 
+## Sprint selection
+
+Before starting, choose the shape that fits:
+
+| Condition | Sprint type | Reference |
+|-----------|-------------|-----------|
+| 1-3 tasks, one sitting, low risk, no phasing | Lightweight | `simple-sprint.md` |
+| Work splits into independent, low-coupling units | Parallel tracks | `sprint.md` Parallel tracks |
+| Default | Single track, full lifecycle | `sprint.md` |
+
+If tracks are tightly coupled or share significant upfront dependencies, use
+single track -- splitting tightly coupled work creates more coordination overhead
+than it saves.
+
+## Command reference
+
+| Command | Action | Details |
+|---------|--------|---------|
+| `/pm plan <requirement>` | Write requirements, dispatch planner, loop plan-reviewer to APPROVED | `sprint.md` |
+| `/pm start` | Run the doer-review loop for the next pending phase | `doer-reviewer-loop.md` |
+| `/pm status` | Report position from beads + git + progress.json | -- |
+| `/pm resume` / `/pm recover` | Reconstruct state from beads + git and continue | `sprint.md` Recovery |
+| `/pm deploy` | Run the project's deploy.md runbook | `sprint.md` Deploy |
+| `/pm backlog` / `/pm tasks` | Manage deferred items and view the task tree via beads | `beads.md` |
+| `/pm cleanup` | Close epic, drop scaffolding, raise PR, remove worktrees | `sprint.md` Completion |
+| `/pm init <project>` | Set up project folder, beads epic, worktree | `sprint.md` Setup |
+| `/pm pair <doer> <reviewer>` | Assign doer-reviewer pair (fleet mode) | `fleet-addendum.md` |
+
 ## Core rules
 
-1. NEVER read code to diagnose, fix, or write it. You dispatch agents, read
-   verdicts, and drive the loop. The only code you touch is git plumbing
-   (`git worktree add/list/remove`, `git merge`, `git diff <base>...<branch>`),
-   beads commands, and PR commands.
-2. Treat git and beads as the single source of truth. Re-derive position from them
-   on every completion and after any restart. See `sprint.md` Recovery.
-3. One worktree per track. Create it before dispatching the track; remove it at
-   cleanup. See `worktrees.md`.
-4. Keep your turn alive until the dispatched work returns. A subagent dispatch
-   returns the agent's result to you inline -- wait for it within the same turn and
-   then act on it. NEVER end your turn while a dispatched agent still owes you a
-   result: in a non-interactive (headless) run nothing re-invokes you, so ending the
-   turn parks the sprint forever. For parallel tracks, dispatch several at once and
-   poll them to completion within the turn -- still without ending it.
-5. Run each track's loop autonomously. After a plan is APPROVED, start execution.
-   At every VERIFY checkpoint, immediately dispatch the reviewer. Do not wait for
-   the user between doer and reviewer handoffs. Escalate only on genuine ambiguity,
-   a hard blocker, or a safeguard trip (see `doer-reviewer-loop.md`).
-6. Never write project files outside a track's worktree. `requirements.md`,
-   `design.md`, `PLAN.md`, `progress.json`, `feedback.md` live on the track's
-   branch.
-7. Track everything in beads: epic at start, a task per plan item, review HIGH
-   findings as tasks, deferred work as backlog. No finding or follow-up is lost.
-   See `beads.md`.
-8. At completion: raise a PR, confirm CI is green, do NOT merge. Merge is the
-   user's decision. You own the PR lifecycle.
+R1. NEVER read code to diagnose, fix, or write it. You dispatch agents, read
+    verdicts, and drive the loop. The only code you touch is git plumbing
+    (`git worktree add/list/remove`, `git merge`, `git diff <base>...<branch>`),
+    beads commands, and PR commands.
+R2. **Project sandboxing** -- every artifact (requirements.md, design.md,
+    PLAN.md, progress.json, feedback.md, status.md) lives inside the track's
+    worktree and nowhere else. Never write project files outside a track's
+    worktree or in the skill folder.
+R3. On session start: re-derive position from git and beads -- they are the
+    single source of truth. Update status.md whenever a dispatch completes or
+    a member reports back, not just at phase boundaries. Local files are the
+    source of truth -- never rely on memory across sessions.
+R4. **[Fleet mode]** Before dispatch: verify member has required tools via
+    `execute_command -> which <tool>` or `<tool> --version`.
+R5. **[Fleet mode]** If a member can finish in one session (1-3 steps), use
+    ad-hoc `execute_prompt`. Otherwise use the task harness.
+R6. NEVER let agents sit idle -- after planning, immediately start execution.
+    At VERIFY checkpoints, immediately dispatch reviews.
+R7. During execution: keep going until stuck or done -- do not wait for the
+    user. At checkpoints, filter questions: resolve what you can, only escalate
+    genuine ambiguities. During planning: escalate tough calls (ambiguous
+    requirements, risky trade-offs, architectural decisions).
+R8. **[Fleet mode]** When executing a sequence of fleet calls (send_files,
+    execute_command, execute_prompt, receive_files), club them into a single
+    background Agent rather than issuing individual calls.
+R9. **[Fleet mode]** For unattended execution, use `update_member(unattended=
+    'auto')` for safer auto-approval or `update_member(unattended='dangerous')`
+    for full permission bypass. Always compose and deliver permissions via
+    `compose_permissions` before dispatch (see `fleet-addendum.md`).
+R10. During a sprint, PLAN.md, progress.json, and feedback.md must be committed
+     and pushed at every turn -- these are the living state of the sprint. Only
+     the agent context file stays uncommitted.
+R11. Definition of done includes security audit and documentation -- ensure
+     both are covered when adding tools/features.
+R12. At sprint completion: raise a PR, verify CI is green -- do NOT merge.
+     Merge is the user's decision.
+R13. **[Fleet mode]** PM runs `gh` CLI commands directly via Bash -- never
+     delegate to fleet members. PM owns PR lifecycle and CI file commits.
+R14. Always read referenced sub-documents before executing PM commands.
+
+Rules marked **[Fleet mode]** apply only when running with fleet members. In
+local subagent mode they are skipped or adapted (see `fleet-addendum.md` for
+the fleet-specific execution model).
+
+## Secrets and credentials (fleet mode)
+
+When running via fleet, never pass raw secrets in `execute_prompt` prompts --
+reference the credential by name only (e.g. "authenticate using credential
+github_pat"). The member then uses `{{secure.github_pat}}` in its own
+`execute_command` calls. See `fleet-addendum.md` for the full reference.
+
+## Provider awareness (fleet mode)
+
+When dispatching to fleet members, the orchestrator must account for
+provider-specific behaviors. The most important is the agent context file
+filename -- each provider expects a different name:
+
+| Provider | Context file |
+|----------|-------------|
+| Claude | CLAUDE.md |
+| Antigravity (agy) | AGY.md |
+| Gemini | GEMINI.md |
+| Codex | AGENTS.md |
+| Copilot | COPILOT.md |
+| OpenCode | OPENCODE.md |
+
+In local subagent mode, context is passed inline via the dispatch prompt --
+the filename table does not apply.
 
 ## Lifecycle
 
@@ -161,11 +231,14 @@ and beads.
 
 ## Sub-documents
 
-- `worktrees.md` -- worktree topology, parallel-track layout, lifecycle, transport.
-- `doer-reviewer-loop.md` -- the dispatch loop: per-role prompt templates,
-  inline dispatch, continuity between dispatches, and safeguards.
 - `sprint.md` -- full lifecycle: requirements, design, planning, execution, deploy,
   completion, sprint selection, parallel-track integration, and recovery.
+- `simple-sprint.md` -- lightweight 1-3 task flow without PLAN.md/progress.json.
+- `doer-reviewer-loop.md` -- the dispatch loop: per-role prompt templates,
+  inline dispatch, continuity between dispatches, and safeguards.
+- `worktrees.md` -- worktree topology, parallel-track layout, lifecycle, transport.
 - `beads.md` -- the task-DB backbone: epic/task lifecycle, findings-as-tasks,
   backlog, recovery, PR linking.
+- `fleet-addendum.md` -- fleet-only execution: permissions, compose_permissions,
+  stop_prompt, unattended modes, context-file delivery.
 - `tpl-progress.json` -- the `progress.json` schema generated from `PLAN.md`.

@@ -6,6 +6,29 @@ every handoff is a file committed on the track's branch; every task transition i
 recorded in beads. (The plan loop that precedes this -- planner / plan-reviewer --
 is in `sprint.md`.)
 
+## Pre-flight checks
+
+### Before any dispatch
+
+Verify the agent's worktree is on the correct branch with a clean working tree:
+
+1. `git -C <worktree> status --porcelain` -- must be empty.
+2. `git -C <worktree> branch --show-current` -- must match the track's branch.
+
+Do not dispatch into a worktree on the wrong branch or with uncommitted changes.
+
+### Before review dispatch (SHA matching)
+
+Verify the reviewer sees the same state the doer pushed:
+
+1. `git -C <reviewer-worktree> rev-parse HEAD` -- record the SHA.
+2. Compare with the doer's last pushed HEAD on the track branch.
+3. If SHA does not match: `git -C <reviewer-worktree> fetch origin &&
+   git -C <reviewer-worktree> reset --hard origin/<branch>`, then re-verify.
+
+Never dispatch a reviewer against stale code -- SHA mismatch means the review
+covers the wrong diff.
+
 ## The loop (per track, per phase)
 
 ```
@@ -168,6 +191,35 @@ Two ways to continue:
   turn -- e.g. the doer addressing review findings it just produced context for --
   continue the SAME agent instance, which keeps its context. Use this within one
   worktree and one role; switch roles with a fresh dispatch.
+
+## Resume rules
+
+Resume is data-driven from `progress.json` phase numbers (`lastDispatchedPhase`),
+not manually reasoned.
+
+### Doer dispatches
+
+| Condition | resume |
+|-----------|--------|
+| `nextTask.phase === lastDispatchedPhase` | `true` (continue session) |
+| `nextTask.phase !== lastDispatchedPhase` (new phase) | `false` (fresh) |
+| After reviewer CHANGES NEEDED -> doer fix | `true` |
+| Role switch (doer -> reviewer) | `false` |
+
+### All dispatches
+
+| Dispatch | resume |
+|----------|--------|
+| Initial plan generation | `false` |
+| Plan revision (any feedback iteration) | `true` |
+| Initial review dispatch | `false` |
+| Re-review after CHANGES NEEDED + doer fixes | `true` |
+| Role switch (doer -> reviewer, or reviewer -> doer) | `false` |
+| After stop_prompt cancellation (fleet mode) | `false` -- session state unreliable after kill; start fresh |
+| After session timed out mid-grant (fleet mode) | `true` -- fleet auto-recovers but member restarts without prior context |
+
+A role switch always requires sending the new context (context file or inline
+prompt). Never resume across a role switch.
 
 ## Safeguards
 
