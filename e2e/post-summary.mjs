@@ -11,7 +11,7 @@ const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '');
 
 function buildReport(results) {
   const lines = [];
-  lines.push('## pm-lite e2e');
+  lines.push('## pm e2e');
   lines.push('');
 
   // Results + inspection links
@@ -83,7 +83,7 @@ export function postSummary(results) {
   const { text, tally } = buildReport(results);
 
   console.log('\n' + text + '\n');
-  console.log(`pm-lite e2e: ${tally}`);
+  console.log(`pm e2e: ${tally}`);
   for (const r of results) {
     if (r.pr) console.log(`  ${r.id} commits: ${r.pr.commitsUrl}`);
   }

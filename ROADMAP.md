@@ -1,6 +1,6 @@
 # Roadmap
 
-A living list of where apra-pm-lite is headed. See `docs/pm-lite-direction.md` for
+A living list of where apra-pm is headed. See `docs/pm-direction.md` for
 the design intent behind these.
 
 ## Near term

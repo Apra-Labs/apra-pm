@@ -82,12 +82,12 @@ identity rather than the ambient one. Pass it inline on every commit -- do not r
 on global config:
 
 ```
-git -c user.name='pm-lite-<role>' -c user.email='<role>@pm-lite.local' commit -m "<msg>"
+git -c user.name='pm-<role>' -c user.email='<role>@pm.local' commit -m "<msg>"
 ```
 
-Identities: `pm-lite-planner`, `pm-lite-plan-reviewer`, `pm-lite-doer`,
-`pm-lite-reviewer`. The orchestrator's own git plumbing (requirements.md, design.md,
-progress.json sync, and the completion scaffolding drop) commits as `pm-lite`. Each
+Identities: `pm-planner`, `pm-plan-reviewer`, `pm-doer`,
+`pm-reviewer`. The orchestrator's own git plumbing (requirements.md, design.md,
+progress.json sync, and the completion scaffolding drop) commits as `pm`. Each
 template below restates its identity so the dispatched agent uses it.
 
 ## Per-role prompt templates
@@ -106,8 +106,8 @@ design.md if present). Follow your planner instructions: explore, draft, front-l
 foundations, self-critique, refine. Assign every work task the exact model to run
 it on (a weaker/faster model for mechanical tasks, the strongest for hard design),
 chosen from the models available in this environment, and write it as the task's
-Model in PLAN.md. Commit PLAN.md to <branch> as identity pm-lite-planner
-(git -c user.name='pm-lite-planner' -c user.email='planner@pm-lite.local' commit).
+Model in PLAN.md. Commit PLAN.md to <branch> as identity pm-planner
+(git -c user.name='pm-planner' -c user.email='planner@pm.local' commit).
 <transport line>. The worktree and branch already exist -- do not create or switch
 branches.
 ```
@@ -118,8 +118,8 @@ branches.
 You are reviewing a plan. Your worktree is <abs worktree path> on branch <branch>.
 cd there; use absolute paths. Read requirements.md, design.md (if present), and
 PLAN.md. Follow your plan-reviewer instructions. Overwrite feedback.md with your
-verdict (APPROVED or CHANGES NEEDED) and commit it as identity pm-lite-plan-reviewer
-(git -c user.name='pm-lite-plan-reviewer' -c user.email='plan-reviewer@pm-lite.local'
+verdict (APPROVED or CHANGES NEEDED) and commit it as identity pm-plan-reviewer
+(git -c user.name='pm-plan-reviewer' -c user.email='plan-reviewer@pm.local'
 commit). <transport line>.
 ```
 
@@ -130,7 +130,7 @@ You are executing a plan. Your worktree is <abs worktree path> on branch <branch
 (base <base>). cd there; use absolute paths. Read progress.json and PLAN.md.
 Execute ONLY task(s) <task scope> in phase <N>, one at a time: implement, run fast
 tests after each, commit, update progress.json. Make every commit as identity
-pm-lite-doer (git -c user.name='pm-lite-doer' -c user.email='doer@pm-lite.local'
+pm-doer (git -c user.name='pm-doer' -c user.email='doer@pm.local'
 commit). If your scope reaches the phase <N>
 VERIFY checkpoint, run it -- build, linter, and full test suite -- record results in
 progress.json, then stop. Otherwise stop after the last task in <task scope>.
@@ -150,8 +150,8 @@ phase <N> -- read PLAN.md, progress.json, requirements.md, design.md (if present
 and git diff <base>...<branch>. Run the build, linter, and full test suite. Read
 the prior feedback.md history (git log -- feedback.md) so you account for how
 earlier findings were addressed. Overwrite feedback.md with your verdict (APPROVED
-or CHANGES NEEDED) and commit it as identity pm-lite-reviewer
-(git -c user.name='pm-lite-reviewer' -c user.email='reviewer@pm-lite.local' commit).
+or CHANGES NEEDED) and commit it as identity pm-reviewer
+(git -c user.name='pm-reviewer' -c user.email='reviewer@pm.local' commit).
 <transport line>.
 ```
 

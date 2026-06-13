@@ -1,17 +1,17 @@
-# pm-lite -- Design Intent
+# pm -- Design Intent
 
-The decisions behind pm-lite's design, recorded so later work does not
-re-litigate them. For how to use the skill, see `skills/pm-lite/SKILL.md`.
+The decisions behind pm's design, recorded so later work does not
+re-litigate them. For how to use the skill, see `skills/pm/SKILL.md`.
 
 ## Lineage
 
-pm-lite descends from the fleet `pm` skill and runs the same plan -> doer -> review
+pm descends from the fleet `pm` skill and runs the same plan -> doer -> review
 workflow. The rework: it runs from a single session with local subagents and git
 worktrees rather than remote members over a server, and keeps all state in git and
-beads. If you know the `pm` skill, pm-lite is its standalone, server-free successor;
+beads. If you know the `pm` skill, pm is its standalone, server-free successor;
 this doc and the skill itself otherwise stand on their own.
 
-## What pm-lite is
+## What pm is
 
 One orchestrator session drives a project's development by dispatching four
 subagents -- `planner`, `plan-reviewer`, `doer`, `reviewer` -- through the

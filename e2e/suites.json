@@ -1,5 +1,5 @@
 {
-  "description": "pm-lite e2e suites. Each suite drives the pm-lite skill headless on one machine (no members, no MCP) through a full plan -> start -> cleanup sprint on the fleet-e2e-toy repo, picking 3 ready P1 beads issues. Success is judged by independent validation gates against the resulting branch + PR (see validate-sprint.mjs), not self-reported checkpoints. Suite groups are by provider: s1=Claude, s7=Gemini, s8=AGY; the .1/.2/.3 sub-variants are the OS matrix.",
+  "description": "pm e2e suites. Each suite drives the pm skill headless on one machine (no members, no MCP) through a full plan -> start -> cleanup sprint on the fleet-e2e-toy repo, picking 3 ready P1 beads issues. Success is judged by independent validation gates against the resulting branch + PR (see validate-sprint.mjs), not self-reported checkpoints. Suite groups are by provider: s1=Claude, s7=Gemini, s8=AGY; the .1/.2/.3 sub-variants are the OS matrix.",
   "toy": "https://github.com/Apra-Labs/fleet-e2e-toy",
   "suites": [
     { "id": "s1.1", "provider": "claude", "os": "windows", "cli": "claude" },

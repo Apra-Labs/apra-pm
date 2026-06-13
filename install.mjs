@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// apra-pm-lite installer -- plain Node, no build step, no MCP.
-// Installs the pm-lite skill and its four agents into a provider's config dir,
+// apra-pm installer -- plain Node, no build step, no MCP.
+// Installs the pm skill and its four agents into a provider's config dir,
 // and grants the minimal permissions the orchestrator needs.
 //
 // Usage:
@@ -18,7 +18,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
 
 // --- provider config -------------------------------------------------------
-// Each provider gets a config dir; the skill lands in <configDir>/skills/pm-lite,
+// Each provider gets a config dir; the skill lands in <configDir>/skills/pm,
 // the agents in <configDir>/agents, and permissions merge into settings.json.
 function providerConfig(llm) {
   switch (llm) {
@@ -100,9 +100,9 @@ function parseArgs(argv) {
   return args;
 }
 
-const HELP = `apra-pm-lite installer
+const HELP = `apra-pm installer
 
-Installs the pm-lite skill and its planner/plan-reviewer/doer/reviewer agents
+Installs the pm skill and its planner/plan-reviewer/doer/reviewer agents
 into your agent harness's config directory, and grants minimal permissions.
 
 Usage:
@@ -114,7 +114,7 @@ Options:
   --help             show this help
 
 What it installs:
-  <configDir>/skills/pm-lite/   the skill (SKILL.md + sub-docs)
+  <configDir>/skills/pm/   the skill (SKILL.md + sub-docs)
   <configDir>/agents/*.md       planner, plan-reviewer, doer, reviewer
   <configDir>/settings.json     minimal permissions (merged, non-destructive)
 
@@ -131,23 +131,23 @@ function main() {
   try { cfg = providerConfig(args.llm); }
   catch (e) { console.error(`error: ${e.message}`); process.exit(2); }
 
-  const skillSrc = path.join(ROOT, 'skills', 'pm-lite');
+  const skillSrc = path.join(ROOT, 'skills', 'pm');
   const agentsSrc = path.join(ROOT, 'agents');
   if (!fs.existsSync(skillSrc) || !fs.existsSync(agentsSrc)) {
-    console.error('error: run this from the apra-pm-lite repo root (skills/ and agents/ not found)');
+    console.error('error: run this from the apra-pm repo root (skills/ and agents/ not found)');
     process.exit(1);
   }
 
-  const skillDest = path.join(cfg.configDir, 'skills', 'pm-lite');
+  const skillDest = path.join(cfg.configDir, 'skills', 'pm');
   const agentsDest = path.join(cfg.configDir, 'agents');
   const settingsFile = path.join(cfg.configDir, 'settings.json');
 
   if (fs.existsSync(skillDest) && !args.force) {
-    console.error(`pm-lite already installed at ${skillDest} (use --force to reinstall)`);
+    console.error(`pm already installed at ${skillDest} (use --force to reinstall)`);
     process.exit(1);
   }
 
-  console.log(`Installing pm-lite for ${cfg.name} ...`);
+  console.log(`Installing pm for ${cfg.name} ...`);
 
   // 1) skill
   clearDir(skillDest);
@@ -166,8 +166,8 @@ function main() {
 
   // beads check (required for tracking; warn only)
   console.log('');
-  console.log('pm-lite installed. Invoke the "pm-lite" skill to drive a sprint.');
-  console.log('Note: pm-lite uses beads (bd) for task tracking -- install it if "bd --version" fails.');
+  console.log('pm installed. Invoke the "pm" skill to drive a sprint.');
+  console.log('Note: pm uses beads (bd) for task tracking -- install it if "bd --version" fails.');
 }
 
 main();

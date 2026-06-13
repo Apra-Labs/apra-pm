@@ -1,28 +1,28 @@
-# Contributing to apra-pm-lite
+# Contributing to apra-pm
 
 Thank you for your interest in contributing! This document explains how to get
 involved.
 
 ## Reporting Bugs
 
-Use the [Bug Report](https://github.com/Apra-Labs/apra-pm-lite/issues/new/choose)
+Use the [Bug Report](https://github.com/Apra-Labs/apra-pm/issues/new/choose)
 issue template. Include reproduction steps, environment info, and any error output.
 
 ## Requesting Features
 
-Use the [Feature Request](https://github.com/Apra-Labs/apra-pm-lite/issues/new/choose)
+Use the [Feature Request](https://github.com/Apra-Labs/apra-pm/issues/new/choose)
 issue template. Describe the problem, your proposed solution, and any alternatives.
 
 ## What this repo is
 
-apra-pm-lite is mostly Markdown -- a skill (`skills/pm-lite/`) and four agent
+apra-pm is mostly Markdown -- a skill (`skills/pm/`) and four agent
 definitions (`agents/`) that an AI coding harness loads as instructions -- plus a
 small plain-Node installer and end-to-end harness. There is no build step and no
 compiled source.
 
 | Path | What it contains |
 |------|------------------|
-| `skills/pm-lite/` | the skill: `SKILL.md` and sub-docs the orchestrator reads on demand |
+| `skills/pm/` | the skill: `SKILL.md` and sub-docs the orchestrator reads on demand |
 | `agents/` | the `planner`, `plan-reviewer`, `doer`, `reviewer` definitions |
 | `install.mjs` | installer: copies the skill + agents into a provider config dir |
 | `e2e/` | drives the skill headless against the toy repo and checks checkpoints |
@@ -33,8 +33,8 @@ compiled source.
 **Prerequisites:** Node.js 20+, git, and beads (`bd`).
 
 ```bash
-git clone https://github.com/Apra-Labs/apra-pm-lite.git
-cd apra-pm-lite
+git clone https://github.com/Apra-Labs/apra-pm.git
+cd apra-pm
 git config core.hooksPath .githooks   # enable the ASCII pre-commit guard
 node install.mjs --llm claude         # install the skill + agents locally
 ```

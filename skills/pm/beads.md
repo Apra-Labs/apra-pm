@@ -1,6 +1,6 @@
 # Beads -- the task-DB backbone
 
-beads (`bd`) is pm-lite's tracking backbone. It holds what is in flight, what is
+beads (`bd`) is pm's tracking backbone. It holds what is in flight, what is
 blocked, what was deferred, and what each review found. git holds the work (plan,
 progress, review); beads holds the tracking.
 

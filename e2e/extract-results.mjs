@@ -1,4 +1,4 @@
-// Parse pm-lite e2e checkpoints and telemetry.
+// Parse pm e2e checkpoints and telemetry.
 //
 // Checkpoints: primary source is the checkpoints.json file the orchestrator appends
 // to (one JSON object per line); a stdout parser is provided as a fallback. A run

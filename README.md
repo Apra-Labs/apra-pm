@@ -1,4 +1,4 @@
-# apra-pm-lite
+# apra-pm
 
 A provider-agnostic **Project Manager** skill for AI coding harnesses. One
 orchestrator session drives four subagents -- `planner`, `plan-reviewer`, `doer`,
@@ -29,14 +29,14 @@ requirements -> design -> plan (loop) -> execute (doer-review loop) -> deploy ->
 - **Parallel tracks.** Independent work splits into tracks, each with its own branch,
   worktree, and full pipeline, running concurrently and integrated at the end.
 
-See `skills/pm-lite/SKILL.md` and its sub-docs (`worktrees.md`,
+See `skills/pm/SKILL.md` and its sub-docs (`worktrees.md`,
 `doer-reviewer-loop.md`, `sprint.md`, `beads.md`) for the full workflow, and
-`docs/pm-lite-direction.md` for the design intent.
+`docs/pm-direction.md` for the design intent.
 
 ## Layout
 
 ```
-skills/pm-lite/     the skill (SKILL.md + sub-docs the orchestrator reads on demand)
+skills/pm/     the skill (SKILL.md + sub-docs the orchestrator reads on demand)
 agents/             planner, plan-reviewer, doer, reviewer definitions
 install.mjs         installer: copies the skill + agents into a provider config dir
 e2e/                end-to-end suite: drive the skill headless on the toy repo
@@ -54,7 +54,7 @@ node install.mjs --llm claude     # or: gemini | agy   (default: claude)
 ```
 
 This writes:
-- `<configDir>/skills/pm-lite/` -- the skill
+- `<configDir>/skills/pm/` -- the skill
 - `<configDir>/agents/*.md` -- the four agents
 - `<configDir>/settings.json` -- minimal permissions (merged, non-destructive)
 
@@ -62,7 +62,7 @@ Requires `git` and beads (`bd`) on PATH.
 
 ## Use
 
-Invoke the `pm-lite` skill in your harness and give it a requirement. It drives the
+Invoke the `pm` skill in your harness and give it a requirement. It drives the
 lifecycle above to a PR (or, for a local-only repo, a reviewed branch). For small,
 low-risk work it uses a lightweight single-cycle path instead of the full harness.
 
@@ -88,7 +88,7 @@ override a provider's command with e.g.
 Pushing the branch and opening the PR needs write access to the toy: set
 `GH_TOKEN` / `E2E_GH_TOKEN`, or rely on the runner's ambient git + gh credentials.
 
-CI: `.github/workflows/pm-lite-e2e.yml` (manual trigger; needs a self-hosted runner
+CI: `.github/workflows/pm-e2e.yml` (manual trigger; needs a self-hosted runner
 with the provider CLI authenticated, plus node 20+, `bd`, and `secrets.E2E_GH_TOKEN`).
 
 ## Contributing
