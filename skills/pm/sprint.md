@@ -1,6 +1,6 @@
 # Running a Sprint
 
-Full lifecycle for a pm-lite sprint on a single project, driven from one session.
+Full lifecycle for a pm sprint on a single project, driven from one session.
 
 ```
 requirements -> design -> plan (loop) -> execute (doer-review loop)
@@ -75,7 +75,7 @@ If the project ships (not just merges), run its deployment runbook. Look for
 deploys, write one capturing the exact execute / verify / rollback steps and commit
 it. Run each step, then the verify section. On failure, run the rollback steps and
 flag the user. Deployment that needs remote machines, credentials, or shell access
-beyond the local environment is out of scope for pm-lite itself -- note it as a
+beyond the local environment is out of scope for pm itself -- note it as a
 manual or external step in `deploy.md`.
 
 ## Completion
@@ -93,7 +93,7 @@ When every phase (of every track) is APPROVED:
    `bd close` updates only the db and leaves `.beads/issues.jsonl` stale, so export
    the refreshed state into the track worktree and commit it on the branch --
    `bd export -o <track-worktree>/.beads/issues.jsonl` (a bare `bd export` only prints
-   to stdout; you MUST pass `-o`), then commit that file in the worktree as `pm-lite`.
+   to stdout; you MUST pass `-o`), then commit that file in the worktree as `pm`.
    This carries the closed state into the PR regardless of backend.
 3. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
    only. The tracking files (`requirements.md`, `design.md`, `PLAN.md`,
@@ -107,7 +107,7 @@ When every phase (of every track) is APPROVED:
      restore it to base content -- `git checkout <base> -- <file>` -- so the diff
      shows no change. Never delete a file the repo shipped.
 
-   Commit as the orchestrator identity `pm-lite`. Then VERIFY:
+   Commit as the orchestrator identity `pm`. Then VERIFY:
    `git diff --name-only <base>...<branch>` must list no tracking-file name in any
    case. If one remains, repeat until the net diff is product only. (Same drop the
    parallel-track flow does before integrating.)
@@ -158,7 +158,7 @@ For 1-3 tasks completable in one sitting, skip the full harness:
    doer fixes -> re-review. `APPROVED` -> close the beads tasks and the delivered
    source issues, clean the sprint scaffolding from the PR (see Completion step 3 --
    `git rm` sprint-created tracking files, restore any the repo already shipped, then
-   verify the net diff is product only) and commit as `pm-lite`, raise the PR (or
+   verify the net diff is product only) and commit as `pm`, raise the PR (or
    report the diff for local-only), remove the worktree.
 
 No `PLAN.md`/`progress.json` harness; beads + git carry the state. Promote to a full

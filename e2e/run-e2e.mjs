@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// pm-lite e2e local runner.
+// pm e2e local runner.
 //
 // For each selected suite: clone the toy repo, render the scenario with the repo
-// path and a unique branch, invoke the provider's CLI headless with the pm-lite
+// path and a unique branch, invoke the provider's CLI headless with the pm
 // skill installed, then read checkpoints.json the orchestrator wrote and decide
 // pass/fail. The sprint pushes to the toy and raises a real PR (no merge).
 //
@@ -162,7 +162,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
     if (isDone()) break;
     console.log(`[agy] resume attempt ${i} -- no PR raised yet`);
     const cont = ['--print-timeout=40m', '--continue', '-p',
-      'Continue the sprint from where you left off. Finish the pm-lite start and cleanup commands without stopping, so a PR is raised.',
+      'Continue the sprint from where you left off. Finish the pm start and cleanup commands without stopping, so a PR is raised.',
       '--dangerously-skip-permissions'];
     const r = spawnSync(cmd, cont, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
     fs.appendFileSync(logPath, `\n---RESUME ${i}---\n${r.stdout || ''}\n${r.stderr || ''}`);
@@ -183,8 +183,8 @@ function runSuite(suite, timeoutS, keepPr) {
 
   const clone = git(['clone', cfg.toy, repo]);
   if (clone.status !== 0) { res.status = 'FAIL'; res.notes = `clone failed: ${(clone.stderr || '').trim().slice(0, 200)}`; return res; }
-  git(['-C', repo, 'config', 'user.email', 'e2e@pm-lite']);
-  git(['-C', repo, 'config', 'user.name', 'pm-lite-e2e']);
+  git(['-C', repo, 'config', 'user.email', 'e2e@pm']);
+  git(['-C', repo, 'config', 'user.name', 'pm-e2e']);
 
   // The sprint pushes and raises a PR, so keep origin. If a token is provided, wire
   // it into the push URL (gh reads GH_TOKEN from the environment on its own).

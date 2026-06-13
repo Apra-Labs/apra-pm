@@ -28,7 +28,7 @@ We will coordinate disclosure timing with you and credit reporters in release no
 
 ## Scope
 
-apra-pm-lite is a set of Markdown skill/agent definitions plus a small Node
+apra-pm is a set of Markdown skill/agent definitions plus a small Node
 installer and e2e harness. It runs no server and opens no network listeners. The
 main areas of interest:
 

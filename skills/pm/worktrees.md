@@ -1,6 +1,6 @@
 # Worktrees -- topology, parallel tracks, lifecycle, transport
 
-pm-lite isolates parallel work with git worktrees. A worktree is a second checkout
+pm isolates parallel work with git worktrees. A worktree is a second checkout
 of the same repository sharing one `.git` object database. That shared object DB is
 what makes worktrees the right tool: a commit made in one worktree is instantly
 visible from every other worktree and from the orchestrator.

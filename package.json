@@ -1,11 +1,11 @@
 {
-  "name": "apra-pm-lite",
+  "name": "apra-pm",
   "version": "0.1.0",
   "private": true,
   "description": "Provider-agnostic Project Manager skill: one orchestrator session drives planner/plan-reviewer/doer/reviewer subagents across parallel git worktrees, with a planner-chosen model per task. No MCP, no server.",
   "type": "module",
   "bin": {
-    "pm-lite-install": "install.mjs"
+    "pm-install": "install.mjs"
   },
   "scripts": {
     "install-skill": "node install.mjs",

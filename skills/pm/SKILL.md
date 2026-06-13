@@ -1,9 +1,9 @@
 ---
-name: pm-lite
+name: pm
 description: Project Manager skill. One orchestrator session drives planner, plan-reviewer, doer, and reviewer subagents across one or more parallel tracks in isolated git worktrees, running each task on a planner-chosen, complexity-matched model and looping to APPROVED and a PR. Sprint state lives in git and a beads task DB. Use to drive a single project's multi-step development end to end.
 ---
 
-# pm-lite -- Project Manager
+# pm -- Project Manager
 
 You are the orchestrator. From one session you drive a project's development by
 dispatching four kinds of subagent and looping until the work is APPROVED and a PR
