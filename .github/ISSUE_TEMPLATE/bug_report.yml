@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in apra-pm-lite
+description: Report a bug in apra-pm
 labels: [bug]
 body:
   - type: markdown

@@ -1,10 +1,10 @@
-name: pm-lite-e2e
-run-name: pm-lite E2E ${{ inputs.suite }} - ${{ github.ref_name }}
+name: pm-e2e
+run-name: pm E2E ${{ inputs.suite }} - ${{ github.ref_name }}
 
-# Drives the pm-lite skill headless against the fleet-e2e-toy repo, one suite per run.
-# Runs on the same self-hosted runners as the fleet e2e (labels: self-hosted +
-# fleet-windows / fleet-linux / fleet-macos), which already have the provider CLI
-# installed and authenticated, plus node, git, and beads (bd). Manual trigger.
+# Drives the pm skill headless against the fleet-e2e-toy repo, one suite per run.
+# Runs on self-hosted runners (or a specified runner label). The runner must have
+# the provider CLI installed and authenticated, plus node, git, and beads (bd).
+# Manual trigger.
 #
 # Secrets: E2E_GH_TOKEN -- write access to the toy, used to push the sprint branch
 # and open a PR (no merge). The runner closes the PR and deletes the branch after.
@@ -14,21 +14,22 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: 'Suite to run. s1.x = Claude, s7.x = Gemini, s8.x = AGY; .1/.2/.3 = Windows/Linux/macOS.'
+        description: 'Suite to run. s1=Claude, s7=Gemini, s8=AGY, s9=OpenCode.'
         required: true
         type: choice
-        options: [s1.1, s1.2, s1.3, s7.1, s7.2, s7.3, s8.1, s8.2, s8.3]
+        options: [s1, s7, s8, s9]
+      runner:
+        description: 'Runner to target; default self-hosted = any available runner; override with a label to pin'
+        required: false
+        default: 'self-hosted'
+        type: string
 
 jobs:
   e2e:
-    name: 'pm-lite e2e - ${{ inputs.suite }}'
+    name: 'pm e2e - ${{ inputs.suite }}'
     env:
       GEMINI_CLI_TRUST_WORKSPACE: "true"
-    runs-on:
-      - self-hosted
-      - ${{ endsWith(inputs.suite, '.1') && 'fleet-windows'
-         || endsWith(inputs.suite, '.2') && 'fleet-linux'
-         || 'fleet-macos' }}
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -38,9 +39,10 @@ jobs:
         shell: bash
         run: |
           case "${{ inputs.suite }}" in
-            s1*) P=claude ;;
-            s7*) P=gemini ;;
-            s8*) P=agy ;;
+            s1) P=claude ;;
+            s7) P=gemini ;;
+            s8) P=agy ;;
+            s9) P=opencode ;;
             *) echo "::error::unknown suite ${{ inputs.suite }}"; exit 1 ;;
           esac
           echo "provider=$P" >> "$GITHUB_OUTPUT"
@@ -58,7 +60,14 @@ jobs:
           elif [ "$RUNNER_OS" = "Windows" ]; then echo "$(cygpath -w "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}/agy/bin")" >> "$GITHUB_PATH"
           fi
 
-      - name: Install pm-lite skill
+      - name: Verify opencode + Ollama
+        if: ${{ steps.prov.outputs.provider == 'opencode' }}
+        shell: bash
+        run: |
+          opencode --version || { echo "::error::opencode CLI not found"; exit 1; }
+          curl -sf http://localhost:11434/api/tags > /dev/null || { echo "::error::Ollama not reachable at localhost:11434"; exit 1; }
+
+      - name: Install pm skill
         shell: bash
         run: node install.mjs --llm "${{ steps.prov.outputs.provider }}" --force
 
@@ -70,23 +79,28 @@ jobs:
           git --version
           bd --version || { echo "::error::beads (bd) not found on PATH"; exit 1; }
           P='${{ steps.prov.outputs.provider }}'
-          "$P" --version 2>&1 | head -1 || { echo "::error::$P CLI not found or not working"; exit 1; }
+          if [ "$P" = "opencode" ]; then
+            opencode --version || { echo "::error::opencode CLI not found or not working"; exit 1; }
+          else
+            "$P" --version 2>&1 | head -1 || { echo "::error::$P CLI not found or not working"; exit 1; }
+          fi
 
       - name: Pre-flight - skill + agents installed
         shell: bash
         run: |
           case '${{ steps.prov.outputs.provider }}' in
-            claude) CFG="$HOME/.claude"; AGENTS_DIR="$CFG/agents" ;;
-            gemini) CFG="$HOME/.gemini"; AGENTS_DIR="$CFG/agents" ;;
-            agy)    CFG="$HOME/.gemini/antigravity-cli"; AGENTS_DIR="$CFG/agents" ;;
+            claude)   CFG="$HOME/.claude"; AGENTS_DIR="$CFG/agents" ;;
+            gemini)   CFG="$HOME/.gemini"; AGENTS_DIR="$CFG/agents" ;;
+            agy)      CFG="$HOME/.gemini/antigravity-cli"; AGENTS_DIR="$CFG/agents" ;;
+            opencode) CFG="$HOME/.config/opencode"; AGENTS_DIR="$CFG/agents" ;;
           esac
-          test -f "$CFG/skills/pm-lite/SKILL.md" || { echo "::error::pm-lite skill missing at $CFG/skills/pm-lite"; exit 1; }
+          test -f "$CFG/skills/pm/SKILL.md" || { echo "::error::pm skill missing at $CFG/skills/pm"; exit 1; }
           for a in planner plan-reviewer doer reviewer; do
             test -f "$AGENTS_DIR/$a.md" || { echo "::error::agent $a missing at $AGENTS_DIR"; exit 1; }
           done
           echo "skill + 4 agents present under $CFG"
 
-      # The capability pm-lite lives on: dispatching a subagent headlessly. This is
+      # The capability pm lives on: dispatching a subagent headlessly. This is
       # exactly what stalled agy (subagent invoke -> timeout). Catch it here in ~3 min
       # instead of a full-sprint timeout; a clean return also proves start + auth.
       - name: Pre-flight - subagent dispatch works
@@ -95,9 +109,10 @@ jobs:
           P='${{ steps.prov.outputs.provider }}'
           PROMPT="Dispatch ONE subagent (use your agent/subagent/task mechanism) whose only job is to reply with the exact text SUBAGENT-OK. Wait for it to finish, then print its reply and the text PMLITE-READY. Do nothing else."
           case "$P" in
-            claude) cmd=(claude -p "$PROMPT" --dangerously-skip-permissions) ;;
-            gemini) cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
-            agy)    cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
+            claude)   cmd=(claude -p "$PROMPT" --dangerously-skip-permissions) ;;
+            gemini)   cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
+            agy)      cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
+            opencode) cmd=(opencode run "$PROMPT" --format json --dangerously-skip-permissions) ;;
           esac
           # macOS ships no GNU `timeout` (it is `gtimeout` from coreutils); fall back
           # to running without a wrapper rather than dying with exit 127.
@@ -108,7 +123,7 @@ jobs:
             out=$("${cmd[@]}" 2>&1); rc=$?
           fi
           echo "$out"
-          if [ $rc -eq 124 ]; then echo "::error::$P hung dispatching a subagent (timeout) -- pm-lite cannot run on this provider/config"; exit 1; fi
+          if [ $rc -eq 124 ]; then echo "::error::$P hung dispatching a subagent (timeout) -- pm cannot run on this provider/config"; exit 1; fi
           echo "$out" | grep -q "PMLITE-READY" || { echo "::error::$P produced no response -- start/auth issue"; exit 1; }
           echo "$out" | grep -q "SUBAGENT-OK"  || { echo "::error::$P responded but the subagent never returned -- subagent dispatch broken"; exit 1; }
           echo "$P: subagent dispatch OK"
@@ -123,6 +138,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pm-lite-e2e-${{ inputs.suite }}
+          name: pm-e2e-${{ inputs.suite }}
           path: e2e-results/
           if-no-files-found: ignore

@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest a new feature or enhancement for apra-pm-lite
+description: Suggest a new feature or enhancement for apra-pm
 labels: [enhancement]
 body:
   - type: markdown
