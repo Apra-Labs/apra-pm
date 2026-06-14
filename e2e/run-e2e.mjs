@@ -15,11 +15,10 @@
 // cache) is captured per run and reported in the summary for cost-regression tracking.
 //
 // Usage:
-//   node e2e/run-e2e.mjs [--suite s1.1] [--provider claude|gemini|agy] [--timeout 1800] [--keep-pr]
+//   node e2e/run-e2e.mjs [--suite s1] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr]
 //
-// Selection: default is every suite whose `os` matches this host. --suite picks one
-// by id; --provider filters by provider. The skill must be installed first
-// (node install.mjs --llm <provider>).
+// Selection: default is all suites. --suite picks one by id; --provider filters by
+// provider. The skill must be installed first (node install.mjs --llm <provider>).
 //
 // Auth: pushing the branch and opening the PR needs write access to the toy. Provide
 // it via GH_TOKEN / E2E_GH_TOKEN (wired into the push URL and gh), or rely on the
@@ -53,9 +52,8 @@ const CLI = {
   // agy print mode defaults to a 5m wait; a full sprint is ~30m, so raise it. agy
   // emits no stream-json: its transcript is read from disk after exit (see runAgy).
   agy: ['agy', '--print-timeout=40m', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
+  opencode: ['opencode', 'run', '{PROMPT}', '--format', 'json', '--dangerously-skip-permissions'],
 };
-
-const hostOs = () => (process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux');
 
 function which(bin) {
   const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [bin], { encoding: 'utf-8' });
@@ -117,7 +115,7 @@ function teardownPr(branch, token) {
 
 function selectSuites(a) {
   if (a.suite) return cfg.suites.filter((s) => s.id === a.suite);
-  let s = cfg.suites.filter((x) => x.os === hostOs());
+  let s = cfg.suites;
   if (a.provider) s = s.filter((x) => x.provider === a.provider);
   return s;
 }
@@ -173,7 +171,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
 }
 
 function runSuite(suite, timeoutS, keepPr) {
-  const res = { id: suite.id, provider: suite.provider, os: suite.os, status: '', notes: '', pr: null, telemetry: null, gates: null };
+  const res = { id: suite.id, provider: suite.provider, status: '', notes: '', pr: null, telemetry: null, gates: null };
   const { bin } = commandFor(suite.provider, '');
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
@@ -238,7 +236,7 @@ function runSuite(suite, timeoutS, keepPr) {
 function main() {
   const a = parseArgs();
   const suites = selectSuites(a);
-  if (!suites.length) { console.error(`no suites match (host os=${hostOs()})`); process.exit(2); }
+  if (!suites.length) { console.error('no suites match the given filters'); process.exit(2); }
 
   const results = [];
   for (const s of suites) {

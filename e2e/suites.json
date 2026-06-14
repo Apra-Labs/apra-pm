@@ -1,17 +1,10 @@
 {
-  "description": "pm e2e suites. Each suite drives the pm skill headless on one machine (no members, no MCP) through a full plan -> start -> cleanup sprint on the fleet-e2e-toy repo, picking 3 ready P1 beads issues. Success is judged by independent validation gates against the resulting branch + PR (see validate-sprint.mjs), not self-reported checkpoints. Suite groups are by provider: s1=Claude, s7=Gemini, s8=AGY; the .1/.2/.3 sub-variants are the OS matrix.",
+  "description": "pm e2e suites. Each suite drives the pm skill headless on one machine (no members, no MCP) through a full plan -> start -> cleanup sprint on the fleet-e2e-toy repo, picking 3 ready P1 beads issues. Success is judged by independent validation gates against the resulting branch + PR (see validate-sprint.mjs), not self-reported checkpoints. Suites are OS-independent; the runner is chosen via the workflow runner input.",
   "toy": "https://github.com/Apra-Labs/fleet-e2e-toy",
   "suites": [
-    { "id": "s1.1", "provider": "claude", "os": "windows", "cli": "claude" },
-    { "id": "s1.2", "provider": "claude", "os": "linux",   "cli": "claude" },
-    { "id": "s1.3", "provider": "claude", "os": "macos",   "cli": "claude" },
-
-    { "id": "s7.1", "provider": "gemini", "os": "windows", "cli": "gemini" },
-    { "id": "s7.2", "provider": "gemini", "os": "linux",   "cli": "gemini" },
-    { "id": "s7.3", "provider": "gemini", "os": "macos",   "cli": "gemini" },
-
-    { "id": "s8.1", "provider": "agy", "os": "windows", "cli": "agy" },
-    { "id": "s8.2", "provider": "agy", "os": "linux",   "cli": "agy" },
-    { "id": "s8.3", "provider": "agy", "os": "macos",   "cli": "agy" }
+    { "id": "s1", "provider": "claude", "cli": "claude" },
+    { "id": "s7", "provider": "gemini", "cli": "gemini" },
+    { "id": "s8", "provider": "agy", "cli": "agy" },
+    { "id": "s9", "provider": "opencode", "cli": "opencode", "model": "ollama/qwen3-coder:30b" }
   ]
 }
