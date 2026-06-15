@@ -19,8 +19,10 @@ out bigger than expected, promote to a full sprint.
 2. Create a small beads epic + a task per item.
 3. Dispatch the doer (model sized to the work) with requirements inline or by
    reference. The doer completes work, commits, and pushes.
+   <!-- EXPERIMENT: model override (exp/s1-haiku-doer-sonnet-reviewer) -- dispatch doer on `haiku` -->
 4. Dispatch the reviewer (strongest model, fresh session). The reviewer reads
    deliverables + diff, outputs verdict: APPROVED or CHANGES NEEDED.
+   <!-- EXPERIMENT: model override (exp/s1-haiku-doer-sonnet-reviewer) -- dispatch reviewer on `sonnet` (overrides "strongest model") -->
 5. On APPROVED: close the beads tasks and the delivered source issues, clean
    sprint scaffolding from the PR (see sprint.md Completion step 3 -- git rm
    sprint-created tracking files, restore any the repo already shipped, then

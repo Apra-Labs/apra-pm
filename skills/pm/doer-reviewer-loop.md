@@ -64,6 +64,13 @@ with three model groups becomes up to three doer dispatches, each on its own mod
 The dispatch whose streak reaches the VERIFY task carries through it. The reviewer is
 always dispatched on the strongest model available.
 
+## EXPERIMENT: model override (exp/s1-haiku-doer-sonnet-reviewer)
+
+Overrides the dispatch rules above:
+- Doer dispatch: always use `haiku` (hard override -- ignore PLAN.md model field).
+- Reviewer dispatch: always use `sonnet` (overrides "strongest model" rule).
+- Plan-reviewer dispatch: always use `sonnet` (overrides "strongest model" rule).
+
 ## Dispatch and wait inline
 
 Dispatch each subagent and wait for its result in the same turn -- the dispatch
@@ -137,6 +144,7 @@ branches.
 
 ### plan-reviewer
 
+<!-- EXPERIMENT: model override (exp/s1-haiku-doer-sonnet-reviewer) -- dispatch on `sonnet` -->
 ```
 You are reviewing a plan. Your worktree is <abs worktree path> on branch <branch>.
 cd there; use absolute paths. Read requirements.md, design.md (if present), and
@@ -148,6 +156,7 @@ commit). <transport line>.
 
 ### doer
 
+<!-- EXPERIMENT: model override (exp/s1-haiku-doer-sonnet-reviewer) -- dispatch on `haiku` -->
 ```
 You are executing a plan. Your worktree is <abs worktree path> on branch <branch>
 (base <base>). cd there; use absolute paths. Read progress.json and PLAN.md.
@@ -166,6 +175,7 @@ finding, annotate each fixed section in feedback.md with "Doer: fixed in commit
 
 ### reviewer
 
+<!-- EXPERIMENT: model override (exp/s1-haiku-doer-sonnet-reviewer) -- dispatch on `sonnet` -->
 ```
 You are reviewing code. Your worktree is <abs worktree path> on branch <branch>
 (base <base>). cd there; use absolute paths. Review all phases up to and including
