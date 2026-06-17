@@ -52,7 +52,9 @@ const CLI = {
   // agy print mode defaults to a 5m wait; a full sprint is ~30m, so raise it. agy
   // emits no stream-json: its transcript is read from disk after exit (see runAgy).
   agy: ['agy', '--print-timeout=40m', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
-  opencode: ['opencode', 'run', '{PROMPT}', '--format', 'json', '--dangerously-skip-permissions'],
+  // --variant minimal reduces reasoning effort so the model does not spend >2min
+  // thinking between turns, which would exceed the upstream API idle timeout.
+  opencode: ['opencode', 'run', '{PROMPT}', '--variant', 'minimal', '--format', 'json', '--dangerously-skip-permissions'],
 };
 
 function which(bin) {
