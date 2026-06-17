@@ -13,6 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -168,7 +169,6 @@ function main() {
 
   // beads check (required for tracking; hard dependency)
   console.log('');
-  const { spawnSync } = await import('node:child_process');
   const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8' });
   if (bdCheck.error || bdCheck.status !== 0) {
     console.error('');
