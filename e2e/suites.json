@@ -5,6 +5,6 @@
     { "id": "s1", "provider": "claude", "cli": "claude" },
     { "id": "s7", "provider": "gemini", "cli": "gemini" },
     { "id": "s8", "provider": "agy", "cli": "agy" },
-    { "id": "s9", "provider": "opencode", "cli": "opencode", "model": "ollama/qwen3-coder:30b" }
+    { "id": "s9", "provider": "opencode", "cli": "opencode", "model": "opencode/deepseek-v4-flash-free" }
   ]
 }
