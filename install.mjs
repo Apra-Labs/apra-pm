@@ -50,6 +50,52 @@ function requiredPermissions(cfg) {
   ];
 }
 
+// --- opencode agent transform -----------------------------------------------
+// OpenCode uses a different agent frontmatter schema:
+//   description, mode: subagent, permission: { edit, write, bash }
+// Claude uses: name, description, tools: [...]
+// This mirrors the transformAgentForOpenCode in apra-fleet src/cli/agent-transform.ts.
+function transformAgentForOpenCode(content) {
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+  if (!fmMatch) return content;
+
+  const frontmatter = fmMatch[1];
+  const body = content.slice(fmMatch[0].length);
+
+  let description = '';
+  let tools = [];
+  let hasTools = false;
+
+  for (const line of frontmatter.split('\n')) {
+    const descMatch = line.match(/^description:\s*(.+)/);
+    if (descMatch) description = descMatch[1].trim();
+    const toolsMatch = line.match(/^tools:\s*(.+)/);
+    if (toolsMatch) {
+      hasTools = true;
+      tools = toolsMatch[1].replace(/^\[/, '').replace(/\]$/, '').split(',').map(t => t.trim()).filter(Boolean);
+    }
+  }
+
+  const toolSet = new Set(tools);
+  const perm = hasTools
+    ? { edit: toolSet.has('Edit') ? 'allow' : 'deny', write: 'allow', bash: toolSet.has('Bash') ? 'allow' : 'deny' }
+    : { edit: 'deny', write: 'allow', bash: 'deny' };
+
+  const opencodeFm = [
+    '---',
+    `description: ${description}`,
+    'mode: subagent',
+    'permission:',
+    `  edit: ${perm.edit}`,
+    `  write: ${perm.write}`,
+    `  bash: ${perm.bash}`,
+    '---',
+    '',
+  ].join('\n');
+
+  return opencodeFm + body;
+}
+
 // --- fs helpers ------------------------------------------------------------
 function ensureDir(d) { fs.mkdirSync(d, { recursive: true }); }
 
@@ -160,7 +206,11 @@ function main() {
   // 2) agents (overwrite the four; leave any others in place)
   ensureDir(agentsDest);
   const agents = fs.readdirSync(agentsSrc).filter(f => f.endsWith('.md'));
-  for (const a of agents) fs.copyFileSync(path.join(agentsSrc, a), path.join(agentsDest, a));
+  for (const a of agents) {
+    let content = fs.readFileSync(path.join(agentsSrc, a), 'utf-8');
+    if (args.llm === 'opencode') content = transformAgentForOpenCode(content);
+    fs.writeFileSync(path.join(agentsDest, a), content);
+  }
   console.log(`  [2/3] agents  -> ${agentsDest} (${agents.map(a => a.replace('.md', '')).join(', ')})`);
 
   // 3) permissions
