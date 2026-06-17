@@ -201,6 +201,11 @@ function runSuite(suite, timeoutS, keepPr) {
   git(['-C', repo, 'config', 'user.email', 'e2e@pm']);
   git(['-C', repo, 'config', 'user.name', 'pm-e2e']);
 
+  // beads needs issue_prefix set before the model can run bd commands.
+  // The toy repo commits .beads/issues.jsonl but not git config, so initialize
+  // here with the toy's prefix so `bd ready` and `bd list` work out of the box.
+  spawnSync('bd', ['init', '-p', 'gh-toy', '--non-interactive'], { cwd: repo, encoding: 'utf-8' });
+
   // The sprint pushes and raises a PR, so keep origin. If a token is provided, wire
   // it into the push URL (gh reads GH_TOKEN from the environment on its own).
   const token = process.env.GH_TOKEN || process.env.E2E_GH_TOKEN || '';
