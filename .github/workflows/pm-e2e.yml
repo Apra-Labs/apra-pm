@@ -19,9 +19,14 @@ on:
         type: choice
         options: [s1, s7, s8, s9]
       runner:
-        description: 'Runner to target; default self-hosted = any available runner; override with a label to pin'
+        description: 'Runner label override. Leave blank for default (self-hosted for all suites).'
         required: false
-        default: 'self-hosted'
+        default: ''
+        type: string
+      model:
+        description: 'Model override for the suite (e.g. opencode/nemotron-3-ultra-free). Leave blank to use the suite default.'
+        required: false
+        default: ''
         type: string
 
 jobs:
@@ -29,7 +34,7 @@ jobs:
     name: 'pm e2e - ${{ inputs.suite }}'
     env:
       GEMINI_CLI_TRUST_WORKSPACE: "true"
-    runs-on: ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner != '' && inputs.runner || 'self-hosted' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -60,12 +65,28 @@ jobs:
           elif [ "$RUNNER_OS" = "Windows" ]; then echo "$(cygpath -w "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}/agy/bin")" >> "$GITHUB_PATH"
           fi
 
-      - name: Verify opencode + Ollama
+      - name: Install required CLI tools (opencode suite on GitHub-hosted runner)
         if: ${{ steps.prov.outputs.provider == 'opencode' }}
         shell: bash
         run: |
-          opencode --version || { echo "::error::opencode CLI not found"; exit 1; }
-          curl -sf http://localhost:11434/api/tags > /dev/null || { echo "::error::Ollama not reachable at localhost:11434"; exit 1; }
+          if ! command -v bd &> /dev/null; then
+            echo "beads not found -- installing from GitHub release..."
+            BEADS_VERSION="1.0.4"
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              BEADS_ARCH="linux_amd64"
+            elif [ "$RUNNER_OS" = "macOS" ]; then
+              BEADS_ARCH="darwin_arm64"
+            fi
+            curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${BEADS_VERSION}/beads_${BEADS_VERSION}_${BEADS_ARCH}.tar.gz" | tar -xz -C /tmp
+            sudo mv /tmp/bd /usr/local/bin/bd
+            sudo chmod +x /usr/local/bin/bd
+          fi
+          bd --version || { echo "::error::beads (bd) install failed"; exit 1; }
+          if ! command -v opencode &> /dev/null; then
+            echo "OpenCode not found -- installing opencode-ai..."
+            npm install -g opencode-ai
+          fi
+          opencode --version || { echo "::error::opencode CLI install failed"; exit 1; }
 
       - name: Install pm skill
         shell: bash
@@ -112,17 +133,23 @@ jobs:
             claude)   cmd=(claude -p "$PROMPT" --dangerously-skip-permissions) ;;
             gemini)   cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
             agy)      cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
-            opencode) cmd=(opencode run "$PROMPT" --format json --dangerously-skip-permissions) ;;
+            opencode) cmd=(opencode run "$PROMPT" -m opencode/mimo-v2.5-free --variant minimal --format json --dangerously-skip-permissions) ;;
           esac
           # macOS ships no GNU `timeout` (it is `gtimeout` from coreutils); fall back
           # to running without a wrapper rather than dying with exit 127.
           TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+          # Disable set -e so we can capture the exit code even on failure and echo it.
+          set +e
           if [ -n "$TIMEOUT_BIN" ]; then
-            out=$("$TIMEOUT_BIN" 180 "${cmd[@]}" 2>&1); rc=$?
+            out=$("$TIMEOUT_BIN" 180 "${cmd[@]}" 2>&1)
           else
-            out=$("${cmd[@]}" 2>&1); rc=$?
+            out=$("${cmd[@]}" 2>&1)
           fi
+          rc=$?
+          set -e
+          echo "--- provider output (rc=$rc) ---"
           echo "$out"
+          echo "--- end output ---"
           if [ $rc -eq 124 ]; then echo "::error::$P hung dispatching a subagent (timeout) -- pm cannot run on this provider/config"; exit 1; fi
           echo "$out" | grep -q "PMLITE-READY" || { echo "::error::$P produced no response -- start/auth issue"; exit 1; }
           echo "$out" | grep -q "SUBAGENT-OK"  || { echo "::error::$P responded but the subagent never returned -- subagent dispatch broken"; exit 1; }
@@ -132,6 +159,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.E2E_GH_TOKEN }}
+          # Self-hosted runners are trusted; pass token so the LLM can use gh CLI.
+          PMLITE_E2E_TRUST_LLM: "1"
+          # Model override: workflow input wins, otherwise suites.json default is used.
+          PMLITE_E2E_MODEL: ${{ inputs.model }}
         run: node e2e/run-e2e.mjs --suite "${{ inputs.suite }}"
 
       - name: Upload results

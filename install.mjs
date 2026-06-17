@@ -13,6 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -23,13 +24,15 @@ const HOME = os.homedir();
 function providerConfig(llm) {
   switch (llm) {
     case 'claude':
-      return { name: 'Claude', configDir: path.join(HOME, '.claude') };
+      return { name: 'Claude', configDir: path.join(HOME, '.claude'), settingsFile: 'settings.json' };
     case 'gemini':
-      return { name: 'Gemini', configDir: path.join(HOME, '.gemini') };
+      return { name: 'Gemini', configDir: path.join(HOME, '.gemini'), settingsFile: 'settings.json' };
     case 'agy':
-      return { name: 'Antigravity', configDir: path.join(HOME, '.gemini', 'antigravity-cli') };
+      return { name: 'Antigravity', configDir: path.join(HOME, '.gemini', 'antigravity-cli'), settingsFile: 'settings.json' };
+    case 'opencode':
+      return { name: 'OpenCode', configDir: path.join(HOME, '.config', 'opencode'), settingsFile: 'opencode.json' };
     default:
-      throw new Error(`unknown provider "${llm}" (expected: claude | gemini | agy)`);
+      throw new Error(`unknown provider "${llm}" (expected: claude | gemini | agy | opencode)`);
   }
 }
 
@@ -45,6 +48,52 @@ function requiredPermissions(cfg) {
     'Bash(gh:*)',
     `Read(${skills}/**)`,
   ];
+}
+
+// --- opencode agent transform -----------------------------------------------
+// OpenCode uses a different agent frontmatter schema:
+//   description, mode: subagent, permission: { edit, write, bash }
+// Claude uses: name, description, tools: [...]
+// This mirrors the transformAgentForOpenCode in apra-fleet src/cli/agent-transform.ts.
+function transformAgentForOpenCode(content) {
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+  if (!fmMatch) return content;
+
+  const frontmatter = fmMatch[1];
+  const body = content.slice(fmMatch[0].length);
+
+  let description = '';
+  let tools = [];
+  let hasTools = false;
+
+  for (const line of frontmatter.split('\n')) {
+    const descMatch = line.match(/^description:\s*(.+)/);
+    if (descMatch) description = descMatch[1].trim();
+    const toolsMatch = line.match(/^tools:\s*(.+)/);
+    if (toolsMatch) {
+      hasTools = true;
+      tools = toolsMatch[1].replace(/^\[/, '').replace(/\]$/, '').split(',').map(t => t.trim()).filter(Boolean);
+    }
+  }
+
+  const toolSet = new Set(tools);
+  const perm = hasTools
+    ? { edit: toolSet.has('Edit') ? 'allow' : 'deny', write: 'allow', bash: toolSet.has('Bash') ? 'allow' : 'deny' }
+    : { edit: 'deny', write: 'allow', bash: 'deny' };
+
+  const opencodeFm = [
+    '---',
+    `description: ${description}`,
+    'mode: subagent',
+    'permission:',
+    `  edit: ${perm.edit}`,
+    `  write: ${perm.write}`,
+    `  bash: ${perm.bash}`,
+    '---',
+    '',
+  ].join('\n');
+
+  return opencodeFm + body;
 }
 
 // --- fs helpers ------------------------------------------------------------
@@ -109,7 +158,7 @@ Usage:
   node install.mjs [options]
 
 Options:
-  --llm <provider>   claude (default) | gemini | agy
+  --llm <provider>   claude (default) | gemini | agy | opencode
   --force            reinstall even if already present
   --help             show this help
 
@@ -140,7 +189,7 @@ function main() {
 
   const skillDest = path.join(cfg.configDir, 'skills', 'pm');
   const agentsDest = path.join(cfg.configDir, 'agents');
-  const settingsFile = path.join(cfg.configDir, 'settings.json');
+  const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
   if (fs.existsSync(skillDest) && !args.force) {
     console.error(`pm already installed at ${skillDest} (use --force to reinstall)`);
@@ -157,17 +206,44 @@ function main() {
   // 2) agents (overwrite the four; leave any others in place)
   ensureDir(agentsDest);
   const agents = fs.readdirSync(agentsSrc).filter(f => f.endsWith('.md'));
-  for (const a of agents) fs.copyFileSync(path.join(agentsSrc, a), path.join(agentsDest, a));
+  for (const a of agents) {
+    let content = fs.readFileSync(path.join(agentsSrc, a), 'utf-8');
+    if (args.llm === 'opencode') content = transformAgentForOpenCode(content);
+    fs.writeFileSync(path.join(agentsDest, a), content);
+  }
   console.log(`  [2/3] agents  -> ${agentsDest} (${agents.map(a => a.replace('.md', '')).join(', ')})`);
 
   // 3) permissions
-  const added = mergePermissions(settingsFile, requiredPermissions(cfg));
+  let added;
+  if (args.llm === 'opencode') {
+    // OpenCode does not support a permissions key in opencode.json -- it rejects
+    // any unrecognized key as invalid config. Permissions are passed via CLI flags
+    // (--dangerously-skip-permissions) at invocation time; nothing to write here.
+    // Remove any stale permissions key a prior install run may have added.
+    const settings = readJson(settingsFile);
+    if (Object.prototype.hasOwnProperty.call(settings, 'permissions')) {
+      delete settings.permissions;
+      writeJson(settingsFile, settings);
+    }
+    added = 0;
+  } else {
+    added = mergePermissions(settingsFile, requiredPermissions(cfg));
+  }
   console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
 
-  // beads check (required for tracking; warn only)
+  // beads check (required for tracking; hard dependency)
+  console.log('');
+  const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8' });
+  if (bdCheck.error || bdCheck.status !== 0) {
+    console.error('');
+    console.error('  [!] beads (bd) is not installed -- pm WILL NOT WORK without it.');
+    console.error('      Install it with:  npm install -g @beads/bd');
+    console.error('      Then verify with: bd --version');
+  } else {
+    console.log(`  beads OK: ${bdCheck.stdout.trim()}`);
+  }
   console.log('');
   console.log('pm installed. Invoke the "pm" skill to drive a sprint.');
-  console.log('Note: pm uses beads (bd) for task tracking -- install it if "bd --version" fails.');
 }
 
 main();

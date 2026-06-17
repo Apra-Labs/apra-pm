@@ -40,7 +40,13 @@ import { postSummary } from './post-summary.mjs';
 
 const E2E = path.dirname(fileURLToPath(import.meta.url));
 const cfg = JSON.parse(fs.readFileSync(path.join(E2E, 'suites.json'), 'utf-8'));
-const scenarioTpl = fs.readFileSync(path.join(E2E, 'scenario.md'), 'utf-8');
+
+// Each suite may specify a custom scenario file via the "scenario" field.
+// Falls back to the shared scenario.md when not set.
+function scenarioFor(suite) {
+  const file = suite.scenario || 'scenario.md';
+  return fs.readFileSync(path.join(E2E, file), 'utf-8');
+}
 
 // Default headless command per provider. {PROMPT} is replaced with the scenario.
 // The autonomy flags matter: without them the CLI stalls on permission/trust gates
@@ -52,7 +58,9 @@ const CLI = {
   // agy print mode defaults to a 5m wait; a full sprint is ~30m, so raise it. agy
   // emits no stream-json: its transcript is read from disk after exit (see runAgy).
   agy: ['agy', '--print-timeout=40m', '-p', '{PROMPT}', '--dangerously-skip-permissions'],
-  opencode: ['opencode', 'run', '{PROMPT}', '--format', 'json', '--dangerously-skip-permissions'],
+  // --variant minimal reduces reasoning effort so the model does not spend >2min
+  // thinking between turns, which would exceed the upstream API idle timeout.
+  opencode: ['opencode', 'run', '{PROMPT}', '--variant', 'minimal', '--format', 'json', '--dangerously-skip-permissions'],
 };
 
 function which(bin) {
@@ -77,6 +85,18 @@ function parseArgs() {
 const OWNER_REPO = (cfg.toy.match(/github\.com[/:]([^/]+\/[^/.]+)/) || [])[1] || null;
 
 function ghEnv(token) { return token ? { ...process.env, GH_TOKEN: token } : process.env; }
+
+// LLM processes must not inherit write-access tokens on public runners -- the
+// token is already embedded in the git remote URL before the sprint starts.
+// Set PMLITE_E2E_TRUST_LLM=1 on self-hosted (private) runners where leakage
+// is not a concern and the LLM may need the token for gh CLI calls.
+function llmEnv() {
+  if (process.env.PMLITE_E2E_TRUST_LLM === '1') return process.env;
+  const e = { ...process.env };
+  delete e.GH_TOKEN;
+  delete e.E2E_GH_TOKEN;
+  return e;
+}
 
 // Capture the PR raised for this branch BEFORE teardown: its URL, commit list, and
 // the /commits permalink that survives branch deletion. Best effort.
@@ -120,10 +140,15 @@ function selectSuites(a) {
   return s;
 }
 
-function commandFor(provider, prompt) {
+function commandFor(provider, prompt, model) {
+  // PMLITE_E2E_MODEL overrides the suite's model -- easy to switch without editing suites.json.
+  const effectiveModel = process.env.PMLITE_E2E_MODEL || model;
   const override = process.env[`PMLITE_E2E_CMD_${provider.toUpperCase()}`];
   const tokens = override ? override.split(' ') : CLI[provider];
   const filled = tokens.map((t) => (t === '{PROMPT}' ? prompt : t));
+  if (!override && effectiveModel && provider === 'opencode') {
+    filled.splice(1, 0, '-m', effectiveModel);
+  }
   return { bin: filled[0], args: filled.slice(1) };
 }
 
@@ -151,7 +176,7 @@ function appendAgyTranscript(cwd, logPath) {
 // sprint is done. The terminal signal is the PR itself (cleanup raises it), checked
 // via `isDone()`. Returns { timedOut }.
 function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
-  const first = spawnSync(cmd, args, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+  const first = spawnSync(cmd, args, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
   fs.writeFileSync(logPath, `${first.stdout || ''}\n---STDERR---\n${first.stderr || ''}`);
   appendAgyTranscript(cwd, logPath);
   if (first.error && first.error.code === 'ETIMEDOUT') return { timedOut: true };
@@ -162,7 +187,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
     const cont = ['--print-timeout=40m', '--continue', '-p',
       'Continue the sprint from where you left off. Finish the pm start and cleanup commands without stopping, so a PR is raised.',
       '--dangerously-skip-permissions'];
-    const r = spawnSync(cmd, cont, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync(cmd, cont, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
     fs.appendFileSync(logPath, `\n---RESUME ${i}---\n${r.stdout || ''}\n${r.stderr || ''}`);
     appendAgyTranscript(cwd, logPath);
     if (r.error && r.error.code === 'ETIMEDOUT') return { timedOut: true };
@@ -172,7 +197,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
 
 function runSuite(suite, timeoutS, keepPr) {
   const res = { id: suite.id, provider: suite.provider, status: '', notes: '', pr: null, telemetry: null, gates: null };
-  const { bin } = commandFor(suite.provider, '');
+  const { bin } = commandFor(suite.provider, '', suite.model);
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), `pmlite-e2e-${suite.id}-`));
@@ -184,6 +209,11 @@ function runSuite(suite, timeoutS, keepPr) {
   git(['-C', repo, 'config', 'user.email', 'e2e@pm']);
   git(['-C', repo, 'config', 'user.name', 'pm-e2e']);
 
+  // beads needs issue_prefix set before the model can run bd commands.
+  // The toy repo commits .beads/issues.jsonl but not git config, so initialize
+  // here with the toy's prefix so `bd ready` and `bd list` work out of the box.
+  spawnSync('bd', ['init', '-p', 'gh-toy', '--non-interactive'], { cwd: repo, encoding: 'utf-8' });
+
   // The sprint pushes and raises a PR, so keep origin. If a token is provided, wire
   // it into the push URL (gh reads GH_TOKEN from the environment on its own).
   const token = process.env.GH_TOKEN || process.env.E2E_GH_TOKEN || '';
@@ -192,17 +222,17 @@ function runSuite(suite, timeoutS, keepPr) {
   }
 
   const branch = `pmlite-e2e/${suite.id}-${Date.now()}`;
-  const prompt = scenarioTpl
+  const prompt = scenarioFor(suite)
     .replaceAll('{{REPO}}', repo.replace(/\\/g, '/'))
     .replaceAll('{{BRANCH}}', branch);
-  const { bin: cmd, args } = commandFor(suite.provider, prompt);
+  const { bin: cmd, args } = commandFor(suite.provider, prompt, suite.model);
 
   console.log(`[${suite.id}] ${cmd} (cwd ${work}, branch ${branch}) ...`);
   let timedOut = false;
   if (suite.provider === 'agy') {
     ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
   } else {
-    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
     fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
     timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
   }
