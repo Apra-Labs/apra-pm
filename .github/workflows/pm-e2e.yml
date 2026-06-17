@@ -34,12 +34,7 @@ jobs:
     name: 'pm e2e - ${{ inputs.suite }}'
     env:
       GEMINI_CLI_TRUST_WORKSPACE: "true"
-    # s9 (opencode) must land on a clean dedicated runner -- the dev machine has
-    # fleet MCP in opencode.json which causes the pm skill to attempt fleet dispatch
-    # and crash silently. Dedicated runners have no opencode.json overlay.
-    # Known clean labels: fleet-win11 (Windows), fleet-lin2404 (Linux, org-level),
-    # fleet-mac15 (macOS). Other suites keep self-hosted (claude/gemini/agy auth).
-    runs-on: ${{ inputs.runner != '' && inputs.runner || (inputs.suite == 's9' && 'fleet-win11' || 'self-hosted') }}
+    runs-on: ${{ inputs.runner != '' && inputs.runner || 'self-hosted' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

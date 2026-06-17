@@ -98,6 +98,18 @@ function llmEnv() {
   return e;
 }
 
+// For opencode, write a minimal opencode.json into the work dir and point
+// XDG_CONFIG_HOME there so the sprint uses a clean config with no fleet MCP
+// or custom providers -- even if the runner's global opencode.json has them.
+// Without this, fleet MCP in the global config causes opencode to exit silently
+// when the pm skill loads and sees dispatch tools available.
+function opencodeEnv(workDir) {
+  const cfgDir = path.join(workDir, '.config', 'opencode');
+  fs.mkdirSync(cfgDir, { recursive: true });
+  fs.writeFileSync(path.join(cfgDir, 'opencode.json'), JSON.stringify({ $schema: 'https://opencode.ai/config.json' }) + '\n');
+  return { ...llmEnv(), XDG_CONFIG_HOME: path.join(workDir, '.config') };
+}
+
 // Capture the PR raised for this branch BEFORE teardown: its URL, commit list, and
 // the /commits permalink that survives branch deletion. Best effort.
 function capturePr(branch, token) {
@@ -232,7 +244,8 @@ function runSuite(suite, timeoutS, keepPr) {
   if (suite.provider === 'agy') {
     ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
   } else {
-    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
+    const env = suite.provider === 'opencode' ? opencodeEnv(work) : llmEnv();
+    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env });
     const meta = `\n---META--- exit=${r.status} signal=${r.signal} error=${r.error ? r.error.code : 'none'}\n`;
     fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}${meta}`);
     timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
