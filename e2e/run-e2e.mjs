@@ -233,7 +233,8 @@ function runSuite(suite, timeoutS, keepPr) {
     ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
   } else {
     const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
-    fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
+    const meta = `\n---META--- exit=${r.status} signal=${r.signal} error=${r.error ? r.error.code : 'none'}\n`;
+    fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}${meta}`);
     timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
   }
 
