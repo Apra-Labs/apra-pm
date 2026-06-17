@@ -133,7 +133,7 @@ jobs:
             claude)   cmd=(claude -p "$PROMPT" --dangerously-skip-permissions) ;;
             gemini)   cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
             agy)      cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
-            opencode) cmd=(opencode run "$PROMPT" -m opencode/nemotron-3-ultra-free --variant minimal --format json --dangerously-skip-permissions) ;;
+            opencode) cmd=(opencode run "$PROMPT" -m opencode/mimo-v2.5-free --variant minimal --format json --dangerously-skip-permissions) ;;
           esac
           # macOS ships no GNU `timeout` (it is `gtimeout` from coreutils); fall back
           # to running without a wrapper rather than dying with exit 127.
