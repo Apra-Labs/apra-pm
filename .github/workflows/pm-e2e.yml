@@ -19,9 +19,9 @@ on:
         type: choice
         options: [s1, s7, s8, s9]
       runner:
-        description: 'Runner to target; default self-hosted = any available runner; override with a label to pin'
+        description: 'Runner label override. Leave blank to use the default per suite (s9 -> ubuntu-latest; others -> self-hosted).'
         required: false
-        default: 'self-hosted'
+        default: ''
         type: string
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
     name: 'pm e2e - ${{ inputs.suite }}'
     env:
       GEMINI_CLI_TRUST_WORKSPACE: "true"
-    runs-on: ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner != '' && inputs.runner || (inputs.suite == 's9' && 'ubuntu-latest' || 'self-hosted') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -60,12 +60,21 @@ jobs:
           elif [ "$RUNNER_OS" = "Windows" ]; then echo "$(cygpath -w "${LOCALAPPDATA:-$USERPROFILE/AppData/Local}/agy/bin")" >> "$GITHUB_PATH"
           fi
 
-      - name: Verify opencode + Ollama
+      - name: Install OpenCode CLI if not present
+        if: ${{ steps.prov.outputs.provider == 'opencode' }}
+        shell: bash
+        run: |
+          if ! command -v opencode &> /dev/null; then
+            echo "OpenCode not found -- installing via npm..."
+            npm install -g opencode-ai
+          fi
+          opencode --version || { echo "::error::opencode CLI install failed"; exit 1; }
+
+      - name: Verify OpenCode CLI
         if: ${{ steps.prov.outputs.provider == 'opencode' }}
         shell: bash
         run: |
           opencode --version || { echo "::error::opencode CLI not found"; exit 1; }
-          curl -sf http://localhost:11434/api/tags > /dev/null || { echo "::error::Ollama not reachable at localhost:11434"; exit 1; }
 
       - name: Install pm skill
         shell: bash

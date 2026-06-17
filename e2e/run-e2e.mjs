@@ -78,6 +78,15 @@ const OWNER_REPO = (cfg.toy.match(/github\.com[/:]([^/]+\/[^/.]+)/) || [])[1] ||
 
 function ghEnv(token) { return token ? { ...process.env, GH_TOKEN: token } : process.env; }
 
+// LLM processes must not inherit write-access tokens -- the token is already
+// embedded in the git remote URL before the sprint starts.
+function llmEnv() {
+  const e = { ...process.env };
+  delete e.GH_TOKEN;
+  delete e.E2E_GH_TOKEN;
+  return e;
+}
+
 // Capture the PR raised for this branch BEFORE teardown: its URL, commit list, and
 // the /commits permalink that survives branch deletion. Best effort.
 function capturePr(branch, token) {
@@ -151,7 +160,7 @@ function appendAgyTranscript(cwd, logPath) {
 // sprint is done. The terminal signal is the PR itself (cleanup raises it), checked
 // via `isDone()`. Returns { timedOut }.
 function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
-  const first = spawnSync(cmd, args, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+  const first = spawnSync(cmd, args, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
   fs.writeFileSync(logPath, `${first.stdout || ''}\n---STDERR---\n${first.stderr || ''}`);
   appendAgyTranscript(cwd, logPath);
   if (first.error && first.error.code === 'ETIMEDOUT') return { timedOut: true };
@@ -162,7 +171,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
     const cont = ['--print-timeout=40m', '--continue', '-p',
       'Continue the sprint from where you left off. Finish the pm start and cleanup commands without stopping, so a PR is raised.',
       '--dangerously-skip-permissions'];
-    const r = spawnSync(cmd, cont, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync(cmd, cont, { cwd, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
     fs.appendFileSync(logPath, `\n---RESUME ${i}---\n${r.stdout || ''}\n${r.stderr || ''}`);
     appendAgyTranscript(cwd, logPath);
     if (r.error && r.error.code === 'ETIMEDOUT') return { timedOut: true };
@@ -202,7 +211,7 @@ function runSuite(suite, timeoutS, keepPr) {
   if (suite.provider === 'agy') {
     ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
   } else {
-    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
     fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
     timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
   }
