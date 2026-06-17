@@ -40,7 +40,13 @@ import { postSummary } from './post-summary.mjs';
 
 const E2E = path.dirname(fileURLToPath(import.meta.url));
 const cfg = JSON.parse(fs.readFileSync(path.join(E2E, 'suites.json'), 'utf-8'));
-const scenarioTpl = fs.readFileSync(path.join(E2E, 'scenario.md'), 'utf-8');
+
+// Each suite may specify a custom scenario file via the "scenario" field.
+// Falls back to the shared scenario.md when not set.
+function scenarioFor(suite) {
+  const file = suite.scenario || 'scenario.md';
+  return fs.readFileSync(path.join(E2E, file), 'utf-8');
+}
 
 // Default headless command per provider. {PROMPT} is replaced with the scenario.
 // The autonomy flags matter: without them the CLI stalls on permission/trust gates
@@ -216,7 +222,7 @@ function runSuite(suite, timeoutS, keepPr) {
   }
 
   const branch = `pmlite-e2e/${suite.id}-${Date.now()}`;
-  const prompt = scenarioTpl
+  const prompt = scenarioFor(suite)
     .replaceAll('{{REPO}}', repo.replace(/\\/g, '/'))
     .replaceAll('{{BRANCH}}', branch);
   const { bin: cmd, args } = commandFor(suite.provider, prompt, suite.model);

@@ -5,6 +5,6 @@
     { "id": "s1", "provider": "claude", "cli": "claude" },
     { "id": "s7", "provider": "gemini", "cli": "gemini" },
     { "id": "s8", "provider": "agy", "cli": "agy" },
-    { "id": "s9", "provider": "opencode", "cli": "opencode", "model": "opencode/nemotron-3-ultra-free" }
+    { "id": "s9", "provider": "opencode", "cli": "opencode", "model": "opencode/deepseek-v4-flash-free", "scenario": "scenario-opencode.md" }
   ]
 }
