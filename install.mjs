@@ -23,13 +23,15 @@ const HOME = os.homedir();
 function providerConfig(llm) {
   switch (llm) {
     case 'claude':
-      return { name: 'Claude', configDir: path.join(HOME, '.claude') };
+      return { name: 'Claude', configDir: path.join(HOME, '.claude'), settingsFile: 'settings.json' };
     case 'gemini':
-      return { name: 'Gemini', configDir: path.join(HOME, '.gemini') };
+      return { name: 'Gemini', configDir: path.join(HOME, '.gemini'), settingsFile: 'settings.json' };
     case 'agy':
-      return { name: 'Antigravity', configDir: path.join(HOME, '.gemini', 'antigravity-cli') };
+      return { name: 'Antigravity', configDir: path.join(HOME, '.gemini', 'antigravity-cli'), settingsFile: 'settings.json' };
+    case 'opencode':
+      return { name: 'OpenCode', configDir: path.join(HOME, '.config', 'opencode'), settingsFile: 'opencode.json' };
     default:
-      throw new Error(`unknown provider "${llm}" (expected: claude | gemini | agy)`);
+      throw new Error(`unknown provider "${llm}" (expected: claude | gemini | agy | opencode)`);
   }
 }
 
@@ -109,7 +111,7 @@ Usage:
   node install.mjs [options]
 
 Options:
-  --llm <provider>   claude (default) | gemini | agy
+  --llm <provider>   claude (default) | gemini | agy | opencode
   --force            reinstall even if already present
   --help             show this help
 
@@ -140,7 +142,7 @@ function main() {
 
   const skillDest = path.join(cfg.configDir, 'skills', 'pm');
   const agentsDest = path.join(cfg.configDir, 'agents');
-  const settingsFile = path.join(cfg.configDir, 'settings.json');
+  const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
   if (fs.existsSync(skillDest) && !args.force) {
     console.error(`pm already installed at ${skillDest} (use --force to reinstall)`);
