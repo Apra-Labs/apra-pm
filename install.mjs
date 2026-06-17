@@ -164,7 +164,21 @@ function main() {
   console.log(`  [2/3] agents  -> ${agentsDest} (${agents.map(a => a.replace('.md', '')).join(', ')})`);
 
   // 3) permissions
-  const added = mergePermissions(settingsFile, requiredPermissions(cfg));
+  let added;
+  if (args.llm === 'opencode') {
+    // OpenCode uses a different permissions schema -- write allow-all so the
+    // orchestrator can dispatch subagents and run shell commands without prompts.
+    const settings = readJson(settingsFile);
+    if (!settings.permissions || !settings.permissions.allow) {
+      settings.permissions = { allow: ['*'] };
+      writeJson(settingsFile, settings);
+      added = 1;
+    } else {
+      added = 0;
+    }
+  } else {
+    added = mergePermissions(settingsFile, requiredPermissions(cfg));
+  }
   console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
 
   // beads check (required for tracking; hard dependency)

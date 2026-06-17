@@ -138,7 +138,9 @@ jobs:
           else
             out=$("${cmd[@]}" 2>&1); rc=$?
           fi
+          echo "--- provider output (rc=$rc) ---"
           echo "$out"
+          echo "--- end output ---"
           if [ $rc -eq 124 ]; then echo "::error::$P hung dispatching a subagent (timeout) -- pm cannot run on this provider/config"; exit 1; fi
           echo "$out" | grep -q "PMLITE-READY" || { echo "::error::$P produced no response -- start/auth issue"; exit 1; }
           echo "$out" | grep -q "SUBAGENT-OK"  || { echo "::error::$P responded but the subagent never returned -- subagent dispatch broken"; exit 1; }
