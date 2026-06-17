@@ -166,16 +166,16 @@ function main() {
   // 3) permissions
   let added;
   if (args.llm === 'opencode') {
-    // OpenCode uses a different permissions schema -- write allow-all so the
-    // orchestrator can dispatch subagents and run shell commands without prompts.
+    // OpenCode does not support a permissions key in opencode.json -- it rejects
+    // any unrecognized key as invalid config. Permissions are passed via CLI flags
+    // (--dangerously-skip-permissions) at invocation time; nothing to write here.
+    // Remove any stale permissions key a prior install run may have added.
     const settings = readJson(settingsFile);
-    if (!settings.permissions || !settings.permissions.allow) {
-      settings.permissions = { allow: ['*'] };
+    if (Object.prototype.hasOwnProperty.call(settings, 'permissions')) {
+      delete settings.permissions;
       writeJson(settingsFile, settings);
-      added = 1;
-    } else {
-      added = 0;
     }
+    added = 0;
   } else {
     added = mergePermissions(settingsFile, requiredPermissions(cfg));
   }
