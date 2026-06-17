@@ -133,11 +133,15 @@ jobs:
           # macOS ships no GNU `timeout` (it is `gtimeout` from coreutils); fall back
           # to running without a wrapper rather than dying with exit 127.
           TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+          # Disable set -e so we can capture the exit code even on failure and echo it.
+          set +e
           if [ -n "$TIMEOUT_BIN" ]; then
-            out=$("$TIMEOUT_BIN" 180 "${cmd[@]}" 2>&1); rc=$?
+            out=$("$TIMEOUT_BIN" 180 "${cmd[@]}" 2>&1)
           else
-            out=$("${cmd[@]}" 2>&1); rc=$?
+            out=$("${cmd[@]}" 2>&1)
           fi
+          rc=$?
+          set -e
           echo "--- provider output (rc=$rc) ---"
           echo "$out"
           echo "--- end output ---"
