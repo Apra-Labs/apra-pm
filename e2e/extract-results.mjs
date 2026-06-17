@@ -170,6 +170,17 @@ export function parseTelemetryFile(file, provider) {
         cRead += (s.cached ?? 0);
         seen = true;
       }
+    } else if (provider === 'opencode') {
+      // opencode --format json emits step_finish events with part.tokens.
+      // reasoning tokens are billed as output; cache.write/read map to creation/read.
+      if (o.type === 'step_finish' && o.part?.tokens) {
+        const tk = o.part.tokens;
+        tIn += (tk.input ?? 0);
+        tOut += (tk.output ?? 0) + (tk.reasoning ?? 0);
+        cCreate += (tk.cache?.write ?? 0);
+        cRead += (tk.cache?.read ?? 0);
+        seen = true;
+      }
     } else { // claude
       if (o.type === 'assistant' && o.message?.usage) {
         const u = o.message.usage;
