@@ -19,7 +19,12 @@ on:
         type: choice
         options: [s1, s7, s8, s9]
       runner:
-        description: 'Runner label override. Leave blank to use the default per suite (s9 -> ubuntu-latest; others -> self-hosted).'
+        description: 'Runner label override. Leave blank for default (self-hosted for all suites).'
+        required: false
+        default: ''
+        type: string
+      model:
+        description: 'Model override for the suite (e.g. opencode/nemotron-3-ultra-free). Leave blank to use the suite default.'
         required: false
         default: ''
         type: string
@@ -29,7 +34,7 @@ jobs:
     name: 'pm e2e - ${{ inputs.suite }}'
     env:
       GEMINI_CLI_TRUST_WORKSPACE: "true"
-    runs-on: ${{ inputs.runner != '' && inputs.runner || (inputs.suite == 's9' && 'ubuntu-latest' || 'self-hosted') }}
+    runs-on: ${{ inputs.runner != '' && inputs.runner || 'self-hosted' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -128,7 +133,7 @@ jobs:
             claude)   cmd=(claude -p "$PROMPT" --dangerously-skip-permissions) ;;
             gemini)   cmd=(gemini -p "$PROMPT" --model auto --skip-trust) ;;
             agy)      cmd=(agy -p "$PROMPT" --dangerously-skip-permissions) ;;
-            opencode) cmd=(opencode run "$PROMPT" -m opencode/deepseek-v4-flash-free --format json --dangerously-skip-permissions) ;;
+            opencode) cmd=(opencode run "$PROMPT" -m opencode/nemotron-3-ultra-free --format json --dangerously-skip-permissions) ;;
           esac
           # macOS ships no GNU `timeout` (it is `gtimeout` from coreutils); fall back
           # to running without a wrapper rather than dying with exit 127.
@@ -154,6 +159,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.E2E_GH_TOKEN }}
+          # Self-hosted runners are trusted; pass token so the LLM can use gh CLI.
+          PMLITE_E2E_TRUST_LLM: "1"
+          # Model override: workflow input wins, otherwise suites.json default is used.
+          PMLITE_E2E_MODEL: ${{ inputs.model }}
         run: node e2e/run-e2e.mjs --suite "${{ inputs.suite }}"
 
       - name: Upload results

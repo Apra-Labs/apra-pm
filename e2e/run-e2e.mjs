@@ -78,9 +78,12 @@ const OWNER_REPO = (cfg.toy.match(/github\.com[/:]([^/]+\/[^/.]+)/) || [])[1] ||
 
 function ghEnv(token) { return token ? { ...process.env, GH_TOKEN: token } : process.env; }
 
-// LLM processes must not inherit write-access tokens -- the token is already
-// embedded in the git remote URL before the sprint starts.
+// LLM processes must not inherit write-access tokens on public runners -- the
+// token is already embedded in the git remote URL before the sprint starts.
+// Set PMLITE_E2E_TRUST_LLM=1 on self-hosted (private) runners where leakage
+// is not a concern and the LLM may need the token for gh CLI calls.
 function llmEnv() {
+  if (process.env.PMLITE_E2E_TRUST_LLM === '1') return process.env;
   const e = { ...process.env };
   delete e.GH_TOKEN;
   delete e.E2E_GH_TOKEN;
@@ -130,11 +133,13 @@ function selectSuites(a) {
 }
 
 function commandFor(provider, prompt, model) {
+  // PMLITE_E2E_MODEL overrides the suite's model -- easy to switch without editing suites.json.
+  const effectiveModel = process.env.PMLITE_E2E_MODEL || model;
   const override = process.env[`PMLITE_E2E_CMD_${provider.toUpperCase()}`];
   const tokens = override ? override.split(' ') : CLI[provider];
   const filled = tokens.map((t) => (t === '{PROMPT}' ? prompt : t));
-  if (!override && model && provider === 'opencode') {
-    filled.splice(1, 0, '-m', model);
+  if (!override && effectiveModel && provider === 'opencode') {
+    filled.splice(1, 0, '-m', effectiveModel);
   }
   return { bin: filled[0], args: filled.slice(1) };
 }
