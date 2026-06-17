@@ -129,10 +129,13 @@ function selectSuites(a) {
   return s;
 }
 
-function commandFor(provider, prompt) {
+function commandFor(provider, prompt, model) {
   const override = process.env[`PMLITE_E2E_CMD_${provider.toUpperCase()}`];
   const tokens = override ? override.split(' ') : CLI[provider];
   const filled = tokens.map((t) => (t === '{PROMPT}' ? prompt : t));
+  if (!override && model && provider === 'opencode') {
+    filled.splice(1, 0, '-m', model);
+  }
   return { bin: filled[0], args: filled.slice(1) };
 }
 
@@ -181,7 +184,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
 
 function runSuite(suite, timeoutS, keepPr) {
   const res = { id: suite.id, provider: suite.provider, status: '', notes: '', pr: null, telemetry: null, gates: null };
-  const { bin } = commandFor(suite.provider, '');
+  const { bin } = commandFor(suite.provider, '', suite.model);
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), `pmlite-e2e-${suite.id}-`));
@@ -204,7 +207,7 @@ function runSuite(suite, timeoutS, keepPr) {
   const prompt = scenarioTpl
     .replaceAll('{{REPO}}', repo.replace(/\\/g, '/'))
     .replaceAll('{{BRANCH}}', branch);
-  const { bin: cmd, args } = commandFor(suite.provider, prompt);
+  const { bin: cmd, args } = commandFor(suite.provider, prompt, suite.model);
 
   console.log(`[${suite.id}] ${cmd} (cwd ${work}, branch ${branch}) ...`);
   let timedOut = false;
