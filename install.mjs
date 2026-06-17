@@ -231,6 +231,17 @@ function main() {
   }
   console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
 
+  // 4) workflow (claude provider only -- claude-pm.js -> ~/.claude/workflows/)
+  if (args.llm === 'claude') {
+    const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'claude-pm.js');
+    const workflowDest = path.join(HOME, '.claude', 'workflows', 'claude-pm.js');
+    if (fs.existsSync(workflowSrc)) {
+      ensureDir(path.dirname(workflowDest));
+      fs.copyFileSync(workflowSrc, workflowDest);
+      console.log(`  [wf]  workflow -> ${workflowDest}`);
+    }
+  }
+
   // beads check (required for tracking; hard dependency)
   console.log('');
   const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8' });
