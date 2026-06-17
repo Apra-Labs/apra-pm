@@ -166,10 +166,20 @@ function main() {
   const added = mergePermissions(settingsFile, requiredPermissions(cfg));
   console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
 
-  // beads check (required for tracking; warn only)
+  // beads check (required for tracking; hard dependency)
+  console.log('');
+  const { spawnSync } = await import('node:child_process');
+  const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8' });
+  if (bdCheck.error || bdCheck.status !== 0) {
+    console.error('');
+    console.error('  [!] beads (bd) is not installed -- pm WILL NOT WORK without it.');
+    console.error('      Install it with:  npm install -g @beads/bd');
+    console.error('      Then verify with: bd --version');
+  } else {
+    console.log(`  beads OK: ${bdCheck.stdout.trim()}`);
+  }
   console.log('');
   console.log('pm installed. Invoke the "pm" skill to drive a sprint.');
-  console.log('Note: pm uses beads (bd) for task tracking -- install it if "bd --version" fails.');
 }
 
 main();
