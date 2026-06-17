@@ -34,7 +34,14 @@ bash, git, and bd only.
 7. **Close issues:**
    `bd close <id1> <id2> ...` for every P1 issue you worked on.
 
-8. **Push and PR:**
+8. **Clean up scaffolding:**
+   The process files are scaffolding only -- remove them before the final push:
+   ```
+   git rm requirements.md plan.md progress.json feedback.md
+   git commit -m "chore: remove sprint scaffolding"
+   ```
+
+9. **Push and PR:**
    ```
    git push -u origin {{BRANCH}}
    gh pr create -B main -t "Sprint: P1 CLI features" -b "Implements open P1 issues"
@@ -45,4 +52,4 @@ bash, git, and bd only.
 - Do NOT use fleet dispatch tools (execute_prompt, send_files, etc.) -- they are not available.
 - Work directly in the repo with bash tools.
 - All 10+ implementation commits must be on `{{BRANCH}}` and pushed before creating the PR.
-- requirements.md, plan.md, progress.json, feedback.md must all be committed (and NOT present in the final diff -- commit them early so later commits clean up any leftover scaffolding).
+- requirements.md, plan.md, progress.json, feedback.md must appear in intermediate commits AND be removed before the PR push (step 8 does this).
