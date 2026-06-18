@@ -18,7 +18,7 @@ git diff <base-branch>..<branch> --stat
 ## Step 2 -- Find completed tasks
 
 ```bash
-bd list --status=closed --since=today
+bd list --status=closed --closed-after=$(date -I)
 ```
 
 For each recently closed task, run `bd show <id>` to read its acceptance criteria.

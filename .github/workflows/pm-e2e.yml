@@ -121,10 +121,10 @@ jobs:
             test -f "$AGENTS_DIR/$a.md" || { echo "::error::agent $a missing at $AGENTS_DIR"; exit 1; }
           done
           echo "skill + 4 agents present under $CFG"
-          # s10 requires the claude-pm workflow to be installed
+          # s10 requires the auto-sprint workflow to be installed
           if [ '${{ inputs.suite }}' = 's10' ]; then
-            test -f "$HOME/.claude/workflows/claude-pm.js" || { echo "::error::claude-pm workflow missing at $HOME/.claude/workflows/claude-pm.js"; exit 1; }
-            echo "claude-pm workflow present"
+            test -f "$HOME/.claude/workflows/auto-sprint.js" || { echo "::error::auto-sprint workflow missing at $HOME/.claude/workflows/auto-sprint.js"; exit 1; }
+            echo "auto-sprint workflow present"
           fi
 
       # The capability pm lives on: dispatching a subagent headlessly. This is

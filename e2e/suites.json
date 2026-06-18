@@ -6,6 +6,6 @@
     { "id": "s7", "provider": "gemini", "cli": "gemini" },
     { "id": "s8", "provider": "agy", "cli": "agy" },
     { "id": "s9", "provider": "opencode", "cli": "opencode", "model": "opencode/mimo-v2.5-free", "scenario": "scenario-opencode.md" },
-    { "id": "s10", "provider": "claude", "cli": "claude", "scenario": "scenario-claude-pm.md", "minCommits": 6, "expectedIssues": 1 }
+    { "id": "s10", "provider": "claude", "cli": "claude", "scenario": "scenario-auto-sprint.md", "minCommits": 6, "expectedIssues": 1 }
   ]
 }

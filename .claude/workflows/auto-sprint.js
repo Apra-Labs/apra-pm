@@ -71,10 +71,6 @@ const MODEL_OPUS   = 'claude-opus-4-8';
 const MODEL_SONNET = 'claude-sonnet-4-6';
 const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
 
-// Doer and reviewer use haiku/sonnet only -- opus reserved for planner and final-reviewer.
-const PHASE_MODELS  = [MODEL_HAIKU, MODEL_SONNET];
-function phaseModel(id) { return PHASE_MODELS.includes(id) ? id : MODEL_SONNET; }
-
 // ------------------------------------------------------------------ schemas
 
 const REVIEW_SCHEMA = {
@@ -161,7 +157,7 @@ function logTokens(label, model, t) {
 // tokenLogInstr: for agents that commit separately after returning (reviewers).
 function tokenLogInstr(label, model) {
   return (
-    `\nWhen done, run: bd remember "${label} ${model} tokens: input=<N> output=<N}"\n` +
+    `\nWhen done, run: bd remember "${label} ${model} tokens: input=<N> output=<N>"\n` +
     `Estimate input as total tokens you received; output as total tokens you generated.`
   );
 }
@@ -181,7 +177,7 @@ async function countBeadsBlockers(thr, epics) {
     `Run: bd list --status=open\n` +
     `From that output, identify all issues that are either:\n` +
     `  (a) one of these epics: ${epicList}, or a descendant of them (run bd show <id> to check), or\n` +
-    `  (b) have a title containing "[sprint-" (created by integration testing this sprint).\n` +
+    `  (b) have a title containing "[integ]" (created by integration testing this sprint).\n` +
     `Count only those with priority 0 through ${thr} (P0 to P${thr}).\n` +
     `Return count (integer) and their beads IDs as an array.`,
     { model: MODEL_HAIKU, label: 'check-blockers', schema: BEADS_BLOCKERS_SCHEMA }
@@ -293,7 +289,8 @@ while (cycleCount < maxCycles) {
           `Create missing tasks. Update descriptions that lack acceptance criteria.\n` +
           `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
           `Do NOT re-create tasks that are already closed.\n`) +
-      `Confirm with any text when done.`,
+      `Confirm with any text when done.` +
+      tokenLogInstr(plannerLabel, MODEL_OPUS),
       { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner' }
     );
 
@@ -367,13 +364,12 @@ while (cycleCount < maxCycles) {
       { model: MODEL_SONNET, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
     );
 
-    devIter++;
-
     if (!doerResult) {
       log(`Doer returned null on cycle ${cycleCount} dev iter ${devIter} -- aborting`);
       abortReason = 'doer null';
       break;
     }
+    devIter++;
     logTokens(doerLabel, MODEL_SONNET, doerResult.tokens);
     addTokens(doerResult.tokens);
 
@@ -405,7 +401,12 @@ while (cycleCount < maxCycles) {
 
   if (abortReason) break;
 
-  // Record HEAD SHA after develop phase -- CI triggers from this push.
+  // Push branch so CI can trigger, then record HEAD SHA.
+  await agent(
+    `Run: git push origin ${branch}\nIf the branch does not yet exist on origin, use: git push -u origin ${branch}`,
+    { model: MODEL_HAIKU, label: `push-c${cycleCount}`, phase: 'Develop' }
+  );
+
   const shaAgent = await agent(
     `Run: git rev-parse HEAD\nReturn the full SHA string.`,
     { model: MODEL_HAIKU, label: `head-sha-c${cycleCount}`, phase: 'Develop',
@@ -433,8 +434,11 @@ while (cycleCount < maxCycles) {
       `5. If deployed is false, include the error output in notes.`,
       { model: MODEL_SONNET, label: deployLabel, phase: 'Test', agentType: 'deployer',
         schema: { type: 'object', required: ['deployed'], properties: {
-          deployed: { type: 'boolean' }, notes: { type: 'string' } } } }
+          deployed: { type: 'boolean' }, notes: { type: 'string' },
+          tokens: { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } } } } }
     );
+    logTokens(deployLabel, MODEL_SONNET, deployResult && deployResult.tokens);
+    addTokens(deployResult && deployResult.tokens);
 
     if (!deployResult || !deployResult.deployed) {
       const msg = (deployResult && deployResult.notes) || 'no details';
