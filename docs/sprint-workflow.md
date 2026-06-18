@@ -80,6 +80,20 @@ could be a local Docker container, a cloud VM, or a shared test server.
 Required sections:
 
 ```markdown
+## Permissions
+
+List every shell command prefix the deployer agent needs to run, one per line.
+The installer reads this section and merges the entries into .claude/settings.json
+before the deployer is dispatched. Without this section the agent will hit
+interactive permission prompts and block the sprint.
+
+Example:
+  Bash(docker *)
+  Bash(docker-compose *)
+  Bash(npm run *)
+  Bash(curl *)
+  Bash(kubectl *)
+
 ## Deploy
 
 Step-by-step commands to deploy the build.
@@ -110,6 +124,17 @@ every cycle.
 Required sections:
 
 ```markdown
+## Permissions
+
+List every shell command prefix the setup, reset, and teardown steps need,
+one per line. Same format as deploy.md Permissions. Both files are merged
+into .claude/settings.json before any agent runs.
+
+Example:
+  Bash(docker *)
+  Bash(psql *)
+  Bash(redis-cli *)
+
 ## Setup
 
 Commands to bring the test environment up from scratch.
@@ -128,6 +153,25 @@ Commands to fully shut down and clean up the test environment.
 If the playbook does not exist, the workflow skips the integration test phase
 and proceeds to harvest. The team will not receive integration test feedback
 that cycle.
+
+### 4. .claude/settings.json permissions
+
+The sprint workflow reads the `## Permissions` sections from both `deploy.md`
+and `integ-test-playbook.md` at startup and merges them into the project's
+`.claude/settings.json`. This happens before the deployer agent is dispatched,
+so no interactive prompts interrupt the sprint.
+
+If a `## Permissions` section is missing or incomplete, the deployer will
+encounter permission prompts and block. The workflow will fail with a clear
+message listing which commands need to be whitelisted rather than silently
+waiting. Fix: add the missing entries to the `## Permissions` section and
+re-trigger the sprint.
+
+You can inspect what is currently allowed at any time:
+
+```bash
+cat .claude/settings.json | jq '.permissions.allow'
+```
 
 ---
 

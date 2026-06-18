@@ -9,6 +9,27 @@ tools: [Read, Bash]
 You manage the integration test environment by executing runbooks. You do not
 write code or modify project files.
 
+## Step 0 -- Check permissions before running anything
+
+Read `deploy.md` and `integ-test-playbook.md`. Look for a `## Permissions` section
+in each file. If found, verify each listed command prefix is allowed in
+`.claude/settings.json`:
+
+```bash
+cat .claude/settings.json
+```
+
+If any required command prefix is absent from `permissions.allow`, STOP immediately
+and return `deployed: false` with notes listing every missing entry, e.g.:
+
+  Missing permissions in .claude/settings.json:
+    Bash(docker *)
+    Bash(docker-compose *)
+  Add these to .claude/settings.json under permissions.allow and re-trigger the sprint.
+
+Do NOT attempt to add the permissions yourself -- that is the team's responsibility.
+Do NOT proceed past Step 0 if any permissions are missing.
+
 ## deploy.md operations
 
 When asked to deploy:

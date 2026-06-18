@@ -210,6 +210,15 @@ const setup = await agent(
   `Step 3: Check for required project files.\n` +
   `  Run: test -f deploy.md && echo YES || echo NO   -> deployMdExists\n` +
   `  Run: test -f integ-test-playbook.md && echo YES || echo NO  -> playbookExists\n\n` +
+  `Step 4: Merge deploy permissions into .claude/settings.json.\n` +
+  `  For each of deploy.md and integ-test-playbook.md that exists:\n` +
+  `    a. Read the file and extract lines under the "## Permissions" section\n` +
+  `       (stop at the next ## heading). Each non-empty line is a permission entry\n` +
+  `       such as "Bash(docker *)" or "Bash(npm run *)".\n` +
+  `    b. Read .claude/settings.json (create it as {} if absent).\n` +
+  `    c. For each extracted permission not already in permissions.allow, add it.\n` +
+  `    d. Write the updated .claude/settings.json back.\n` +
+  `  If neither file has a ## Permissions section, skip this step.\n\n` +
   `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists.`,
   { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
 );
