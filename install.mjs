@@ -47,6 +47,8 @@ function requiredPermissions(cfg) {
     'Bash(bd:*)',
     'Bash(gh:*)',
     `Read(${skills}/**)`,
+    'Skill(auto-sprint)',  // suppress "Use skill 'auto-sprint'?" prompt
+    'Workflow(auto-sprint)', // suppress "Run a dynamic workflow?" prompt
   ];
 }
 
