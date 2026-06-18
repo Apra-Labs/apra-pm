@@ -30,7 +30,7 @@ For each open feature and its tasks, run `bd show <id>` to read the full descrip
 
 ## Step 3 -- Output verdict
 
-Return your structured output as required by the workflow:
+Return your verdict:
 - `verdict`: "APPROVED" or "CHANGES NEEDED"
 - `notes`: specific, actionable findings; reference beads IDs
 

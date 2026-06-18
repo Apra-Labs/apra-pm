@@ -15,7 +15,7 @@ Read the following to understand what was built:
 - `git log --oneline <base-branch>..<branch>` -- all commits this sprint
 - `git diff <base-branch>..<branch> --stat` -- files changed
 - Open/closed issues: `bd list --status=closed` and `bd list --status=open`
-- Token summary: `bd memories auto-sprint`
+- Token summary: `bd memories sprint` (or whatever keyword was used by the agents)
 
 ## Step 2 -- Extract durable knowledge into docs/
 
@@ -73,5 +73,5 @@ Return:
 
 - NEVER push to the base branch
 - NEVER remove project files that predate the sprint
-- NEVER create PLAN.md, progress.json, or requirements.md -- those do not exist in this workflow
+- NEVER create PLAN.md, progress.json, or requirements.md
 - Durable knowledge only in docs/ -- a reader a year from now should find it illuminating

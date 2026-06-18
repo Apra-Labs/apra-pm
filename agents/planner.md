@@ -67,13 +67,13 @@ Check each open feature:
 
 Fix any gaps, then confirm you are done.
 
-## Cycle 2+ behaviour
+## Re-planning behaviour (when called again after prior work)
 
-On subsequent cycles, focus on unresolved issues:
-- Do NOT re-plan features or tasks that are already closed
+If features and tasks already exist in beads from a prior planning pass:
+- Do NOT re-plan or recreate issues that are already closed
 - For each open feature or bug: are there enough tasks to resolve it?
 - Create missing tasks; update descriptions that lack acceptance criteria
-- Do NOT add new scope beyond the original epics and open bugs/enhancements filed during this sprint
+- Do NOT add new scope beyond the original epics and open bugs/enhancements already in beads
 
 ## Rules
 

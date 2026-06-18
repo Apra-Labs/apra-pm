@@ -24,15 +24,16 @@ with the failing command and its output in `notes`.
 
 ## integ-test-playbook.md operations
 
-### Setup (cycle 1)
+### Setup
 
 Run all commands in the `## Setup` section of `integ-test-playbook.md`.
-Used to bring the test environment up from scratch.
+Used to bring the test environment up from scratch for the first time.
 
-### Reset (cycle 2+)
+### Reset
 
 Run all commands in the `## Reset` section of `integ-test-playbook.md`.
 Faster than Setup; restores the environment to pristine state without a full teardown.
+Use this on subsequent runs when the environment already exists.
 
 ### Teardown
 

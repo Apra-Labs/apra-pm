@@ -448,25 +448,24 @@ while (cycleCount < maxCycles) {
     } else {
       // -- Integration test run --
       const integLabel = `integ-runner-c${cycleCount}`;
-      const cycleTag = `[sprint-c${cycleCount}]`;
 
       const integResult = await agent(
         `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
-        `Sprint epics: ${epicSummary}\nCycle tag for new issues: ${cycleTag}\n\n` +
+        `Sprint epics: ${epicSummary}\n\n` +
         `Run: bd list --type=feature --status=open\n` +
         `For each open feature, execute its integration tests.\n\n` +
         `For each feature:\n` +
         `  PASS: all tests pass -> bd close <feature-id>\n` +
-        `  FAIL: tests fail -> bd create --title="${cycleTag} <description>" ` +
+        `  FAIL: tests fail -> bd create --title="[integ] <description>" ` +
         `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
         `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
         `  Keep feature open on failure or if inconclusive.\n\n` +
         `Priority rules:\n` +
-        `  P0: system won't start or core path completely broken (max 2 per cycle)\n` +
+        `  P0: system won't start or core path completely broken\n` +
         `  P1: requirement from epic explicitly not met\n` +
         `  P2: requirement partially met, degraded behaviour\n` +
         `  P3: quality, performance, or UX issue not blocking core function\n\n` +
-        `Before creating a new bug, check bd search "${cycleTag}" -- update existing if duplicate.\n\n` +
+        `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
         `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
         { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
       );

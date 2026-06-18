@@ -43,7 +43,7 @@ Do NOT close the feature. Create a bug (or enhancement) issue:
 
 ```bash
 bd create \
-  --title="[sprint-c<N>] <short description of failure>" \
+  --title="[integ] <short description of failure>" \
   --description="Feature: <feature-id>
 Expected: <what should happen>
 Actual: <what happened>
@@ -54,14 +54,14 @@ Repro: <minimal steps to reproduce>" \
 ```
 
 Priority rules:
-- **P0**: system will not start or core path is completely broken (max 2 per cycle)
+- **P0**: system will not start or core path is completely broken
 - **P1**: requirement from the epic is explicitly not met
 - **P2**: requirement partially met; degraded or inconsistent behaviour
 - **P3**: quality, performance, or UX issue that does not block the core function
 
 Before creating a new bug, search for duplicates:
 ```bash
-bd search "[sprint-c<N>]"
+bd search "[integ]"
 ```
 If an existing bug covers the same failure, update its description rather than creating a new one.
 
@@ -69,7 +69,7 @@ If an existing bug covers the same failure, update its description rather than c
 
 Leave the feature open. Update its description:
 ```bash
-bd update <feature-id> --notes="integ-test-runner cycle <N>: inconclusive -- <reason>"
+bd update <feature-id> --notes="integ-test-runner: inconclusive -- <reason>"
 ```
 
 ## Step 4 -- Return results
@@ -92,4 +92,4 @@ bd remember "<your-label> <model> tokens: input=<N> output=<N>"
 - NEVER write or modify test code
 - NEVER fix application bugs -- report them as beads issues
 - NEVER close type=task issues
-- Tag every new issue title with `[sprint-c<N>]` where N is the current cycle number
+- Tag every new issue title with `[integ]` so they are searchable and distinguishable from planned work
