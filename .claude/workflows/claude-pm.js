@@ -12,6 +12,21 @@ export const meta = {
 // plan-reviewer, doer, reviewer) against any repo and any requirements.
 // The orchestrator is pure control flow -- all policy lives in the agents.
 //
+// Model selection is delegated entirely to the planner: it assigns a model
+// to every task and a reviewer_model to every phase in progress.json.
+// The orchestrator reads these back and dispatches agents accordingly.
+//
+// progress.json schema (written by planner, maintained by doer):
+// {
+//   "tasks": [
+//     { "id": "...", "title": "...", "phase": "1", "status": "pending",
+//       "model": "claude-sonnet-4-6" }
+//   ],
+//   "phases": [
+//     { "id": "1", "title": "...", "reviewer_model": "claude-opus-4-8" }
+//   ]
+// }
+//
 // args:
 //   repo         - absolute path to the local git clone (branch already checked out)
 //   branch       - sprint branch name
@@ -37,12 +52,27 @@ const REVIEW_SCHEMA = {
   },
 };
 
+// Doer returns its stop reason plus the models the orchestrator needs for
+// the next dispatch. The planner wrote these into progress.json; the doer
+// reads them and surfaces them here so the orchestrator never hardcodes a model.
 const DOER_STATUS_SCHEMA = {
   type: 'object',
   required: ['status'],
   properties: {
-    status: { type: 'string' },
-    notes:  { type: 'string' },
+    status:           { type: 'string' }, // VERIFY | DONE
+    notes:            { type: 'string' },
+    reviewer_model:   { type: 'string' }, // model for reviewing the just-completed phase
+    next_doer_model:  { type: 'string' }, // model for the next pending task/phase
+  },
+};
+
+// Used once to bootstrap the first doer model from progress.json.
+const FIRST_TASK_SCHEMA = {
+  type: 'object',
+  required: ['doer_model'],
+  properties: {
+    doer_model:     { type: 'string' },
+    reviewer_model: { type: 'string' },
   },
 };
 
@@ -64,18 +94,32 @@ let planFeedback = '';
 let planApproved = false;
 
 for (let round = 0; round < 3 && !planApproved; round++) {
-  // Planner reads requirements.md, explores the repo, writes PLAN.md +
-  // initializes progress.json, commits and pushes.
+  // Planner reads requirements.md, explores the repo, writes PLAN.md and
+  // progress.json, commits and pushes.
+  //
+  // progress.json must follow the schema in the header comment above:
+  // - each task entry carries the model the doer should run on
+  // - each phase entry carries the reviewer_model for code review of that phase
+  // The planner sizes models by task/phase complexity -- the orchestrator
+  // will read them back and dispatch agents on the model the planner chose.
   await agent(
     `Repo: ${repo}\nBranch: ${branch}\n` +
     (planFeedback ? `\nPrevious reviewer feedback to address:\n${planFeedback}\n` : '') +
-    `\nRequirements are in requirements.md.\n` +
-    `After committing PLAN.md, also create and commit progress.json with all tasks set to status "pending".`,
+    `\nRequirements are in requirements.md.\n\n` +
+    `After committing PLAN.md, create and commit progress.json with this schema:\n` +
+    `{\n` +
+    `  "tasks": [ { "id": "...", "title": "...", "phase": "<phase-id>", "status": "pending", "model": "<model-id>" } ],\n` +
+    `  "phases": [ { "id": "<phase-id>", "title": "...", "reviewer_model": "<model-id>" } ]\n` +
+    `}\n` +
+    `Assign each task a model sized to its complexity.\n` +
+    `Assign each phase a reviewer_model sized to the phase's complexity and risk.`,
     { model: 'claude-opus-4-8', label: `planner-r${round}`, phase: 'Plan', agentType: 'planner' }
   );
 
   const review = await agent(
-    `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}`,
+    `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
+    `Also verify progress.json has the correct schema: tasks carry a "model" field, ` +
+    `phases carry a "reviewer_model" field, and the model choices are appropriately sized.`,
     { model: 'claude-sonnet-4-6', label: `plan-reviewer-r${round}`, phase: 'Plan', schema: REVIEW_SCHEMA, agentType: 'plan-reviewer' }
   );
 
@@ -91,6 +135,18 @@ for (let round = 0; round < 3 && !planApproved; round++) {
 // ---- EXECUTE phase ----
 phase('Execute');
 
+// Bootstrap: read the first task's model from the approved progress.json.
+const firstTask = await agent(
+  `Read progress.json in repo ${repo}.\n` +
+  `Return:\n` +
+  `- doer_model: the model field of the first pending task\n` +
+  `- reviewer_model: the reviewer_model of its phase`,
+  { model: 'claude-haiku-4-5-20251001', label: 'bootstrap-models', phase: 'Execute', schema: FIRST_TASK_SCHEMA }
+);
+let doerModel    = (firstTask && firstTask.doer_model)     || 'claude-sonnet-4-6';
+let reviewerModel = (firstTask && firstTask.reviewer_model) || 'claude-sonnet-4-6';
+log(`First doer: ${doerModel} | first reviewer: ${reviewerModel}`);
+
 const MAX_ITERATIONS = 50;
 let iterations = 0;
 
@@ -102,16 +158,24 @@ for (;;) {
 
   // Doer picks up the next pending task(s) from progress.json / PLAN.md,
   // implements, commits, and stops at the next VERIFY checkpoint or when done.
+  // It returns the models for the reviewer and the next doer dispatch.
   const doerResult = await agent(
     `Repo: ${repo}\nBranch: ${branch}\n\n` +
     `Execute the next pending task(s) from PLAN.md.\n` +
     `Stop at VERIFY checkpoints and return status VERIFY.\n` +
-    `Return status DONE only when all tasks in PLAN.md are complete.`,
-    { model: 'claude-sonnet-4-6', label: `doer-${iterations}`, phase: 'Execute', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
+    `Return status DONE only when all tasks in PLAN.md are complete.\n` +
+    `Also return:\n` +
+    `- reviewer_model: the reviewer_model for the just-completed phase (from progress.json)\n` +
+    `- next_doer_model: the model for the next pending task (from progress.json), if any`,
+    { model: doerModel, label: `doer-${iterations}`, phase: 'Execute', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
   );
 
   iterations++;
   if (!doerResult) break;
+
+  // Update models from what the planner chose -- no hardcoding.
+  if (doerResult.reviewer_model)  reviewerModel = doerResult.reviewer_model;
+  if (doerResult.next_doer_model) doerModel     = doerResult.next_doer_model;
 
   if (doerResult.status && doerResult.status.toUpperCase() === 'DONE') {
     log('All tasks complete');
@@ -121,13 +185,13 @@ for (;;) {
   // At a VERIFY checkpoint: reviewer checks the completed phase.
   const review = await agent(
     `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}`,
-    { model: 'claude-sonnet-4-6', label: `reviewer-${iterations}`, phase: 'Execute', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
+    { model: reviewerModel, label: `reviewer-${iterations}`, phase: 'Execute', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
   );
   log(`Review: ${review && review.verdict ? review.verdict : 'done'}`);
   // Doer continues from where it left off (progress.json tracks state).
 }
 
-// Final review before harvest.
+// Final review before harvest -- use the strongest reviewer model seen.
 const finalReview = await agent(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}`,
   { model: 'claude-opus-4-8', label: 'final-review', phase: 'Execute', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
