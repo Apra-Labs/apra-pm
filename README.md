@@ -1,10 +1,10 @@
 # apra-pm
 
 A provider-agnostic **Project Manager** skill for AI coding harnesses. One
-orchestrator session drives four subagents -- `planner`, `plan-reviewer`, `doer`,
-`reviewer` -- across one or more parallel git worktrees, runs each task on a
-planner-chosen, complexity-matched model, and loops the plan-review and doer-review
-cycles to APPROVED and a PR.
+orchestrator session drives five subagents -- `planner`, `plan-reviewer`, `doer`,
+`reviewer`, `harvester` -- across one or more parallel git worktrees, runs each task
+on a planner-chosen, complexity-matched model, and loops the plan-review and
+doer-review cycles to APPROVED, a harvest, and a PR.
 
 Sprint state lives in git (on each track's branch) and in a beads (`bd`) task DB.
 The orchestrator and all four agents run in one session under a single provider,
@@ -26,6 +26,10 @@ requirements -> design -> plan (loop) -> execute (doer-review loop) -> deploy ->
 - **Model per task.** The planner assigns each task a concrete model -- a fast model
   for mechanical work, the strongest for hard design. Review and planning always run
   on the strongest model.
+- **Harvest.** After all phases are approved, the `harvester` extracts durable
+  knowledge (architecture decisions, feature design, API contracts) into `docs/`,
+  updates `README.md` and `CHANGELOG.md`, removes scaffold files, and restores any
+  per-provider context files from the base branch before raising the PR.
 - **Parallel tracks.** Independent work splits into tracks, each with its own branch,
   worktree, and full pipeline, running concurrently and integrated at the end.
 
@@ -36,9 +40,10 @@ See `skills/pm/SKILL.md` and its sub-docs (`worktrees.md`,
 ## Layout
 
 ```
-skills/pm/     the skill (SKILL.md + sub-docs the orchestrator reads on demand)
-agents/             planner, plan-reviewer, doer, reviewer definitions
-install.mjs         installer: copies the skill + agents into a provider config dir
+skills/pm/          the skill (SKILL.md + sub-docs the orchestrator reads on demand)
+agents/             planner, plan-reviewer, doer, reviewer, harvester definitions
+.claude/workflows/  claude-pm.js -- deterministic Claude Code workflow (plan->execute->harvest)
+install.mjs         installer: copies the skill + agents + workflow into a provider config dir
 e2e/                end-to-end suite: drive the skill headless on the toy repo
 docs/               design intent
 .githooks/          pre-commit (ASCII-only guard)

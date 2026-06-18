@@ -151,8 +151,8 @@ function parseArgs(argv) {
 
 const HELP = `apra-pm installer
 
-Installs the pm skill and its planner/plan-reviewer/doer/reviewer agents
-into your agent harness's config directory, and grants minimal permissions.
+Installs the pm skill and its five agents into your agent harness's config
+directory, and grants minimal permissions.
 
 Usage:
   node install.mjs [options]
@@ -163,9 +163,17 @@ Options:
   --help             show this help
 
 What it installs:
-  <configDir>/skills/pm/   the skill (SKILL.md + sub-docs)
-  <configDir>/agents/*.md       planner, plan-reviewer, doer, reviewer
-  <configDir>/settings.json     minimal permissions (merged, non-destructive)
+  <configDir>/skills/pm/    the skill (SKILL.md + sub-docs)
+  <configDir>/agents/*.md   planner, plan-reviewer, doer, reviewer, harvester
+  <configDir>/settings.json minimal permissions (merged, non-destructive)
+  ~/.claude/workflows/claude-pm.js  deterministic workflow (claude only)
+
+Agents:
+  planner        reads requirements.md, writes PLAN.md with per-task models
+  plan-reviewer  reviews PLAN.md vs requirements, writes feedback.md
+  doer           executes tasks phase by phase, stops at VERIFY checkpoints
+  reviewer       reviews a completed phase, approves or returns findings
+  harvester      extracts durable knowledge into docs/, removes scaffold files
 
 Requires: git, and beads (bd) for task tracking.`;
 
@@ -211,7 +219,7 @@ function main() {
     if (args.llm === 'opencode') content = transformAgentForOpenCode(content);
     fs.writeFileSync(path.join(agentsDest, a), content);
   }
-  console.log(`  [2/3] agents  -> ${agentsDest} (${agents.map(a => a.replace('.md', '')).join(', ')})`);
+  console.log(`  [2/3] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
 
   // 3) permissions
   let added;
