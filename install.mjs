@@ -269,7 +269,14 @@ function main() {
     console.log(`  beads OK: ${bdCheck.stdout.trim()}`);
   }
   console.log('');
-  console.log('pm installed. Invoke the "pm" skill to drive a sprint.');
+  console.log('pm installed.');
+  console.log('');
+  if (args.llm === 'claude') {
+    console.log('  Claude Code: /auto-sprint {"branch":"feat/my-branch","issues":["BD-1"],"goal":"P1/P2"}');
+    console.log('  Other sessions: /pm  (provider-agnostic skill)');
+  } else {
+    console.log('  Invoke the "pm" skill to drive a sprint.');
+  }
 }
 
 main();
