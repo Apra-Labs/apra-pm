@@ -12,14 +12,23 @@ export const meta = {
 // plan-reviewer, doer, reviewer, harvester) against any repo and any requirements.
 // The orchestrator is pure control flow -- all policy lives in the agents.
 //
-// progress.json schema (written by planner, maintained throughout):
+// Separation of concerns:
+//   planner       -- writes PLAN.md with per-task model assignments
+//   scaffold      -- reads PLAN.md, derives progress.json (haiku, deterministic)
+//   plan-reviewer -- reviews PLAN.md vs requirements, writes feedback.md
+//   doer          -- executes tasks phase by phase, stops at VERIFY
+//   reviewer      -- reviews a completed phase
+//   harvester     -- extracts durable knowledge, cleans up, returns OK/FAILED
+//
+// progress.json schema (written by scaffold agent, maintained by doer):
 // {
 //   "tasks":  [ { "id":"...", "title":"...", "phase":"1", "status":"pending", "model":"..." } ],
 //   "phases": [ { "id":"1", "title":"...", "model":"...", "reviewer_model":"..." } ],
 //   "token_log": []
 // }
-// phases[].model          -- model for all doer dispatches in this phase
-// phases[].reviewer_model -- model for the reviewer after this phase's VERIFY checkpoint
+// phases[].model          -- highest-tier task model in that phase (doer dispatch model)
+// phases[].reviewer_model -- one tier above phases[].model (deterministic)
+//                            haiku -> sonnet, sonnet -> opus, opus -> opus
 //
 // args:
 //   repo         - absolute path to the local git clone (branch already checked out)
@@ -27,8 +36,8 @@ export const meta = {
 //   requirements - string: what needs to be built (user story, bd list output, etc.)
 //   base_branch  - PR target branch (default: main)
 
-const repo        = args && args.repo         ? args.repo         : '';
-const branch      = args && args.branch       ? args.branch       : '';
+const repo         = args && args.repo         ? args.repo         : '';
+const branch       = args && args.branch       ? args.branch       : '';
 const requirements = args && args.requirements ? args.requirements : '';
 const base_branch  = (args && args.base_branch) || 'main';
 
@@ -48,18 +57,18 @@ const TOKENS_SCHEMA = {
   },
 };
 
+// notes is required -- CHANGES NEEDED without actionable notes is useless.
 const REVIEW_SCHEMA = {
   type: 'object',
   required: ['verdict', 'notes'],
   properties: {
     verdict: { type: 'string' },
-    // notes is required -- CHANGES NEEDED without specific actionable notes is useless
     notes:   { type: 'string' },
     tokens:  TOKENS_SCHEMA,
   },
 };
 
-// Doer only reports VERIFY or DONE -- the workflow knows which phase it is in.
+// Doer only reports VERIFY or DONE; workflow knows the phase via loop variable.
 const DOER_STATUS_SCHEMA = {
   type: 'object',
   required: ['status'],
@@ -77,11 +86,12 @@ const RAW_JSON_SCHEMA = {
   properties: { json: { type: 'string' } },
 };
 
+// Case 2 fix: enum forces exactly "OK" or "FAILED", preventing "success"/"done"/etc.
 const HARVEST_SCHEMA = {
   type: 'object',
   required: ['status'],
   properties: {
-    status: { type: 'string' }, // OK | FAILED
+    status: { type: 'string', enum: ['OK', 'FAILED'] },
     notes:  { type: 'string' },
     tokens: TOKENS_SCHEMA,
   },
@@ -99,7 +109,8 @@ async function readProgress(label) {
   try { return r && r.json ? JSON.parse(r.json) : null; } catch { return null; }
 }
 
-// Instruction appended to every agent prompt: append one token_log entry when done.
+// Appended to most agent prompts: write one token_log entry to progress.json.
+// NOT appended to the harvest agent (harvester git rm's progress.json -- see Case 3).
 function tokenLogInstr(label, model) {
   return (
     `\nWhen done, append one entry to the token_log array in progress.json ` +
@@ -134,33 +145,52 @@ let planApproved = false;
 for (let round = 0; round < 3 && !planApproved; round++) {
   const plannerLabel = `planner-r${round}`;
 
-  // Planner decides everything: task count, phases, models per phase.
-  // CASE 4 fix: planner is explicitly told each phase must end with a VERIFY task.
-  // CASE 6 fix: planner is told to preserve existing token_log on re-rounds.
+  // Case 4 fix: planner only writes PLAN.md (per planner.md design -- it does NOT
+  // create progress.json). A separate scaffold step derives progress.json from PLAN.md.
+  // Case 5 fix: do NOT ask planner to assign reviewer_model; planner.md forbids it
+  // ("code review always runs on the strongest model -- you do not assign those").
+  //             Scaffold derives reviewer_model deterministically (one tier up).
+  // Case 1 fix: per-task models live in PLAN.md only; scaffold derives phase-level
+  //             phases[].model (highest task model in phase) without LLM relay.
   await agent(
     `Repo: ${repo}\nBranch: ${branch}\n` +
     (planFeedback ? `\nPrevious reviewer feedback to address:\n${planFeedback}\n` : '') +
     `\nRequirements are in requirements.md.\n\n` +
-    `After committing PLAN.md, create and commit progress.json with this schema:\n` +
-    `{\n` +
-    `  "tasks":  [ { "id":"...", "title":"...", "phase":"<id>", "status":"pending", "model":"<model-id>" } ],\n` +
-    `  "phases": [ { "id":"<id>", "title":"...", "model":"<model-id>", "reviewer_model":"<model-id>" } ],\n` +
-    `  "token_log": []\n` +
-    `}\n` +
-    `phases[].model is the model for all doer dispatches in that phase.\n` +
-    `phases[].reviewer_model is the model for the reviewer after that phase's VERIFY checkpoint.\n` +
-    `Each phase MUST end with a task of type "verify" -- the doer stops there and returns VERIFY,\n` +
-    `triggering a mid-sprint review before the next phase begins. Without it there is no review.\n` +
-    (round > 0
-      ? `If progress.json already exists from a prior round, read it first and preserve its token_log entries in the new file.\n`
-      : '') +
-    `Size all models to the phase's complexity and risk.` +
+    `Produce PLAN.md with phases and tasks. Assign each task a concrete model sized to its complexity.\n` +
+    `Each phase MUST end with a task of type "verify" -- the doer stops there and the orchestrator\n` +
+    `runs a reviewer before the next phase. Without it there is no mid-sprint review.\n` +
+    `Commit and push PLAN.md. A separate scaffold step will create progress.json from it.` +
     tokenLogInstr(plannerLabel, 'claude-opus-4-8'),
     { model: 'claude-opus-4-8', label: plannerLabel, phase: 'Plan', agentType: 'planner' }
   );
 
+  // Case 4 fix: scaffold agent reads PLAN.md and creates progress.json.
+  // Case 5 fix: scaffold derives phases[].reviewer_model (one tier up), not planner.
+  // Case 1 fix: scaffold derives phases[].model (highest task model in phase).
+  // Re-round: preserve existing token_log entries.
+  const scaffoldLabel = `scaffold-r${round}`;
+  await agent(
+    `Read PLAN.md in repo ${repo}.\n` +
+    (round > 0
+      ? `Also read the existing progress.json (if present) to extract its token_log array.\n`
+      : '') +
+    `Create (or overwrite) progress.json with this exact schema and commit + push:\n` +
+    `{\n` +
+    `  "tasks":  [ { "id":"<task-id>", "title":"<title>", "phase":"<phase-id>",\n` +
+    `                "status":"pending", "model":"<model-from-PLAN.md>" } ],\n` +
+    `  "phases": [ { "id":"<phase-id>", "title":"<phase-title>",\n` +
+    `                "model":"<highest-tier-task-model-in-phase>",\n` +
+    `                "reviewer_model":"<one-tier-up>" } ],\n` +
+    (round > 0
+      ? `  "token_log": [<copy token_log entries from existing progress.json>]\n`
+      : `  "token_log": []\n`) +
+    `}\n` +
+    `Tier ladder for reviewer_model: haiku->sonnet, sonnet->opus, opus->opus.\n` +
+    `phases[].model = the highest-tier model assigned to any task in that phase.`,
+    { model: 'claude-haiku-4-5-20251001', label: scaffoldLabel, phase: 'Plan' }
+  );
+
   const reviewerLabel = `plan-reviewer-r${round}`;
-  // CASE 7 fix: reviewer is told notes must be specific and actionable.
   const review = await agent(
     `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
     `Verify progress.json: each phase has "model" and "reviewer_model" fields appropriately sized; ` +
@@ -176,13 +206,11 @@ for (let round = 0; round < 3 && !planApproved; round++) {
     planApproved = true;
     log(`Plan APPROVED on round ${round + 1}`);
   } else {
-    // CASE 7 fix: use notes (required field) for actionable feedback.
     planFeedback = (review && review.notes) || '';
     log(`Plan needs changes on round ${round + 1}: ${planFeedback.slice(0, 120)}`);
   }
 }
 
-// CASE 1 fix: abort rather than falling into Execute with an unapproved plan.
 if (!planApproved) {
   log('Plan not approved after 3 rounds -- aborting');
   return { error: 'plan not approved' };
@@ -192,11 +220,10 @@ if (!planApproved) {
 
 phase('Execute');
 
-// Read progress.json ONCE. Workflow drives execution from this JS state --
-// no re-reading mid-loop; the orchestrator always knows which phase it is in.
+// Read progress.json ONCE after plan approval. Workflow drives execution from
+// this JS state -- no re-reading mid-loop; orchestrator always knows current phase.
 const progress = await readProgress('read-progress-init');
 
-// CASE 10 fix: guard against missing or empty progress.json.
 if (!progress || !Array.isArray(progress.phases) || progress.phases.length === 0) {
   log('ERROR: progress.json missing or has no phases after plan approval -- aborting');
   return { error: 'empty plan' };
@@ -209,12 +236,14 @@ const MAX_PHASE_ITER = 5;
 let allDone = false;
 
 outer: for (const ph of phases) {
+  // Case 1 fix: use phases[].model written by scaffold (derived from PLAN.md task
+  // models, not relayed through LLM). Same for phases[].reviewer_model.
   const phModel         = ph.model          || 'claude-sonnet-4-6';
   const phReviewerModel = ph.reviewer_model || 'claude-sonnet-4-6';
   log(`Phase ${ph.id} "${ph.title}" | doer=${phModel} reviewer=${phReviewerModel}`);
 
   let phaseApproved = false;
-  let phFeedback    = ''; // CASE 3: carry reviewer feedback into next doer dispatch
+  let phFeedback    = '';
   let iter          = 0;
 
   while (!phaseApproved && iter < MAX_PHASE_ITER) {
@@ -222,7 +251,6 @@ outer: for (const ph of phases) {
     const doerResult = await agent(
       `Repo: ${repo}\nBranch: ${branch}\n` +
       `Current phase: ${ph.id} - ${ph.title}\n\n` +
-      // CASE 3 fix: pass reviewer feedback so the doer addresses it.
       (phFeedback ? `Reviewer found these issues to address before continuing:\n${phFeedback}\n\n` : '') +
       `Execute pending tasks for this phase from PLAN.md.\n` +
       `Stop at the VERIFY checkpoint for this phase and return status VERIFY.\n` +
@@ -246,13 +274,11 @@ outer: for (const ph of phases) {
       break outer;
     }
 
-    // CASE 2 fix: unknown status is logged and treated as a phase stop.
     if (statusUp !== 'VERIFY') {
       log(`Unexpected doer status "${doerResult.status}" in phase ${ph.id} -- stopping phase`);
       break;
     }
 
-    // At VERIFY: review this phase using the model the planner assigned.
     const reviewerLabel = `reviewer-p${ph.id}-i${iter}`;
     const review = await agent(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
@@ -268,7 +294,6 @@ outer: for (const ph of phases) {
       phaseApproved = true;
       phFeedback = '';
     } else {
-      // CASE 3 fix: capture notes for the next doer dispatch.
       phFeedback = (review && review.notes) || '';
     }
   }
@@ -278,7 +303,6 @@ outer: for (const ph of phases) {
   }
 }
 
-// Final review across all phases.
 const finalReviewLabel = 'final-review';
 const finalReview = await agent(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}` +
@@ -292,21 +316,24 @@ log(`Final review: ${finalReview && finalReview.verdict ? finalReview.verdict : 
 
 phase('Harvest');
 
-// CASE 8 fix: use dedicated harvester agent, not doer.
-// Harvester extracts durable knowledge into docs/, updates README/CHANGELOG,
-// removes scaffold files, restores provider context files from base branch.
+// Case 3 fix: no tokenLogInstr on the harvest call.
+// The harvester git rm's progress.json as part of cleanup -- appending to it
+// before removal would either fail or leave stale data in the commit.
+// Case 2 fix: HARVEST_SCHEMA already has enum: ['OK', 'FAILED']; belt-and-suspenders
+// case-insensitive check below catches any schema bypass.
 const harvestLabel = 'harvest';
 const harvestResult = await agent(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
-  `The sprint is complete. Harvest the sprint artefacts.` +
-  tokenLogInstr(harvestLabel, 'claude-sonnet-4-6'),
+  `The sprint is complete. Harvest the sprint artefacts.\n` +
+  `Return status "OK" if all steps completed successfully, "FAILED" otherwise.`,
   { model: 'claude-sonnet-4-6', label: harvestLabel, phase: 'Harvest', schema: HARVEST_SCHEMA, agentType: 'harvester' }
 );
 logTokens(harvestLabel, 'claude-sonnet-4-6', harvestResult && harvestResult.tokens);
 
-// CASE 9 fix: only create the PR if harvest succeeded.
-if (!harvestResult || harvestResult.status !== 'OK') {
-  log(`Harvest did not complete cleanly (${harvestResult ? harvestResult.status : 'null'}) -- skipping PR creation`);
+// Case 2 fix: case-insensitive check as belt-and-suspenders alongside enum.
+const harvestOk = harvestResult && /^ok$/i.test(harvestResult.status);
+if (!harvestOk) {
+  log(`Harvest did not complete cleanly (${harvestResult ? harvestResult.status : 'null'}: ${harvestResult && harvestResult.notes ? harvestResult.notes : ''}) -- skipping PR`);
   return { phases: phases.length, allDone, harvest: 'failed' };
 }
 

@@ -70,6 +70,11 @@ git push origin <branch>
 
 If `progress.json` contained a `token_log`, include a one-line cost summary in the commit message body.
 
+## Step 7 -- Return status
+
+Return `status: "OK"` if all steps completed successfully.
+Return `status: "FAILED"` with a description in `notes` if any critical step could not be completed.
+
 ## Rules
 
 - NEVER push to the base branch -- always push to the sprint branch
