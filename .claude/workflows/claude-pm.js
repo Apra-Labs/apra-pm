@@ -13,6 +13,7 @@ export const meta = {
 // The orchestrator is pure control flow -- all policy lives in the agents.
 //
 // Separation of concerns:
+//   setup         -- asserts/creates sprint branch, locates repo root, checks req file
 //   planner       -- writes PLAN.md with per-task model assignments
 //   scaffold      -- reads PLAN.md, derives progress.json (haiku, deterministic)
 //   plan-reviewer -- reviews PLAN.md vs requirements, writes feedback.md
@@ -26,29 +27,36 @@ export const meta = {
 //   "phases": [ { "id":"1", "title":"...", "model":"...", "reviewer_model":"..." } ],
 //   "token_log": []
 // }
-// phases[].model          -- highest-tier task model in that phase (doer dispatch model)
-// phases[].reviewer_model -- one tier above phases[].model (deterministic)
-//                            haiku -> sonnet, sonnet -> opus, opus -> opus
 //
 // Full model IDs used throughout (canonical, never hallucinated):
 //   haiku  -> claude-haiku-4-5-20251001
 //   sonnet -> claude-sonnet-4-6
 //   opus   -> claude-opus-4-8
 //
-// args:
-//   repo         - absolute path to the local git clone (branch already checked out)
-//   branch       - sprint branch name
-//   requirements - string: what needs to be built (user story, bd list output, etc.)
-//   base_branch  - PR target branch (default: main)
+// args (JSON object serialized to string by the Workflow runtime):
+//   branch           - sprint branch name (required); assert/create at startup
+//   requirementsFile - requirements file path relative to repo root (default: requirements.md)
+//   base_branch      - PR target branch (default: main)
 
-const repo         = args && args.repo         ? args.repo         : '';
-const branch       = args && args.branch       ? args.branch       : '';
-const requirements = args && args.requirements ? args.requirements : '';
-const base_branch  = (args && args.base_branch) || 'main';
+// args arrives as a JSON-serialized string. Parse to object; fall back gracefully.
+let opts = {};
+if (args) {
+  try {
+    const parsed = JSON.parse(args);
+    opts = (parsed && typeof parsed === 'object') ? parsed : { branch: String(parsed) };
+  } catch (e) {
+    // plain string (not valid JSON object) -- treat as branch name
+    opts = { branch: String(args) };
+  }
+}
 
-if (!repo || !branch || !requirements) {
-  log('ERROR: args.repo, args.branch, and args.requirements are required');
-  return { error: 'missing required args' };
+const branch           = opts.branch           || '';
+const requirementsFile = opts.requirementsFile || 'requirements.md';
+const base_branch      = opts.base_branch      || 'main';
+
+if (!branch) {
+  log('ERROR: branch is required (pass as args.branch or as a plain string)');
+  return { error: 'missing branch' };
 }
 
 // Known canonical full model IDs. Any string not in this set returned by scaffold
@@ -75,8 +83,6 @@ const TOKENS_SCHEMA = {
   },
 };
 
-// Case 21 fix: enum on verdict + exact match in approved() below.
-// notes is required -- CHANGES NEEDED without actionable notes is useless.
 const REVIEW_SCHEMA = {
   type: 'object',
   required: ['verdict', 'notes'],
@@ -87,10 +93,6 @@ const REVIEW_SCHEMA = {
   },
 };
 
-// Case 17 fix: doer always returns VERIFY (per phase). DONE removed from
-// the schema -- the orchestrator detects sprint completion when the outer
-// loop finishes normally (no phase aborted). This eliminates the impossible
-// choice the doer faced on the last phase (return VERIFY or DONE?).
 const DOER_STATUS_SCHEMA = {
   type: 'object',
   required: ['status'],
@@ -101,14 +103,12 @@ const DOER_STATUS_SCHEMA = {
   },
 };
 
-// Raw file read -- LLM copies verbatim; JS parses.
 const RAW_JSON_SCHEMA = {
   type: 'object',
   required: ['json'],
   properties: { json: { type: 'string' } },
 };
 
-// Case 2 (prior): enum forces exactly "OK" or "FAILED".
 const HARVEST_SCHEMA = {
   type: 'object',
   required: ['status'],
@@ -119,13 +119,21 @@ const HARVEST_SCHEMA = {
   },
 };
 
+const SETUP_SCHEMA = {
+  type: 'object',
+  required: ['repo', 'branch', 'requirementsFileExists'],
+  properties: {
+    repo:                   { type: 'string' },
+    branch:                 { type: 'string' },
+    requirementsFileExists: { type: 'boolean' },
+  },
+};
+
 // ------------------------------------------------------------------ helpers
 
-// Case 25 fix: distinguish parse failure from missing file; log raw prefix on error.
-// Called once after plan approval; drives the entire execute phase.
 async function readProgress(label) {
   const r = await agent(
-    `Read progress.json in repo ${repo} and return its entire raw contents verbatim in the json field. Do not summarise or modify it.`,
+    `Read progress.json in the repo and return its entire raw contents verbatim in the json field. Do not summarise or modify it.`,
     { model: 'claude-haiku-4-5-20251001', label: label || 'read-progress', phase: 'Execute', schema: RAW_JSON_SCHEMA }
   );
   if (!r || !r.json) {
@@ -140,12 +148,6 @@ async function readProgress(label) {
   }
 }
 
-// Appended to reviewer/plan-reviewer/scaffold prompts to log token usage.
-// NOT appended to planner (progress.json written by scaffold AFTER planner --
-// appending before scaffold would be overwritten; Case 19).
-// NOT appended to doer (doer writes progress.json in its own VERIFY commit;
-// a post-STOP second write is contradictory; Case 18).
-// NOT appended to harvester (harvester git rm's progress.json; Case 3).
 function tokenLogInstr(label, model) {
   return (
     `\nWhen done, append one entry to the token_log array in progress.json ` +
@@ -160,21 +162,49 @@ function logTokens(label, model, t) {
   log(`tokens ${label} (${model}): in=${t.input || 0} out=${t.output || 0} cache=${t.cache_read || 0}`);
 }
 
-// Case 21 fix: exact match, not substring. Enum already constrains the value;
-// this guards against any schema bypass.
 function approved(review) {
   return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
 }
 
-// ------------------------------------------------------------------ PLAN
+// ------------------------------------------------------------------ SETUP
 
 phase('Plan');
 
-await agent(
-  `In repo ${repo} on branch ${branch}:\n` +
-  `Write this content verbatim to requirements.md, then commit and push:\n\n${requirements}`,
-  { model: 'claude-haiku-4-5-20251001', label: 'write-requirements', phase: 'Plan' }
+// Assert/create the sprint branch and locate the repo root in one step.
+// This runs before any other agent so every subsequent call works on the right branch.
+const setup = await agent(
+  `Sprint workspace setup.\n\n` +
+  `Step 1: Get the repo root.\n` +
+  `  Run: git rev-parse --show-toplevel\n\n` +
+  `Step 2: Assert sprint branch "${branch}".\n` +
+  `  - If already on "${branch}": do nothing.\n` +
+  `  - Else if "${branch}" exists locally: git checkout "${branch}"\n` +
+  `  - Else if "${branch}" exists on origin: git checkout --track origin/"${branch}"\n` +
+  `  - Otherwise: git checkout -b "${branch}"\n\n` +
+  `Step 3: Check requirements file.\n` +
+  `  Run: test -f "${requirementsFile}" && echo EXISTS || echo MISSING\n` +
+  `  requirementsFileExists = true if output is EXISTS.\n\n` +
+  `Return repo (absolute path), branch (confirmed name), requirementsFileExists.`,
+  { model: 'claude-haiku-4-5-20251001', label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
 );
+
+if (!setup) {
+  log('ERROR: setup agent returned null -- aborting');
+  return { error: 'setup failed' };
+}
+if (!setup.repo || !setup.branch) {
+  log(`ERROR: setup missing repo or branch: ${JSON.stringify(setup)}`);
+  return { error: 'setup failed' };
+}
+if (!setup.requirementsFileExists) {
+  log(`ERROR: "${requirementsFile}" not found in ${setup.repo} -- create it before running the sprint`);
+  return { error: `requirements file not found: ${requirementsFile}` };
+}
+
+const repo = setup.repo;
+log(`Repo: ${repo} | Branch: ${setup.branch} | Requirements: ${requirementsFile}`);
+
+// ------------------------------------------------------------------ PLAN
 
 let planFeedback = '';
 let planApproved = false;
@@ -182,15 +212,10 @@ let planApproved = false;
 for (let round = 0; round < 3 && !planApproved; round++) {
   const plannerLabel = `planner-r${round}`;
 
-  // Case 4 (prior): planner only writes PLAN.md (per planner.md design).
-  // Case 5 (prior): do NOT ask planner to assign reviewer_model.
-  // Case 19 fix: no tokenLogInstr on planner -- scaffold overwrites progress.json
-  //              after the planner runs, destroying any token_log the planner wrote.
-  // Case 20 fix: capture planner result; abort round if null.
   const plannerResult = await agent(
     `Repo: ${repo}\nBranch: ${branch}\n` +
     (planFeedback ? `\nPrevious reviewer feedback to address:\n${planFeedback}\n` : '') +
-    `\nRequirements are in requirements.md.\n\n` +
+    `\nRequirements are in ${requirementsFile}.\n\n` +
     `Produce PLAN.md with phases and tasks. Assign each task a concrete model sized to its complexity.\n` +
     `Use only these exact full model IDs: claude-haiku-4-5-20251001 (simple), claude-sonnet-4-6 (moderate), claude-opus-4-8 (complex).\n` +
     `Each phase MUST end with a task of type "verify" -- the doer stops there and the orchestrator\n` +
@@ -200,16 +225,11 @@ for (let round = 0; round < 3 && !planApproved; round++) {
     { model: 'claude-opus-4-8', label: plannerLabel, phase: 'Plan', agentType: 'planner' }
   );
 
-  // Case 20 fix: planner null means PLAN.md was not written; skip to next round.
   if (!plannerResult) {
     log(`Planner returned null on round ${round} -- skipping to next round`);
     continue;
   }
 
-  // Case 4 (prior) + Case 19 fix: scaffold reads PLAN.md, creates progress.json.
-  // Case 27 fix: provide explicit full model ID table and tier ordering so scaffold
-  //              never emits short names or hallucinated IDs.
-  // Case 19 fix: on re-rounds, scaffold preserves existing token_log entries.
   const scaffoldLabel = `scaffold-r${round}`;
   const scaffoldResult = await agent(
     `Read PLAN.md in repo ${repo}.\n` +
@@ -238,7 +258,6 @@ for (let round = 0; round < 3 && !planApproved; round++) {
     { model: 'claude-haiku-4-5-20251001', label: scaffoldLabel, phase: 'Plan' }
   );
 
-  // Case 20 fix: scaffold null means progress.json was not written.
   if (!scaffoldResult) {
     log(`Scaffold returned null on round ${round} -- skipping to next round`);
     continue;
@@ -246,8 +265,9 @@ for (let round = 0; round < 3 && !planApproved; round++) {
 
   const reviewerLabel = `plan-reviewer-r${round}`;
   const review = await agent(
-    `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
-    `Verify PLAN.md and progress.json.\n` +
+    `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+    `Requirements file: ${requirementsFile}\n\n` +
+    `Verify PLAN.md and progress.json against ${requirementsFile}.\n` +
     `Fail (CHANGES NEEDED) if: phases array is empty, tasks array is empty, any phase lacks a\n` +
     `verify task, any phase lacks "model" or "reviewer_model", or any model ID is not one of:\n` +
     `claude-haiku-4-5-20251001 / claude-sonnet-4-6 / claude-opus-4-8.\n\n` +
@@ -275,8 +295,6 @@ if (!planApproved) {
 
 phase('Execute');
 
-// Read progress.json ONCE after plan approval. Workflow drives execution from
-// this JS state -- no re-reading mid-loop; orchestrator always knows current phase.
 const progress = await readProgress('read-progress-init');
 
 if (!progress || !Array.isArray(progress.phases) || progress.phases.length === 0) {
@@ -288,13 +306,10 @@ const phases = progress.phases;
 log(`Executing ${phases.length} phase(s): ${phases.map((p) => `${p.id}:${p.title}`).join(', ')}`);
 
 const MAX_PHASE_ITER = 5;
-// Case 17 fix: allDone set true when outer loop finishes normally (all phases approved).
-// Never set by doer -- doer always returns VERIFY.
-let allDone = false;
+let allDone     = false;
 let abortedPhase = null;
 
 outer: for (const ph of phases) {
-  // Case 27 fix: validate model IDs from scaffold; fall back with a warning.
   const phModel         = safeModel(ph.model);
   const phReviewerModel = safeModel(ph.reviewer_model);
   if (phModel !== ph.model) log(`WARNING: phase ${ph.id} model "${ph.model}" invalid -- using fallback ${phModel}`);
@@ -307,8 +322,6 @@ outer: for (const ph of phases) {
 
   while (!phaseApproved && iter < MAX_PHASE_ITER) {
     const doerLabel = `doer-p${ph.id}-i${iter}`;
-    // Case 17 fix: doer always returns VERIFY; completion detected by outer loop.
-    // Case 18 fix: no tokenLogInstr -- doer writes progress.json in its VERIFY commit.
     const doerResult = await agent(
       `Repo: ${repo}\nBranch: ${branch}\n` +
       `Current phase: ${ph.id} - ${ph.title}\n\n` +
@@ -321,7 +334,6 @@ outer: for (const ph of phases) {
 
     iter++;
 
-    // Case 24 fix: null doer is an infrastructure failure; abort sprint (break outer).
     if (!doerResult) {
       log(`Doer returned null in phase ${ph.id} iteration ${iter} -- aborting sprint`);
       abortedPhase = ph.id;
@@ -331,7 +343,6 @@ outer: for (const ph of phases) {
 
     const statusUp = doerResult.status ? doerResult.status.toUpperCase() : '';
 
-    // Case 24 fix: unexpected status is also an infrastructure failure.
     if (statusUp !== 'VERIFY') {
       log(`Unexpected doer status "${doerResult.status}" in phase ${ph.id} -- aborting sprint`);
       abortedPhase = ph.id;
@@ -357,8 +368,6 @@ outer: for (const ph of phases) {
     }
   }
 
-  // Case 23 fix: a phase that exhausts MAX_PHASE_ITER is a broken foundation;
-  // building later phases on top of it produces a confidently-wrong PR. Abort.
   if (!phaseApproved) {
     log(`Phase ${ph.id} did not pass review after ${MAX_PHASE_ITER} iterations -- aborting sprint`);
     abortedPhase = ph.id;
@@ -366,12 +375,12 @@ outer: for (const ph of phases) {
   }
 }
 
-// Case 17 fix: allDone true iff all phases passed (outer loop finished without break).
 if (!abortedPhase) {
   allDone = true;
 }
 
-// Case 22 fix: gate harvest on final review; CHANGES-NEEDED = do not proceed.
+// ----------------------------------------------------------------- FINAL REVIEW
+
 const finalReviewLabel = 'final-review';
 const finalReview = await agent(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
@@ -382,7 +391,6 @@ const finalReview = await agent(
 logTokens(finalReviewLabel, 'claude-opus-4-8', finalReview && finalReview.tokens);
 log(`Final review: ${finalReview && finalReview.verdict ? finalReview.verdict : 'no verdict'}`);
 
-// Case 22 fix: do not harvest or open a PR if final review not approved.
 if (!approved(finalReview)) {
   const notes = (finalReview && finalReview.notes) || '';
   log(`Final review not approved -- aborting before harvest. Notes: ${notes.slice(0, 200)}`);
@@ -393,14 +401,13 @@ if (!approved(finalReview)) {
 
 phase('Harvest');
 
-// Case 3 (prior): no tokenLogInstr -- harvester git rm's progress.json.
-// Case 26 fix: pass final review notes to harvester so it can include them in
-//              docs/CHANGELOG before deleting feedback.md; they are not persisted
-//              anywhere else and would otherwise be lost.
 const harvestLabel = 'harvest';
 const harvestResult = await agent(
-  `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
+  `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+  `Requirements file: ${requirementsFile}\n\n` +
   `The sprint is complete. Harvest the sprint artefacts.\n` +
+  `Remove "${requirementsFile}" (not requirements.md -- use the actual filename above) along with\n` +
+  `PLAN.md, progress.json, feedback.md when cleaning up scaffold files.\n` +
   `Final review notes (include any relevant context in docs/CHANGELOG before cleanup):\n` +
   `${(finalReview && finalReview.notes) || '(none)'}\n\n` +
   `Return status "OK" if all steps completed successfully, "FAILED" otherwise.`,
@@ -414,8 +421,6 @@ if (!harvestOk) {
   return { phases: phases.length, allDone, harvest: 'failed' };
 }
 
-// Case 26 fix: pass final review notes into the PR prompt; feedback.md is already
-// deleted by the harvester so the PR agent cannot read it.
 await agent(
   `In repo ${repo} on branch ${branch}, create a GitHub pull request targeting ${base_branch}.\n` +
   `Command: gh pr create --base ${base_branch} --head ${branch}\n` +
