@@ -74,18 +74,19 @@ for (let planRound = 0; planRound < 3; planRound++) {
   if (planApproved) break;
 
   plan = await agent(
-    `You are a sprint planner. Create a beads task graph for the following requirements.\n\n` +
+    `Sprint planning context:\n\n` +
     `Requirements:\n${requirements}\n\n` +
     (planFeedback ? `Reviewer feedback from the previous round:\n${planFeedback}\n\n` : '') +
     `Working repo: ${repo}\n\n` +
-    `Rules:\n` +
-    `- Create 4-8 sprint tasks with --priority=2 (NOT --priority=1; priority-1 is reserved for source issues)\n` +
+    `Beads task graph rules (these override the generic PLAN.md approach for this sprint):\n` +
+    `- Use beads (bd) as the task store, NOT a PLAN.md file\n` +
+    `- Create 4-8 sprint tasks with --priority=2 (NOT --priority=1; P1 is reserved for source issues)\n` +
     `- Each task description must include a model tier tag: [tier:cheap], [tier:standard], or [tier:premium]\n` +
     `- Wire task dependencies with: bd dep add <task-id> <depends-on-id>\n` +
-    `- The bd_commands field must be a complete shell script of bd create and bd dep add calls\n` +
+    `- Return bd_commands as a complete shell script of bd create and bd dep add calls\n` +
     `- Each bd create call must include --priority=2 and a description with a [tier:...] tag\n` +
     `- sprint_label must be a short kebab-case slug (e.g. p1-features-impl)`,
-    { model: 'claude-opus-4-8', label: `planner-r${planRound}`, phase: 'Plan', schema: SPRINT_SCHEMA }
+    { model: 'claude-opus-4-8', label: `planner-r${planRound}`, phase: 'Plan', schema: SPRINT_SCHEMA, agentType: 'planner' }
   );
 
   if (!plan) {
@@ -116,15 +117,16 @@ for (let planRound = 0; planRound < 3; planRound++) {
 
   // Plan review
   const reviewResult = await agent(
-    `You are a plan reviewer in repo ${repo}.\n\n` +
+    `Sprint plan review context:\n\n` +
+    `Repo: ${repo}\n\n` +
     `Requirements to verify against:\n${requirements}\n\n` +
-    `Review the sprint plan:\n` +
+    `The plan is stored in beads (not PLAN.md). To inspect it:\n` +
     `1. Run: bd list --status=open\n` +
     `2. Run bd show <id> on each task to inspect descriptions and dependencies\n` +
     `3. Check: do the tasks collectively cover all requirements? Are dependencies sensible?\n` +
     `   Does every task description include a [tier:cheap/standard/premium] tag?\n\n` +
     `Output APPROVED if the plan looks solid, or CHANGES NEEDED followed by specific feedback.`,
-    { model: 'claude-sonnet-4-6', label: `plan-reviewer-r${planRound}`, phase: 'Plan' }
+    { model: 'claude-sonnet-4-6', label: `plan-reviewer-r${planRound}`, phase: 'Plan', agentType: 'plan-reviewer' }
   );
 
   const feedbackContent = `# Plan Review Round ${planRound + 1}\n\n${reviewResult || 'No output'}`;
@@ -184,17 +186,19 @@ for (;;) {
   for (const task of readyTasks) {
     const model = resolveModel(task.description);
     await agent(
-      `You are a sprint doer working in repo ${repo} on branch ${branch}.\n\n` +
+      `Sprint task execution context:\n\n` +
+      `Repo: ${repo}\n` +
+      `Branch: ${branch}\n\n` +
       `Task ID: ${task.id}\n` +
       `Task title: ${task.title}\n\n` +
       `Full description:\n${task.description}\n\n` +
-      `Steps:\n` +
+      `Beads workflow steps:\n` +
       `1. Claim the task: bd update ${task.id} --claim\n` +
       `2. Implement the task. Write or edit real source files.\n` +
       `3. Commit your changes: git add -A && git commit -m "feat: ${task.title} [${task.id}]"\n` +
       `4. Close the task: bd close ${task.id}\n\n` +
       `Stay focused. Do only this one task.`,
-      { model, label: `doer:${task.id}`, phase: 'Execute' }
+      { model, label: `doer:${task.id}`, phase: 'Execute', agentType: 'doer' }
     );
   }
 
@@ -202,14 +206,16 @@ for (;;) {
 
   if (waveNum % verify_every === 0) {
     const verify = await agent(
-      `VERIFY checkpoint after wave ${waveNum} in repo ${repo}.\n\n` +
+      `Code review checkpoint after wave ${waveNum}.\n\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
       `Original requirements:\n${requirements}\n\n` +
+      `Beads context:\n` +
       `1. Run: bd list --status=closed\n` +
       `2. Run: bd list --status=open\n` +
       `3. Review what has been implemented so far. If you find issues, create fix tasks:\n` +
       `   bd create --title="Fix: <description>" --description="[tier:standard] <detail>" --priority=2\n\n` +
       `Output APPROVED if the sprint is on track, or CHANGES NEEDED if fix tasks were added.`,
-      { model: 'claude-sonnet-4-6', label: `verify-w${waveNum}`, phase: 'Execute' }
+      { model: 'claude-sonnet-4-6', label: `verify-w${waveNum}`, phase: 'Execute', agentType: 'reviewer' }
     );
     log(`VERIFY w${waveNum}: ${(verify || '').includes('APPROVED') ? 'APPROVED' : 'review done'}`);
   }
@@ -217,13 +223,14 @@ for (;;) {
 
 // Final review before harvest
 const finalReview = await agent(
-  `Final sprint review in repo ${repo}.\n\n` +
+  `Final sprint code review.\n\n` +
+  `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
   `Requirements:\n${requirements}\n\n` +
   `1. Run: bd list --status=closed to see all completed tasks\n` +
   `2. Review the overall implementation quality\n` +
   `3. If there are serious gaps, create fix tasks with bd create --priority=2\n\n` +
   `Output APPROVED or CHANGES NEEDED with rationale.`,
-  { model: 'claude-opus-4-8', label: 'final-review', phase: 'Execute' }
+  { model: 'claude-opus-4-8', label: 'final-review', phase: 'Execute', agentType: 'reviewer' }
 );
 log(`Final review: ${(finalReview || '').includes('APPROVED') ? 'APPROVED' : 'done'}`);
 
@@ -234,7 +241,8 @@ phase('Harvest');
 // git rm removes scaffold files from the tree; since they were created within the
 // sprint branch they cancel out in the net base..head diff (final-changeset-clean gate).
 await agent(
-  `In repo ${repo} on branch ${branch}:\n\n` +
+  `Sprint harvest task: update project docs and remove scaffolding.\n\n` +
+  `Repo: ${repo}\nBranch: ${branch}\n\n` +
   `1. Run: bd list --status=closed to see everything implemented in this sprint\n` +
   `2. Update README.md to reflect any new features, CLI flags, or changes added\n` +
   `3. If CHANGELOG.md exists, prepend a new entry for sprint "${plan.sprint_label}"\n` +
@@ -245,7 +253,7 @@ await agent(
   `   git add -A && git commit -m "docs: harvest ${plan.sprint_label} - update docs, remove scaffolding"\n` +
   `6. Push all commits to origin:\n` +
   `   git push origin ${branch}`,
-  { model: 'claude-sonnet-4-6', label: 'harvest-docs', phase: 'Harvest' }
+  { model: 'claude-sonnet-4-6', label: 'harvest-docs', phase: 'Harvest', agentType: 'doer' }
 );
 
 // Close the original P1 source issues (the sprint tasks are P2; these are the
