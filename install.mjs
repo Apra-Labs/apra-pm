@@ -253,14 +253,18 @@ function main() {
     }
   }
 
-  // beads check (required for tracking; hard dependency)
+  // beads check -- install automatically if missing
   console.log('');
-  const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8' });
+  const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8', shell: true });
   if (bdCheck.error || bdCheck.status !== 0) {
-    console.error('');
-    console.error('  [!] beads (bd) is not installed -- pm WILL NOT WORK without it.');
-    console.error('      Install it with:  npm install -g @beads/bd');
-    console.error('      Then verify with: bd --version');
+    console.log('  beads (bd) not found -- installing via npm...');
+    const bdInstall = spawnSync('npm', ['install', '-g', '@beads/bd'], { encoding: 'utf-8', shell: true, stdio: 'inherit' });
+    if (bdInstall.error || bdInstall.status !== 0) {
+      console.error('  [!] beads install failed. Run manually:  npm install -g @beads/bd');
+    } else {
+      const bdRecheck = spawnSync('bd', ['--version'], { encoding: 'utf-8', shell: true });
+      console.log(`  beads OK: ${bdRecheck.stdout.trim()}`);
+    }
   } else {
     console.log(`  beads OK: ${bdCheck.stdout.trim()}`);
   }
