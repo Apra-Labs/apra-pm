@@ -1,15 +1,22 @@
 # apra-pm
 
-A provider-agnostic **Sprint Workflow** for AI coding harnesses. The `auto-sprint`
-workflow drives eight specialised agents through a repeating cycle -- plan, develop,
-test, deploy, integrate -- until a user-defined quality bar (zero P1 issues, zero
-P1/P2 issues, etc.) is met or the cycle limit is reached.
+A project management package for AI coding harnesses. It ships two complementary
+surfaces that share the same eight agents:
 
-Sprint state lives entirely in beads (`bd`). There is no PLAN.md. Beads owns all
-work items (epics, features, tasks, bugs) and is the exit signal for each cycle.
-The workflow is deterministic JavaScript -- no agent decides whether to continue.
+| Surface | Provider | Entry point | State store |
+|---|---|---|---|
+| **`pm` skill** | Any (Claude, AGY, OpenCode, Gemini, ...) | `/pm` in your harness | beads + git |
+| **`auto-sprint` workflow** | Claude Code only | `/auto-sprint` in Claude Code | beads (no PLAN.md) |
 
-## How it works
+The `pm` skill is the provider-agnostic path: invoke it in any harness and it
+drives the full plan -> develop -> harvest lifecycle via natural language.
+
+The `auto-sprint` workflow is Claude-only and fully deterministic: a JavaScript
+loop drives the eight agents through repeating cycles until a user-defined quality
+bar (zero P1 issues, zero P1/P2 issues, etc.) is met or the cycle limit is reached.
+No agent ever decides whether to continue -- all routing is in the workflow script.
+
+## auto-sprint (Claude Code)
 
 ```
 while (open issues above goal threshold > 0 AND cycles < max):
@@ -29,15 +36,18 @@ Final review (opus): quality gate before harvest
 Model tiers: haiku for scaffolding/queries, sonnet for development/review/testing,
 opus for planning and final review only.
 
-See `docs/sprint-workflow.md` for the full user guide: what to prepare, how to
-load backlogs from GitHub Issues / Azure DevOps / Jira, deploy.md and
-integ-test-playbook.md schemas, and all eight phases explained.
+See `docs/sprint-workflow.md` for the full user guide.
+
+## pm skill (all providers)
+
+The `pm` skill drives the same agents via natural language from any harness.
+See `skills/pm/SKILL.md` and its sub-docs for the full workflow.
 
 ## Layout
 
 ```
 skills/pm/               the pm skill (SKILL.md + sub-docs)
-agents/                  eight sprint agent definitions
+agents/                  eight sprint agent definitions (shared by both surfaces)
 .claude/workflows/       auto-sprint.js -- deterministic Claude Code workflow
 install.mjs              installer: copies skill + agents + workflow into provider config dir
 e2e/                     end-to-end suite: drive the skill headless on the toy repo
@@ -47,23 +57,23 @@ docs/                    sprint-workflow.md user guide + design intent
 
 ## Install
 
-Installs the skill, agents, and workflow into your harness's config directory.
+Installs the skill, agents, and (for Claude) the workflow into your harness config.
 
 ```
 node install.mjs --llm claude     # or: gemini | agy | opencode   (default: claude)
 ```
 
 This writes:
-- `<configDir>/skills/pm/` -- the skill
+- `<configDir>/skills/pm/` -- the pm skill
 - `<configDir>/agents/*.md` -- eight agents
 - `<configDir>/settings.json` -- minimal permissions (merged, non-destructive)
-- `~/.claude/workflows/auto-sprint.js` -- the workflow (claude only)
+- `~/.claude/workflows/auto-sprint.js` -- the auto-sprint workflow (claude only)
 
 Requires `git`, `gh` (GitHub CLI), and beads (`bd`) on PATH.
 
 ## Use
 
-Trigger the `auto-sprint` workflow from a Claude Code session in the project repo:
+**Claude Code** -- trigger the deterministic multi-cycle workflow:
 
 ```
 /auto-sprint {"branch": "feat/auth-overhaul", "issues": ["BD-12", "BD-15"], "goal": "P1/P2"}
@@ -78,10 +88,15 @@ Trigger the `auto-sprint` workflow from a Claude Code session in the project rep
 | `requirementsFile` | no | -- | Additional context file for the planner. |
 | `base_branch` | no | `main` | PR target branch. |
 
-The workflow checks out or creates `branch`, verifies epics exist in beads, and
-begins the sprint loop. Deploy and integration test phases require `deploy.md` and
-`integ-test-playbook.md` in the project root; without them the workflow skips
-those phases and proceeds directly to harvest.
+Deploy and integration test phases require `deploy.md` and `integ-test-playbook.md`
+in the project root; without them the workflow skips those phases and proceeds
+directly to harvest.
+
+**Other providers** -- invoke the pm skill:
+
+```
+/pm implement the auth overhaul epic (BD-12, BD-15) on branch feat/auth-overhaul
+```
 
 ## E2E
 
