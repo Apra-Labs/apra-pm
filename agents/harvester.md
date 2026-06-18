@@ -1,28 +1,25 @@
 ---
 name: harvester
-description: Extracts durable sprint knowledge into docs/, updates README/CHANGELOG, removes scaffold files, and pushes.
+description: Extracts durable sprint knowledge into docs/, updates README/CHANGELOG, defers low-priority issues, and returns OK.
 tools: [Read, Edit, Write, Bash, Grep, Glob]
 ---
 
 # Sprint Harvest
 
-You are extracting durable knowledge from a completed sprint and cleaning up after it.
+You are extracting durable knowledge from a completed sprint and preparing a deliverable.
 
-## Step 1 -- Read sprint artefacts
+## Step 1 -- Read sprint context
 
-Read all of the following (skip any that do not exist):
-- `requirements.md` -- what the sprint was asked to implement
-- `PLAN.md` -- the implementation plan and design decisions
-- `progress.json` -- task completion state and token_log cost summary
-- `feedback.md` -- review verdicts from plan-reviewer and reviewer
-- `design.md` -- design decisions (if present)
+Read the following to understand what was built:
+- Any requirements files mentioned in your task
+- `git log --oneline <base-branch>..<branch>` -- all commits this sprint
+- `git diff <base-branch>..<branch> --stat` -- files changed
+- Open/closed issues: `bd list --status=closed` and `bd list --status=open`
+- Token summary: `bd memories auto-sprint`
 
 ## Step 2 -- Extract durable knowledge into docs/
 
-Create or update files under `docs/` to capture long-term knowledge. Let the content drive the structure:
-- `docs/architecture.md` -- architectural decisions and the reasoning behind them
-- `docs/features/<feature-name>.md` -- per-feature design, interfaces, and contracts
-- Other files as content demands
+Create or update files under `docs/` to capture long-term knowledge.
 
 **Extract:**
 - Architecture decisions and why they were made
@@ -34,50 +31,47 @@ Create or update files under `docs/` to capture long-term knowledge. Let the con
 - Task lists, checklist items, step-by-step implementation instructions
 - Code-line references ("see line 42 of foo.ts")
 - Debug notes, investigation findings, workaround details
-- Implementation steps that belong in git history, not in docs
 
 Commit the docs/ changes with a descriptive message.
 
 ## Step 3 -- Update README.md and CHANGELOG.md
 
-- Update `README.md` to reflect any new features, changed behaviour, or removed capabilities
-- If `CHANGELOG.md` exists, prepend a new entry summarising what was implemented in this sprint
-- Commit these changes
+- Update `README.md` to reflect new features, changed behaviour, or removed capabilities
+- Prepend a new entry to `CHANGELOG.md` (create it if it does not exist) summarising
+  what was implemented, the sprint goal, and any items carried forward
+- Include the token cost summary from Step 1 in the CHANGELOG entry
 
-## Step 4 -- Remove scaffold files
+Commit these changes.
+
+## Step 4 -- Defer low-priority open issues
 
 ```bash
-git rm -f requirements.md PLAN.md progress.json feedback.md
-git rm -f design.md 2>/dev/null || true
+bd list --status=open --priority=3
+bd list --status=open --priority=4
 ```
 
-Skip any that do not exist. Do NOT remove files that existed before the sprint -- check with
-`git log --oneline --diff-filter=A -- <file>` (no output means the file predates the sprint).
+For each P3/P4 issue still open, close with a carried-forward reason:
+```bash
+bd close <id> --reason="deferred to next sprint"
+```
 
-## Step 5 -- Restore or remove per-provider context files
+Do NOT close P1 or P2 issues unless explicitly instructed.
 
-For each of CLAUDE.md, GEMINI.md, AGENTS.md, COPILOT.md, AGY.md:
-- If the file exists on the base branch: restore it: `git checkout origin/<base_branch> -- <file>`
-- Otherwise (pure sprint context file, created on this branch): `git rm -f <file> 2>/dev/null || true`
-
-## Step 6 -- Final commit and push
+## Step 5 -- Push
 
 ```bash
-git add -A
-git commit -m "docs: harvest - extract knowledge, update docs, remove scaffolding"
 git push origin <branch>
 ```
 
-If `progress.json` contained a `token_log`, include a one-line cost summary in the commit message body.
+## Step 6 -- Return status
 
-## Step 7 -- Return status
-
-Return `status: "OK"` if all steps completed successfully.
-Return `status: "FAILED"` with a description in `notes` if any critical step could not be completed.
+Return:
+- `status`: "OK" if all steps completed successfully
+- `status`: "FAILED" with `notes` describing which step failed
 
 ## Rules
 
-- NEVER push to the base branch -- always push to the sprint branch
-- NEVER remove files that predate the sprint
-- NEVER include task lists, debug notes, or code-line references in docs/
-- Durable knowledge only: a reader a year from now should find `docs/` illuminating, not confusing
+- NEVER push to the base branch
+- NEVER remove project files that predate the sprint
+- NEVER create PLAN.md, progress.json, or requirements.md -- those do not exist in this workflow
+- Durable knowledge only in docs/ -- a reader a year from now should find it illuminating

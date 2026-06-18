@@ -1,0 +1,628 @@
+export const meta = {
+  name: 'auto-sprint',
+  description: 'Multi-cycle sprint: plan -> develop -> test -> harvest until goal met',
+  phases: [
+    { title: 'Plan' },
+    { title: 'Develop' },
+    { title: 'Test' },
+    { title: 'Harvest' },
+  ],
+};
+
+// Multi-cycle sprint workflow. Drives 8 agents against a beads backlog until a
+// priority-based quality goal is met or the cycle ceiling is reached.
+//
+// Agent roster:
+//   planner           -- reads open beads epics/features/bugs, creates feature+task DAG
+//   plan-reviewer     -- validates DAG: coverage, task size, acceptance criteria
+//   doer              -- works bd-ready tasks (impl and test-dev), VERIFY checkpoint
+//   reviewer          -- reviews doer output, can reopen tasks
+//   deployer          -- follows deploy.md + integ-test-playbook.md (setup/reset/teardown)
+//   integ-test-runner -- executes tests, closes features, files bugs/enhancements
+//   ci-watcher        -- polls CI; creates beads task if not configured
+//   harvester         -- docs, CHANGELOG, token summary, PR
+//
+// Beads owns all work items and is the exit signal.
+// JS workflow owns all routing. No LLM ever decides whether to continue.
+//
+// args (JSON object serialised to string by the Workflow runtime):
+//   branch           -- sprint branch (required); asserted/created at startup
+//   issues           -- beads epic IDs to implement, e.g. ["BD-1","BD-2"] (required)
+//   goal             -- exit criterion: "P1" | "P1/P2" | "P1/P2/P3"  (default: "P1/P2")
+//   max_cycles       -- hard ceiling on sprint cycles                  (default: 5)
+//   requirementsFile -- optional context file for the planner          (default: none)
+//   base_branch      -- PR target                                      (default: "main")
+
+let opts = {};
+if (args) {
+  try {
+    const parsed = JSON.parse(args);
+    opts = (parsed && typeof parsed === 'object') ? parsed : { branch: String(parsed) };
+  } catch (e) {
+    opts = { branch: String(args) };
+  }
+}
+
+const branch           = opts.branch           || '';
+const rawIssues        = opts.issues            || [];
+const epicIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
+const goal             = opts.goal             || 'P1/P2';
+const maxCycles        = Number(opts.max_cycles) || 5;
+const requirementsFile = opts.requirementsFile  || '';
+const base_branch      = opts.base_branch       || 'main';
+
+if (!branch) {
+  log('ERROR: branch is required');
+  return { error: 'missing branch' };
+}
+if (epicIds.length === 0) {
+  log('ERROR: at least one beads issue ID is required in args.issues');
+  return { error: 'missing issues' };
+}
+
+// Goal -> numeric priority threshold.
+// Exit when open issues in epic subtree at priority <= threshold reaches zero.
+const GOAL_THRESHOLD = { 'P1': 1, 'P1/P2': 2, 'P1/P2/P3': 3 };
+const threshold = GOAL_THRESHOLD[goal] || 2;
+
+// ------------------------------------------------------------------ models
+
+const MODEL_OPUS   = 'claude-opus-4-8';
+const MODEL_SONNET = 'claude-sonnet-4-6';
+const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
+
+// Doer and reviewer use haiku/sonnet only -- opus reserved for planner and final-reviewer.
+const PHASE_MODELS  = [MODEL_HAIKU, MODEL_SONNET];
+function phaseModel(id) { return PHASE_MODELS.includes(id) ? id : MODEL_SONNET; }
+
+// ------------------------------------------------------------------ schemas
+
+const REVIEW_SCHEMA = {
+  type: 'object', required: ['verdict', 'notes'],
+  properties: {
+    verdict: { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
+    notes:   { type: 'string' },
+    tokens:  { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } },
+  },
+};
+
+const DOER_STATUS_SCHEMA = {
+  type: 'object', required: ['status'],
+  properties: {
+    status:  { type: 'string', enum: ['VERIFY'] },
+    notes:   { type: 'string' },
+    tokens:  { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } },
+  },
+};
+
+const HARVEST_SCHEMA = {
+  type: 'object', required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['OK', 'FAILED'] },
+    notes:  { type: 'string' },
+  },
+};
+
+const SETUP_SCHEMA = {
+  type: 'object', required: ['repo', 'branch', 'deployMdExists', 'playbookExists'],
+  properties: {
+    repo:           { type: 'string' },
+    branch:         { type: 'string' },
+    deployMdExists: { type: 'boolean' },
+    playbookExists: { type: 'boolean' },
+  },
+};
+
+const BEADS_BLOCKERS_SCHEMA = {
+  type: 'object', required: ['count', 'ids'],
+  properties: {
+    count: { type: 'number' },
+    ids:   { type: 'array', items: { type: 'string' } },
+  },
+};
+
+const READY_TASKS_SCHEMA = {
+  type: 'object', required: ['count'],
+  properties: {
+    count: { type: 'number' },
+    ids:   { type: 'array', items: { type: 'string' } },
+  },
+};
+
+const CI_SCHEMA = {
+  type: 'object', required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['green', 'red', 'not_configured', 'pending'] },
+    notes:  { type: 'string' },
+  },
+};
+
+const INTEG_RUN_SCHEMA = {
+  type: 'object', required: ['featuresClosed', 'issuesCreated', 'summary'],
+  properties: {
+    featuresClosed: { type: 'number' },
+    issuesCreated:  { type: 'number' },
+    summary:        { type: 'string' },
+    tokens:         { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } },
+  },
+};
+
+// ------------------------------------------------------------------ helpers
+
+function approved(review) {
+  return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
+}
+
+function logTokens(label, model, t) {
+  if (!t) return;
+  log(`tokens ${label} (${model}): in=${t.input||0} out=${t.output||0} cache=${t.cache_read||0}`);
+}
+
+// tokenLogInstr: for agents that commit separately after returning (reviewers).
+function tokenLogInstr(label, model) {
+  return (
+    `\nWhen done, run: bd remember "${label} ${model} tokens: input=<N> output=<N}"\n` +
+    `Estimate input as total tokens you received; output as total tokens you generated.`
+  );
+}
+
+// tokenLogInstrVerify: for doer -- logs tokens as part of the VERIFY commit.
+function tokenLogInstrVerify(label, model) {
+  return (
+    `\nBefore your VERIFY commit, run: bd remember "${label} ${model} tokens: input=<N> output=<N>"\n` +
+    `Estimate input as total tokens you received; output as total tokens you generated.\n` +
+    `This must happen before you commit and push.`
+  );
+}
+
+async function countBeadsBlockers(thr, epics) {
+  const epicList = epics.join(' ');
+  const r = await agent(
+    `Run: bd list --status=open\n` +
+    `From that output, identify all issues that are either:\n` +
+    `  (a) one of these epics: ${epicList}, or a descendant of them (run bd show <id> to check), or\n` +
+    `  (b) have a title containing "[sprint-" (created by integration testing this sprint).\n` +
+    `Count only those with priority 0 through ${thr} (P0 to P${thr}).\n` +
+    `Return count (integer) and their beads IDs as an array.`,
+    { model: MODEL_HAIKU, label: 'check-blockers', schema: BEADS_BLOCKERS_SCHEMA }
+  );
+  return r || { count: 999, ids: [] };
+}
+
+async function countReadyTasks() {
+  const r = await agent(
+    `Run: bd ready\n` +
+    `From that output, count issues with type=task. Return count and their IDs.`,
+    { model: MODEL_HAIKU, label: 'count-ready', schema: READY_TASKS_SCHEMA }
+  );
+  return r || { count: 0, ids: [] };
+}
+
+// ------------------------------------------------------------------ SETUP
+
+phase('Plan');
+
+const setup = await agent(
+  `Sprint workspace setup.\n\n` +
+  `Step 1: Get repo root.\n` +
+  `  Run: git rev-parse --show-toplevel\n\n` +
+  `Step 2: Assert sprint branch "${branch}".\n` +
+  `  - Already on "${branch}": do nothing.\n` +
+  `  - Exists locally: git checkout "${branch}"\n` +
+  `  - Exists on origin: git checkout --track origin/"${branch}"\n` +
+  `  - Otherwise: git checkout -b "${branch}"\n\n` +
+  `Step 3: Check for required project files.\n` +
+  `  Run: test -f deploy.md && echo YES || echo NO   -> deployMdExists\n` +
+  `  Run: test -f integ-test-playbook.md && echo YES || echo NO  -> playbookExists\n\n` +
+  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists.`,
+  { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
+);
+
+if (!setup || !setup.repo || !setup.branch) {
+  log('ERROR: setup failed -- could not assert branch or locate repo');
+  return { error: 'setup failed' };
+}
+
+const repo = setup.repo;
+const integTestEnabled = setup.deployMdExists && setup.playbookExists;
+
+log(`Repo: ${repo} | Branch: ${setup.branch}`);
+log(`deploy.md: ${setup.deployMdExists} | integ-test-playbook.md: ${setup.playbookExists}`);
+if (!setup.deployMdExists) log('WARNING: deploy.md not found -- integration test phase will be skipped');
+if (!setup.playbookExists) log('WARNING: integ-test-playbook.md not found -- integration test phase will be skipped');
+if (!integTestEnabled) log('Integration testing disabled for this sprint. Harvest will run after Develop.');
+
+const epicSummary = epicIds.join(', ');
+log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
+
+// ------------------------------------------------------------------ EPIC LOOP
+
+let cycleCount   = 0;
+let epicDone     = false;
+let prevOpenIds  = [];
+let headSha      = '';
+let abortReason  = '';
+
+// Accumulate token counts per cycle for bd remember summary.
+let cycleInputTokens  = 0;
+let cycleOutputTokens = 0;
+
+function addTokens(t) {
+  if (!t) return;
+  cycleInputTokens  += (t.input  || 0);
+  cycleOutputTokens += (t.output || 0);
+}
+
+while (cycleCount < maxCycles) {
+  cycleCount++;
+  cycleInputTokens  = 0;
+  cycleOutputTokens = 0;
+  log(`\n=== Cycle ${cycleCount}/${maxCycles} | goal: ${goal} ===`);
+
+  // ---------------------------------------------------------------- PLAN
+
+  phase('Plan');
+
+  let planApproved = false;
+  const MAX_PLAN_ITER = 3;
+
+  for (let pi = 0; pi < MAX_PLAN_ITER && !planApproved; pi++) {
+    const plannerLabel = `planner-c${cycleCount}-r${pi}`;
+
+    const plannerResult = await agent(
+      `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+      `Sprint epics: ${epicSummary}\n` +
+      (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
+      `\n` +
+      (cycleCount === 1
+        ? `This is cycle 1. Read the sprint epics with: bd show ${epicIds.join(' ')}\n` +
+          `Create a feature+task DAG in beads for each epic:\n` +
+          `  - Create type=feature issues as children of each epic (bd dep add feature epic)\n` +
+          `  - Create type=task issues for each feature: implementation tasks AND integration\n` +
+          `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
+          `  - Wire implementation task deps before test tasks: bd dep add test-task impl-task\n` +
+          `    so test tasks are only unblocked after implementation is complete\n` +
+          `  - Tasks that depend on other tasks: bd dep add child parent\n` +
+          `  - Assign priority: features P1/P2, tasks P2/P3\n` +
+          `  - Each task must be completable in one agent session (1-3 file changes max)\n` +
+          `  - Every task needs clear acceptance criteria in its description\n`
+        : `This is cycle ${cycleCount}. Focus on open issues.\n` +
+          `Run: bd list --status=open\n` +
+          `For each open feature or bug, ensure it has sufficient implementation tasks\n` +
+          `AND test development tasks broken into small chunks.\n` +
+          `Create missing tasks. Update descriptions that lack acceptance criteria.\n` +
+          `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
+          `Do NOT re-create tasks that are already closed.\n`) +
+      `Confirm with any text when done.`,
+      { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner' }
+    );
+
+    if (!plannerResult) {
+      log(`Planner returned null on cycle ${cycleCount} round ${pi} -- retrying`);
+      continue;
+    }
+
+    const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
+    const planReview = await agent(
+      `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n\n` +
+      `Review the beads DAG just created.\n` +
+      `Run: bd list --status=open to inspect the current structure.\n` +
+      `Run: bd show <id> to inspect individual issues.\n\n` +
+      `APPROVE if:\n` +
+      `  - Every open feature has at least one implementation task and one [test] task\n` +
+      `  - Every task description has clear acceptance criteria\n` +
+      `  - No task is so large it requires more than ~3 file changes\n` +
+      `  - Dependencies are wired correctly (test tasks blocked by impl tasks)\n` +
+      `  - No new scope has been added beyond epics and open bugs/enhancements\n\n` +
+      `CHANGES NEEDED if any of the above fail. Notes must be specific and actionable.` +
+      tokenLogInstr(planReviewerLabel, MODEL_SONNET),
+      { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: REVIEW_SCHEMA, agentType: 'plan-reviewer' }
+    );
+    logTokens(planReviewerLabel, MODEL_SONNET, planReview && planReview.tokens);
+    addTokens(planReview && planReview.tokens);
+
+    if (approved(planReview)) {
+      planApproved = true;
+      log(`Plan APPROVED on cycle ${cycleCount} round ${pi + 1}`);
+    } else {
+      log(`Plan needs changes: ${(planReview && planReview.notes || '').slice(0, 120)}`);
+    }
+  }
+
+  if (!planApproved) {
+    log(`Plan not approved after ${MAX_PLAN_ITER} rounds -- aborting sprint`);
+    abortReason = 'plan not approved';
+    break;
+  }
+
+  // ---------------------------------------------------------------- DEVELOP
+
+  phase('Develop');
+
+  const MAX_DEV_ITER = 10;
+  let devIter = 0;
+
+  while (devIter < MAX_DEV_ITER) {
+    const ready = await countReadyTasks();
+    if (ready.count === 0) {
+      log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
+      break;
+    }
+    log(`Ready tasks: ${ready.count} (${(ready.ids || []).join(', ')})`);
+
+    const doerLabel     = `doer-c${cycleCount}-i${devIter}`;
+    const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
+
+    const doerResult = await agent(
+      `Repo: ${repo}\nBranch: ${branch}\n\n` +
+      `Run: bd ready\n` +
+      `Work the type=task issues that have no blockers. For each task:\n` +
+      `  - Run: bd update <id> --claim\n` +
+      `  - Implement the work described (code, tests, config -- whatever the task requires)\n` +
+      `  - Run: bd close <id> when the task is complete\n` +
+      `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
+      `Work all ready tasks then stop and return status "VERIFY".\n` +
+      `Always return VERIFY -- never return anything else.` +
+      tokenLogInstrVerify(doerLabel, MODEL_SONNET),
+      { model: MODEL_SONNET, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
+    );
+
+    devIter++;
+
+    if (!doerResult) {
+      log(`Doer returned null on cycle ${cycleCount} dev iter ${devIter} -- aborting`);
+      abortReason = 'doer null';
+      break;
+    }
+    logTokens(doerLabel, MODEL_SONNET, doerResult.tokens);
+    addTokens(doerResult.tokens);
+
+    if (doerResult.status !== 'VERIFY') {
+      log(`Unexpected doer status "${doerResult.status}" -- aborting`);
+      abortReason = 'unexpected doer status';
+      break;
+    }
+
+    const review = await agent(
+      `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
+      `Review the latest commits on branch ${branch}.\n` +
+      `Check: code correctness, test coverage, adherence to task acceptance criteria.\n` +
+      `If a task needs rework, reopen it: bd update <id> --status=open\n` +
+      `CHANGES NEEDED verdict must include specific actionable feedback.\n` +
+      `APPROVED means all committed work meets acceptance criteria.` +
+      tokenLogInstr(reviewerLabel, MODEL_SONNET),
+      { model: MODEL_SONNET, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
+    );
+    logTokens(reviewerLabel, MODEL_SONNET, review && review.tokens);
+    addTokens(review && review.tokens);
+    log(`Reviewer verdict: ${review && review.verdict || 'null'}`);
+
+    if (!approved(review)) {
+      log(`Reviewer feedback: ${(review && review.notes || '').slice(0, 120)}`);
+      // Reopened tasks will show in bd ready next iteration
+    }
+  }
+
+  if (abortReason) break;
+
+  // Record HEAD SHA after develop phase -- CI triggers from this push.
+  const shaAgent = await agent(
+    `Run: git rev-parse HEAD\nReturn the full SHA string.`,
+    { model: MODEL_HAIKU, label: `head-sha-c${cycleCount}`, phase: 'Develop',
+      schema: { type: 'object', required: ['sha'], properties: { sha: { type: 'string' } } } }
+  );
+  if (shaAgent && shaAgent.sha) headSha = shaAgent.sha;
+  log(`HEAD SHA: ${headSha}`);
+
+  // ---------------------------------------------------------------- INTEGRATION TEST (skip if files missing)
+
+  if (integTestEnabled) {
+    phase('Test');
+
+    // -- Deploy --
+    const deployLabel = `deployer-c${cycleCount}`;
+    const deployResult = await agent(
+      `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n\n` +
+      `Follow the integration test playbook and deploy.md:\n` +
+      (cycleCount === 1
+        ? `1. Run the Setup section of integ-test-playbook.md to bring up the test environment.\n`
+        : `1. Run the Reset section of integ-test-playbook.md to restore pristine state.\n`) +
+      `2. Follow all steps in deploy.md to deploy the build.\n` +
+      `3. Run the smoke test defined in deploy.md.\n` +
+      `4. Return deployed: true if the smoke test passes, false otherwise.\n` +
+      `5. If deployed is false, include the error output in notes.`,
+      { model: MODEL_SONNET, label: deployLabel, phase: 'Test', agentType: 'deployer',
+        schema: { type: 'object', required: ['deployed'], properties: {
+          deployed: { type: 'boolean' }, notes: { type: 'string' } } } }
+    );
+
+    if (!deployResult || !deployResult.deployed) {
+      const msg = (deployResult && deployResult.notes) || 'no details';
+      log(`Deploy failed on cycle ${cycleCount}: ${msg.slice(0, 200)}`);
+      log('Skipping integration tests this cycle -- teardown and continue');
+      // Teardown before next cycle
+      await agent(
+        `Run the Teardown section of integ-test-playbook.md to clean up the test environment.`,
+        { model: MODEL_SONNET, label: `teardown-c${cycleCount}-fail`, phase: 'Test', agentType: 'deployer' }
+      );
+    } else {
+      // -- Integration test run --
+      const integLabel = `integ-runner-c${cycleCount}`;
+      const cycleTag = `[sprint-c${cycleCount}]`;
+
+      const integResult = await agent(
+        `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
+        `Sprint epics: ${epicSummary}\nCycle tag for new issues: ${cycleTag}\n\n` +
+        `Run: bd list --type=feature --status=open\n` +
+        `For each open feature, execute its integration tests.\n\n` +
+        `For each feature:\n` +
+        `  PASS: all tests pass -> bd close <feature-id>\n` +
+        `  FAIL: tests fail -> bd create --title="${cycleTag} <description>" ` +
+        `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
+        `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
+        `  Keep feature open on failure or if inconclusive.\n\n` +
+        `Priority rules:\n` +
+        `  P0: system won't start or core path completely broken (max 2 per cycle)\n` +
+        `  P1: requirement from epic explicitly not met\n` +
+        `  P2: requirement partially met, degraded behaviour\n` +
+        `  P3: quality, performance, or UX issue not blocking core function\n\n` +
+        `Before creating a new bug, check bd search "${cycleTag}" -- update existing if duplicate.\n\n` +
+        `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
+        { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
+      );
+      logTokens(integLabel, MODEL_SONNET, integResult && integResult.tokens);
+      addTokens(integResult && integResult.tokens);
+      if (integResult) {
+        log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
+        log(`Summary: ${integResult.summary}`);
+      }
+
+      // -- Teardown --
+      await agent(
+        `Run the Teardown section of integ-test-playbook.md to fully clean up the test environment.`,
+        { model: MODEL_SONNET, label: `teardown-c${cycleCount}`, phase: 'Test', agentType: 'deployer' }
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------- EXIT CHECK
+
+  const blockers = await countBeadsBlockers(threshold, epicIds);
+  const currentOpenIds = (blockers.ids || []).slice().sort();
+  log(`Exit check: ${blockers.count} open issues at P<=${threshold} -- IDs: [${currentOpenIds.join(', ')}]`);
+
+  // No-progress check: if no issue from the previous cycle was resolved, abort.
+  if (cycleCount > 1 && prevOpenIds.length > 0) {
+    const closedFromPrev = prevOpenIds.filter(id => !currentOpenIds.includes(id));
+    if (closedFromPrev.length === 0) {
+      log(`No progress in cycle ${cycleCount}: same ${prevOpenIds.length} issues unresolved -- aborting`);
+      abortReason = 'no progress';
+      break;
+    }
+    log(`Progress: ${closedFromPrev.length} issue(s) resolved this cycle`);
+  }
+
+  // Record cycle summary in beads memory.
+  await agent(
+    `Run: bd remember "auto-sprint cycle ${cycleCount}: ` +
+    `${blockers.count} open P<=${threshold} issues, ` +
+    `~${cycleInputTokens} input tokens ~${cycleOutputTokens} output tokens, ` +
+    `open: ${currentOpenIds.join(' ') || 'none'}"`,
+    { model: MODEL_HAIKU, label: `memo-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop' }
+  );
+
+  if (blockers.count === 0) {
+    epicDone = true;
+    log(`Goal met after ${cycleCount} cycle(s)`);
+    break;
+  }
+
+  prevOpenIds = currentOpenIds;
+}
+
+// ------------------------------------------------------------------ CI CHECK
+
+phase('Harvest');
+
+let ciResult = null;
+if (headSha) {
+  ciResult = await agent(
+    `Check CI status for commit ${headSha} on branch ${branch}.\n` +
+    `Run: gh run list --branch ${branch} --limit 3 --json status,conclusion,databaseId\n` +
+    `If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n` +
+    `If runs exist and conclusion is "success": return status "green".\n` +
+    `If runs exist and conclusion is "failure": return status "red" with notes (include run URL).\n` +
+    `If no runs found: return status "not_configured".\n` +
+    `Do not block for more than 10 minutes total.`,
+    { model: MODEL_HAIKU, label: 'ci-watcher', phase: 'Harvest', schema: CI_SCHEMA, agentType: 'ci-watcher' }
+  );
+
+  if (ciResult) {
+    log(`CI status: ${ciResult.status}`);
+    if (ciResult.status === 'not_configured') {
+      log('CI not configured -- creating beads task');
+      await agent(
+        `Run: bd create --title="Add CI pipeline to project" ` +
+        `--description="The auto-sprint workflow found no CI runs for branch ${branch}. ` +
+        `CI is required for the sprint exit gate. ` +
+        `This task covers: choosing a CI provider, writing the workflow config, and verifying it triggers on push." ` +
+        `--type=task --priority=2\n` +
+        `Then run: bd show <new-id> and confirm it was created.`,
+        { model: MODEL_HAIKU, label: 'ci-task-create', phase: 'Harvest' }
+      );
+      log('ACTION REQUIRED: Set up CI for this project. Task created in beads.');
+    } else if (ciResult.status === 'red') {
+      log(`CI FAILED: ${(ciResult.notes || '').slice(0, 200)}`);
+      log('Proceeding to harvest with CI failure noted in PR.');
+    }
+  }
+}
+
+// ------------------------------------------------------------------ FINAL REVIEW
+
+const finalReviewLabel = 'final-reviewer';
+const finalReview = await agent(
+  `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+  `Sprint epics: ${epicSummary}\nGoal: ${goal}\n` +
+  (abortReason ? `Sprint ended early: ${abortReason}. Review what was completed.\n` : '') +
+  (epicDone ? `Goal was met: all P<=${threshold} issues resolved.\n` : `Goal not yet met.\n`) +
+  `\nReview the overall output of this sprint:\n` +
+  `  - Does the work address the original epics?\n` +
+  `  - Are there obvious gaps or regressions?\n` +
+  `  - Is the codebase in a releasable state for what was completed?\n` +
+  `APPROVED means the work is ready to harvest and raise as a PR.\n` +
+  `CHANGES NEEDED means critical issues were found; include specific findings in notes.` +
+  tokenLogInstr(finalReviewLabel, MODEL_OPUS),
+  { model: MODEL_OPUS, label: finalReviewLabel, phase: 'Harvest', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
+);
+logTokens(finalReviewLabel, MODEL_OPUS, finalReview && finalReview.tokens);
+log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);
+
+if (!approved(finalReview)) {
+  const notes = (finalReview && finalReview.notes) || '';
+  log(`Final review not approved -- aborting before harvest. Notes: ${notes.slice(0, 300)}`);
+  return { cycles: cycleCount, epicDone, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
+}
+
+// ------------------------------------------------------------------ HARVEST
+
+const harvestLabel = 'harvester';
+const harvestResult = await agent(
+  `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+  `Sprint epics: ${epicSummary}\nCycles completed: ${cycleCount}\nGoal met: ${epicDone}\n\n` +
+  `The sprint is complete. Harvest the sprint artefacts:\n` +
+  `  - Update docs/ with architecture decisions, feature design, API contracts\n` +
+  `  - Update README.md and prepend a CHANGELOG.md entry\n` +
+  `  - Remove any sprint scaffold files (do not remove project files that predate the sprint)\n` +
+  `  - Close any remaining P3/P4 beads issues with: bd close <id> --reason="deferred"\n` +
+  `  - Include a token cost summary from bd memories: bd memories auto-sprint\n\n` +
+  `Final review notes to include in CHANGELOG:\n` +
+  `${(finalReview && finalReview.notes) || '(none)'}\n\n` +
+  `Return status "OK" if successful, "FAILED" with notes otherwise.`,
+  { model: MODEL_SONNET, label: harvestLabel, phase: 'Harvest', schema: HARVEST_SCHEMA, agentType: 'harvester' }
+);
+
+if (!harvestResult || harvestResult.status !== 'OK') {
+  log(`Harvest failed: ${(harvestResult && harvestResult.notes) || 'null'} -- skipping PR`);
+  return { cycles: cycleCount, epicDone, goal, harvest: 'failed' };
+}
+
+// ------------------------------------------------------------------ PR
+
+await agent(
+  `In repo ${repo} on branch ${branch}, create a GitHub pull request targeting ${base_branch}.\n` +
+  `Command: gh pr create --base ${base_branch} --head ${branch}\n` +
+  `Title: summarise what was implemented across ${cycleCount} cycle(s).\n` +
+  `Body:\n` +
+  `  - What was built (per epic)\n` +
+  `  - Sprint goal: ${goal} -- ${epicDone ? 'MET' : 'NOT MET (partial delivery)'}\n` +
+  `  - Cycles run: ${cycleCount}\n` +
+  `  - Open items carried forward (if any): bd list --status=open and summarise\n` +
+  `  - Final review notes: ${(finalReview && finalReview.notes) || '(none)'}\n` +
+  (headSha && ciResult && ciResult.status !== 'green'
+    ? `  - CI: ${ciResult.status} -- see notes\n` : '') +
+  `  - Token cost summary from: bd memories auto-sprint`,
+  { model: MODEL_SONNET, label: 'harvest-pr', phase: 'Harvest' }
+);
+
+return { cycles: cycleCount, epicDone, goal, harvest: 'ok' };

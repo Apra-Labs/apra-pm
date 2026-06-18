@@ -151,8 +151,8 @@ function parseArgs(argv) {
 
 const HELP = `apra-pm installer
 
-Installs the pm skill and its five agents into your agent harness's config
-directory, and grants minimal permissions.
+Installs the auto-sprint workflow, pm skill, and eight agents into your agent
+harness's config directory, and grants minimal permissions.
 
 Usage:
   node install.mjs [options]
@@ -163,19 +163,22 @@ Options:
   --help             show this help
 
 What it installs:
-  <configDir>/skills/pm/    the skill (SKILL.md + sub-docs)
-  <configDir>/agents/*.md   planner, plan-reviewer, doer, reviewer, harvester
-  <configDir>/settings.json minimal permissions (merged, non-destructive)
-  ~/.claude/workflows/claude-pm.js  deterministic workflow (claude only)
+  <configDir>/skills/pm/      the skill (SKILL.md + sub-docs)
+  <configDir>/agents/*.md     eight sprint agents (see below)
+  <configDir>/settings.json   minimal permissions (merged, non-destructive)
+  ~/.claude/workflows/auto-sprint.js  deterministic workflow (claude only)
 
 Agents:
-  planner        reads requirements.md, writes PLAN.md with per-task models
-  plan-reviewer  reviews PLAN.md vs requirements, writes feedback.md
-  doer           executes tasks phase by phase, stops at VERIFY checkpoints
-  reviewer       reviews a completed phase, approves or returns findings
-  harvester      extracts durable knowledge into docs/, removes scaffold files
+  planner            reads open epics, creates feature+task DAG in beads
+  plan-reviewer      validates beads DAG: coverage, size, acceptance criteria
+  doer               works bd-ready tasks, commits after each, stops at VERIFY
+  reviewer           reviews diff vs beads acceptance criteria, can reopen tasks
+  deployer           follows deploy.md and integ-test-playbook.md
+  integ-test-runner  executes integration tests, closes features, files bugs
+  ci-watcher         polls CI for the sprint HEAD SHA
+  harvester          extracts durable knowledge, updates docs/README/CHANGELOG
 
-Requires: git, and beads (bd) for task tracking.`;
+Requires: git, gh (GitHub CLI), and beads (bd) for task tracking.`;
 
 function main() {
   let args;
@@ -211,7 +214,7 @@ function main() {
   copyDir(skillSrc, skillDest);
   console.log(`  [1/3] skill   -> ${skillDest}`);
 
-  // 2) agents (overwrite the four; leave any others in place)
+  // 2) agents (overwrite the eight; leave any others in place)
   ensureDir(agentsDest);
   const agents = fs.readdirSync(agentsSrc).filter(f => f.endsWith('.md'));
   for (const a of agents) {
@@ -239,10 +242,10 @@ function main() {
   }
   console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
 
-  // 4) workflow (claude provider only -- claude-pm.js -> ~/.claude/workflows/)
+  // 4) workflow (claude provider only -- auto-sprint.js -> ~/.claude/workflows/)
   if (args.llm === 'claude') {
-    const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'claude-pm.js');
-    const workflowDest = path.join(HOME, '.claude', 'workflows', 'claude-pm.js');
+    const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
+    const workflowDest = path.join(HOME, '.claude', 'workflows', 'auto-sprint.js');
     if (fs.existsSync(workflowSrc)) {
       ensureDir(path.dirname(workflowDest));
       fs.copyFileSync(workflowSrc, workflowDest);

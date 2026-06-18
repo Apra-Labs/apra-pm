@@ -1,75 +1,87 @@
 # apra-pm
 
-A provider-agnostic **Project Manager** skill for AI coding harnesses. One
-orchestrator session drives five subagents -- `planner`, `plan-reviewer`, `doer`,
-`reviewer`, `harvester` -- across one or more parallel git worktrees, runs each task
-on a planner-chosen, complexity-matched model, and loops the plan-review and
-doer-review cycles to APPROVED, a harvest, and a PR.
+A provider-agnostic **Sprint Workflow** for AI coding harnesses. The `auto-sprint`
+workflow drives eight specialised agents through a repeating cycle -- plan, develop,
+test, deploy, integrate -- until a user-defined quality bar (zero P1 issues, zero
+P1/P2 issues, etc.) is met or the cycle limit is reached.
 
-Sprint state lives in git (on each track's branch) and in a beads (`bd`) task DB.
-The orchestrator and all four agents run in one session under a single provider,
-sharing the local filesystem -- no server, no MCP.
+Sprint state lives entirely in beads (`bd`). There is no PLAN.md. Beads owns all
+work items (epics, features, tasks, bugs) and is the exit signal for each cycle.
+The workflow is deterministic JavaScript -- no agent decides whether to continue.
 
 ## How it works
 
-The orchestrator never writes code. It dispatches subagents and drives two loops:
-
 ```
-requirements -> design -> plan (loop) -> execute (doer-review loop) -> deploy -> PR
+while (open issues above goal threshold > 0 AND cycles < max):
+  Plan       -- planner (opus) creates feature+task DAG in beads
+               plan-reviewer (sonnet) validates coverage and acceptance criteria
+  Develop    -- doer (sonnet) works bd-ready tasks; reviewer (sonnet) approves or reopens
+  Deploy     -- deployer (sonnet) follows deploy.md + integ-test-playbook.md
+  Test Run   -- integ-test-runner (sonnet) closes passing features, files bugs for failures
+  Teardown   -- deployer resets the test environment
+  Exit check -- beads query: are open issues above threshold? same set as last cycle?
+
+CI check (haiku, non-blocking): poll after Develop; gate before Harvest
+Harvest (once): harvester (sonnet) updates docs/README/CHANGELOG and raises PR
+Final review (opus): quality gate before harvest
 ```
 
-- **Plan loop.** The `planner` writes `PLAN.md` (phase-ordered tasks, each with an
-  assigned model); the `plan-reviewer` approves or sends it back.
-- **Doer-review loop.** The `doer` implements one task at a time and stops at a
-  VERIFY checkpoint with tests passing; the `reviewer` reviews the diff and approves
-  or returns findings. Findings become tracked beads tasks so none are lost.
-- **Model per task.** The planner assigns each task a concrete model -- a fast model
-  for mechanical work, the strongest for hard design. Review and planning always run
-  on the strongest model.
-- **Harvest.** After all phases are approved, the `harvester` extracts durable
-  knowledge (architecture decisions, feature design, API contracts) into `docs/`,
-  updates `README.md` and `CHANGELOG.md`, removes scaffold files, and restores any
-  per-provider context files from the base branch before raising the PR.
-- **Parallel tracks.** Independent work splits into tracks, each with its own branch,
-  worktree, and full pipeline, running concurrently and integrated at the end.
+Model tiers: haiku for scaffolding/queries, sonnet for development/review/testing,
+opus for planning and final review only.
 
-See `skills/pm/SKILL.md` and its sub-docs (`worktrees.md`,
-`doer-reviewer-loop.md`, `sprint.md`, `beads.md`) for the full workflow, and
-`docs/pm-direction.md` for the design intent.
+See `docs/sprint-workflow.md` for the full user guide: what to prepare, how to
+load backlogs from GitHub Issues / Azure DevOps / Jira, deploy.md and
+integ-test-playbook.md schemas, and all eight phases explained.
 
 ## Layout
 
 ```
-skills/pm/          the skill (SKILL.md + sub-docs the orchestrator reads on demand)
-agents/             planner, plan-reviewer, doer, reviewer, harvester definitions
-.claude/workflows/  claude-pm.js -- deterministic Claude Code workflow (plan->execute->harvest)
-install.mjs         installer: copies the skill + agents + workflow into a provider config dir
-e2e/                end-to-end suite: drive the skill headless on the toy repo
-docs/               design intent
-.githooks/          pre-commit (ASCII-only guard)
+skills/pm/               the pm skill (SKILL.md + sub-docs)
+agents/                  eight sprint agent definitions
+.claude/workflows/       auto-sprint.js -- deterministic Claude Code workflow
+install.mjs              installer: copies skill + agents + workflow into provider config dir
+e2e/                     end-to-end suite: drive the skill headless on the toy repo
+docs/                    sprint-workflow.md user guide + design intent
+.githooks/               pre-commit (ASCII-only guard)
 ```
 
 ## Install
 
-Installs the skill and agents into your harness's config directory and grants the
-minimal permissions the orchestrator needs.
+Installs the skill, agents, and workflow into your harness's config directory.
 
 ```
-node install.mjs --llm claude     # or: gemini | agy   (default: claude)
+node install.mjs --llm claude     # or: gemini | agy | opencode   (default: claude)
 ```
 
 This writes:
 - `<configDir>/skills/pm/` -- the skill
-- `<configDir>/agents/*.md` -- the four agents
+- `<configDir>/agents/*.md` -- eight agents
 - `<configDir>/settings.json` -- minimal permissions (merged, non-destructive)
+- `~/.claude/workflows/auto-sprint.js` -- the workflow (claude only)
 
-Requires `git` and beads (`bd`) on PATH.
+Requires `git`, `gh` (GitHub CLI), and beads (`bd`) on PATH.
 
 ## Use
 
-Invoke the `pm` skill in your harness and give it a requirement. It drives the
-lifecycle above to a PR (or, for a local-only repo, a reviewed branch). For small,
-low-risk work it uses a lightweight single-cycle path instead of the full harness.
+Trigger the `auto-sprint` workflow from a Claude Code session in the project repo:
+
+```
+/auto-sprint {"branch": "feat/auth-overhaul", "issues": ["BD-12", "BD-15"], "goal": "P1/P2"}
+```
+
+| Argument | Required | Default | Description |
+|---|---|---|---|
+| `branch` | yes | -- | Sprint branch. Created if it does not exist. |
+| `issues` | yes | -- | Beads epic IDs to implement this sprint. |
+| `goal` | no | `P1/P2` | Exit criterion: `P1`, `P1/P2`, or `P1/P2/P3`. |
+| `max_cycles` | no | `5` | Hard ceiling on sprint cycles. |
+| `requirementsFile` | no | -- | Additional context file for the planner. |
+| `base_branch` | no | `main` | PR target branch. |
+
+The workflow checks out or creates `branch`, verifies epics exist in beads, and
+begins the sprint loop. Deploy and integration test phases require `deploy.md` and
+`integ-test-playbook.md` in the project root; without them the workflow skips
+those phases and proceeds directly to harvest.
 
 ## E2E
 

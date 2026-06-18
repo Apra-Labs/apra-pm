@@ -187,7 +187,7 @@ description produces a weak plan. Invest a sentence or two per epic.
 From a Claude Code session in the project repository:
 
 ```
-/claude-pm {"branch": "feat/auth-overhaul", "issues": ["BD-12", "BD-15"], "goal": "P1"}
+/auto-sprint {"branch": "feat/auth-overhaul", "issues": ["BD-12", "BD-15"], "goal": "P1"}
 ```
 
 | Argument | Required | Default | Description |
