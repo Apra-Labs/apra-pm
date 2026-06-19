@@ -184,7 +184,9 @@ function outputCostUsd(model, tokens) {
 
 // Real output-token cost via differential budget.spent() snapshots.
 // budget.spent() is the only actual usage the harness exposes (output tokens only).
+// opts.context -- short human string describing what was worked (e.g. "tasks BD-5,BD-6")
 let cycleCostUsd = 0;
+const dispatchLedger = [];  // accumulates across all cycles; flushed to sprint-log.jsonl per cycle
 
 async function dispatch(prompt, opts) {
   const before = budget.spent();
@@ -192,7 +194,17 @@ async function dispatch(prompt, opts) {
   const outTokens = budget.spent() - before;
   const cost = outputCostUsd(opts.model || MODEL_SONNET, outTokens);
   cycleCostUsd += cost;
-  if (outTokens > 0) log(`cost ${opts.label || '?'} (${opts.model || '?'}): $${cost.toFixed(4)} (${outTokens} output tokens)`);
+  const entry = {
+    cycle:   cycleCount,
+    phase:   opts.phase  || '?',
+    label:   opts.label  || '?',
+    model:   opts.model  || MODEL_SONNET,
+    context: opts.context || '',
+    outTokens,
+    costUsd: parseFloat(cost.toFixed(4)),
+  };
+  dispatchLedger.push(entry);
+  if (outTokens > 0) log(`$${cost.toFixed(4)} ${opts.label || '?'} -- ${opts.context || opts.phase || '?'}`);
   return result;
 }
 
@@ -411,7 +423,8 @@ while (cycleCount < maxCycles) {
           `Do NOT re-create tasks that are already closed.\n`
         : '') +
       `Confirm with any text when done.`,
-      { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner' }
+      { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner',
+        context: `planning epics ${epicSummary}` }
     );
 
     if (!plannerResult) {
@@ -440,7 +453,8 @@ while (cycleCount < maxCycles) {
       `  7. No new scope has been added beyond epics and open bugs/enhancements\n\n` +
       `CHANGES NEEDED if any of the above fail. Notes must be specific: include issue IDs and\n` +
       `exact "bd dep add" commands to fix each dep direction problem.`,
-      { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: REVIEW_SCHEMA, agentType: 'plan-reviewer' }
+      { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: REVIEW_SCHEMA, agentType: 'plan-reviewer',
+        context: `reviewing plan for epics ${epicSummary}` }
     );
 
     if (approved(planReview)) {
@@ -497,7 +511,8 @@ while (cycleCount < maxCycles) {
         `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
         `Work all listed tasks then stop and return status "VERIFY".\n` +
         `Always return VERIFY -- never return anything else.`,
-        { model: streak.model, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
+        { model: streak.model, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer',
+          context: `tasks ${streak.ids.join(', ')}` }
       );
 
       if (!doerResult) {
@@ -537,7 +552,8 @@ while (cycleCount < maxCycles) {
       `If a task needs rework, reopen it: bd update <id> --status=open\n` +
       `CHANGES NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
       `APPROVED means all committed work meets acceptance criteria.`,
-      { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
+      { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer',
+        context: `reviewing tasks ${workedIds.join(', ')}` }
     );
     log(`Reviewer verdict: ${review && review.verdict || 'null'}`);
 
@@ -652,13 +668,18 @@ while (cycleCount < maxCycles) {
     log(`Progress: ${closedFromPrev.length} issue(s) resolved this cycle`);
   }
 
-  // Record cycle summary in beads memory.
+  // Flush this cycle's dispatch ledger to sprint-log.jsonl in the repo.
+  const cycleLedger = dispatchLedger.filter(e => e.cycle === cycleCount);
+  const jsonlLines = cycleLedger.map(e => JSON.stringify(e)).join('\n');
+  const cycleTotal = cycleLedger.reduce((s, e) => s + e.costUsd, 0);
+  log(`Cycle ${cycleCount} cost: $${cycleTotal.toFixed(4)} output across ${cycleLedger.length} dispatches`);
   await dispatch(
-    `Run: bd remember "auto-sprint cycle ${cycleCount}: ` +
-    `${blockers.count} open P<=${threshold} issues, ` +
-    `cost=$${cycleCostUsd.toFixed(2)} (output only), ` +
-    `open: ${currentOpenIds.join(' ') || 'none'}"`,
-    { model: MODEL_HAIKU, label: `memo-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop' }
+    `Append the following lines to sprint-log.jsonl in ${repo} (create the file if it does not exist):\n\n` +
+    `${jsonlLines}\n\n` +
+    `Use: echo '<line>' >> ${repo}/sprint-log.jsonl for each line, or write the file if creating.\n` +
+    `Do not modify any other file. Confirm when done.`,
+    { model: MODEL_HAIKU, label: `log-flush-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop',
+      context: `flushing ${cycleLedger.length} dispatch records` }
   );
 
   if (blockers.count === 0) {
