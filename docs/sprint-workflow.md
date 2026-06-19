@@ -9,22 +9,19 @@ met or the cycle limit is reached.
 
 ## How it works
 
-The workflow drives eight specialised agents through a repeating loop:
+The workflow drives specialised agents through a repeating loop:
 
 ```
 while (open issues above goal threshold > 0):
-  Plan     -- break open work into small, actionable tasks
-  Develop  -- implement tasks, reviewed before merge
-  Test Dev -- write integration tests for each feature, reviewed before running
-  Deploy   -- bring up the test environment and deploy the build
-  Test Run -- execute integration tests; close passing features, file bugs for failures
-  Teardown -- reset the test environment to pristine state
+  Plan     -- decompose open epics into a verified feature+task DAG
+  Develop  -- implement tasks in model streaks, reviewed after each iteration
+  Test     -- deploy build, run integration tests, file bugs for failures
   Check    -- has the goal been met? any progress since last cycle?
 
 Harvest  -- update documentation, CHANGELOG, raise PR
 ```
 
-The workflow does not write code or make decisions. It dispatches agents,
+The workflow never writes code or makes decisions. It dispatches agents,
 reads beads to determine progress, and routes work accordingly. All routing
 is deterministic JavaScript -- no agent decides whether to continue.
 
@@ -32,20 +29,20 @@ is deterministic JavaScript -- no agent decides whether to continue.
 
 ## Key concepts
 
-**Epic** -- a business requirement the team wants to implement. Epics come from
-the backlog. One sprint may target several related epics.
+**Epic** -- a business requirement to implement. Epics come from the backlog.
+One sprint may target several related epics.
 
-**Feature** -- a concrete deliverable derived from an epic by the planner. A feature
-is verifiable: integration tests either pass or fail against it.
+**Feature** -- a concrete deliverable the planner derives from an epic. Each
+feature is verifiable: integration tests either pass or fail against it.
 
-**Task** -- the smallest unit of work assigned to a developer agent. A task belongs
-to one feature and can be completed in a single agent session. Tasks can block
-other tasks.
+**Task** -- the smallest unit of work. A task belongs to exactly one feature
+and is sized to complete in a single agent session (roughly 1-3 file changes).
+Tasks carry an assigned model chosen by the planner based on complexity.
 
 **Sprint goal** -- the exit criterion, expressed as a priority threshold:
-- `P1` -- sprint exits when no P1 issues remain open
-- `P1/P2` -- sprint exits when no P1 or P2 issues remain open
-- `P1/P2/P3` -- tightest bar; exits only when no P1, P2, or P3 issues remain
+- `P1` -- exits when no P1 issues remain open
+- `P1/P2` -- exits when no P1 or P2 issues remain open (default)
+- `P1/P2/P3` -- tightest bar; exits only when no P1-P3 issues remain
 
 Lower-priority issues found during testing are tracked in beads and carried
 forward to a future sprint.
@@ -61,38 +58,33 @@ if integration testing finds defects that require further development.
 
 Beads (`bd`) is the task database. All epics, features, tasks, bugs, and
 enhancements live there. Before triggering a sprint, the target epics must
-exist in beads with enough description that the planner can decompose them.
+exist in beads with enough description for the planner to decompose them.
 
 Minimum per epic:
 - A clear title
-- A description: what the feature does, who uses it, what done looks like
+- A description: what it does, who uses it, what done looks like
 - A priority (P0-P4)
 
-The planner will create features and tasks from the epic descriptions. If a
+The planner creates features and tasks from the epic descriptions. If a
 description is too thin, the plan-reviewer will send the planner back to refine.
 
 ### 2. deploy.md
 
 A runbook describing how to deploy the build to a test environment. The workflow
-follows this file step by step without making assumptions about the target -- it
-could be a local Docker container, a cloud VM, or a shared test server.
+follows this file step by step without making assumptions about the target.
 
 Required sections:
 
 ```markdown
 ## Permissions
 
-List every shell command prefix the deployer agent needs to run, one per line.
-The installer reads this section and merges the entries into .claude/settings.json
-before the deployer is dispatched. Without this section the agent will hit
-interactive permission prompts and block the sprint.
+List every shell command prefix the deployer agent needs, one per line.
+The workflow reads this section and merges entries into .claude/settings.json
+before any agent runs.
 
 Example:
   Bash(docker *)
-  Bash(docker-compose *)
   Bash(npm run *)
-  Bash(curl *)
-  Bash(kubectl *)
 
 ## Deploy
 
@@ -100,74 +92,53 @@ Step-by-step commands to deploy the build.
 
 ## Smoke test
 
-A single command (or URL check) that confirms the deployment is alive.
-Exit 0 = healthy. Any other exit = deployment failed.
+A single command that confirms the deployment is alive. Exit 0 = healthy.
 
 ## CI
 
-trigger: auto         # CI fires automatically on push (default)
+trigger: auto         # CI fires on push (default)
 # or:
 trigger: manual
 manual_command: gh workflow run ci.yml --ref <branch>
 ```
 
-If CI is not configured for the project, the workflow creates a beads task
-to add it and notifies the team. Setting up CI is treated as an engineering
-task like any other: it has a developer and a reviewer.
+If CI is not configured, the workflow creates a beads task to add it and
+notifies the team. CI setup enters the normal develop loop like any other task.
 
 ### 3. integ-test-playbook.md
 
-A runbook for the integration test environment itself -- separate from the
-application deployment. Teams write this once per project; agents follow it
-every cycle.
+A runbook for the integration test environment -- separate from the application
+deployment. Teams write this once per project; agents follow it every cycle.
 
 Required sections:
 
 ```markdown
 ## Permissions
 
-List every shell command prefix the setup, reset, and teardown steps need,
-one per line. Same format as deploy.md Permissions. Both files are merged
-into .claude/settings.json before any agent runs.
-
-Example:
-  Bash(docker *)
-  Bash(psql *)
-  Bash(redis-cli *)
+Same format as deploy.md Permissions.
 
 ## Setup
 
 Commands to bring the test environment up from scratch.
-(Install fixtures, seed databases, start mock services, etc.)
 
 ## Reset
 
-Commands to restore the environment to a pristine state between test cycles
-without a full teardown. Faster than Setup; used on cycle 2+.
+Commands to restore pristine state between cycles (faster than Setup).
 
 ## Teardown
 
-Commands to fully shut down and clean up the test environment.
+Commands to fully shut down and clean up.
 ```
 
-If the playbook does not exist, the workflow skips the integration test phase
-and proceeds to harvest. The team will not receive integration test feedback
-that cycle.
+If the playbook does not exist, the workflow skips integration testing and
+proceeds to harvest. The team will not receive integration test feedback.
 
 ### 4. .claude/settings.json permissions
 
-The sprint workflow reads the `## Permissions` sections from both `deploy.md`
-and `integ-test-playbook.md` at startup and merges them into the project's
-`.claude/settings.json`. This happens before the deployer agent is dispatched,
-so no interactive prompts interrupt the sprint.
-
-If a `## Permissions` section is missing or incomplete, the deployer will
-encounter permission prompts and block. The workflow will fail with a clear
-message listing which commands need to be whitelisted rather than silently
-waiting. Fix: add the missing entries to the `## Permissions` section and
-re-trigger the sprint.
-
-You can inspect what is currently allowed at any time:
+The workflow reads the `## Permissions` sections from both `deploy.md` and
+`integ-test-playbook.md` at startup and merges them into `.claude/settings.json`
+before any agent is dispatched. If a `## Permissions` section is missing or
+incomplete, the deployer will hit interactive prompts and block.
 
 ```bash
 cat .claude/settings.json | jq '.permissions.allow'
@@ -177,15 +148,10 @@ cat .claude/settings.json | jq '.permissions.allow'
 
 ## Loading a backlog from an external system
 
-Teams with existing backlogs in Azure DevOps, GitHub Issues, Jira, or
-Bitbucket should export them to beads before triggering the sprint. Beads
-is local -- it does not sync to these systems automatically.
-
 ### From GitHub Issues
 
 ```bash
-# Export open issues labelled "sprint-candidate" via gh CLI, then create in beads
-gh issue list --label sprint-candidate --json number,title,body,labels \
+gh issue list --label sprint-candidate --json number,title,body \
   | jq -r '.[] | "bd create --title=\"\(.title)\" --description=\"\(.body)\" --type=feature --priority=2"' \
   | bash
 ```
@@ -193,7 +159,6 @@ gh issue list --label sprint-candidate --json number,title,body,labels \
 ### From Azure DevOps
 
 ```bash
-# Export a work item query to JSON, then map fields to beads
 az boards query --wiql "SELECT [Id],[Title],[Description] FROM WorkItems WHERE [State]='Active'" \
   --output json \
   | jq -r '.workItems[] | "bd create --title=\"\(.fields["System.Title"])\" --description=\"\(.fields["System.Description"] // "")\" --type=feature --priority=2"' \
@@ -202,18 +167,15 @@ az boards query --wiql "SELECT [Id],[Title],[Description] FROM WorkItems WHERE [
 
 ### From Jira
 
-Export a sprint or filter to CSV from Jira's export menu, then:
+Export to CSV (summary, description, priority columns), then:
 
 ```bash
-# With a CSV: summary,description,priority columns
 tail -n +2 jira-export.csv | while IFS=, read -r summary description priority; do
   bd create --title="$summary" --description="$description" --priority=2
 done
 ```
 
 ### From a plain list
-
-For teams without a structured tool:
 
 ```bash
 bd create --title="User can reset password via email" \
@@ -222,7 +184,7 @@ bd create --title="User can reset password via email" \
 ```
 
 The description is the most important field. A one-line title with no
-description produces a weak plan. Invest a sentence or two per epic.
+description produces a weak plan.
 
 ---
 
@@ -239,12 +201,9 @@ From a Claude Code session in the project repository:
 | `branch` | yes | -- | Sprint branch. Created if it does not exist. |
 | `issues` | yes | -- | Beads epic IDs to implement this sprint. |
 | `goal` | no | `P1/P2` | Exit criterion: `P1`, `P1/P2`, or `P1/P2/P3`. |
-| `max_cycles` | no | `5` | Hard ceiling on cycles. Prevents runaway sprints. |
-| `requirementsFile` | no | `requirements.md` | Additional context file for the planner. |
+| `max_cycles` | no | `5` | Hard ceiling on cycles. |
+| `requirementsFile` | no | none | Additional context file for the planner. |
 | `base_branch` | no | `main` | PR target branch. |
-
-The workflow checks out or creates `branch`, verifies all referenced beads
-issues exist, and begins the sprint loop.
 
 ---
 
@@ -252,112 +211,191 @@ issues exist, and begins the sprint loop.
 
 ### Plan
 
-The planner reads every open epic, feature, bug, and enhancement in beads.
-Its job is decomposition: it breaks open items into tasks small enough for
-a developer agent to complete in one session, wires dependencies, and ensures
-every feature has both implementation tasks and integration test tasks.
+The planner inspects the sprint epics and builds a feature+task DAG in beads:
 
-The plan-reviewer critiques the breakdown -- are the tasks too large? are
-acceptance criteria clear? does the plan address the open issues without
-adding out-of-scope work? The loop repeats until the reviewer approves.
+- One or more **features** per epic (concrete deliverables)
+- **Implementation tasks** and **`[test]` tasks** per feature
+- Dependencies wired so test tasks are blocked until implementation is complete
+- Each task assigned an exact model based on complexity (see Model assignment)
 
-On cycle 2+, the planner focuses on unresolved issues from the previous cycle.
-It does not re-plan completed work.
+After building the DAG, the planner runs `bd ready` to verify correctness: if
+features rather than tasks are unblocked, dependencies are wired backwards and
+the planner must fix them before continuing.
+
+The plan-reviewer then inspects the full DAG:
+- Does `bd ready` return only tasks (not features or epics)?
+- Does every feature have both an impl task and a `[test]` task?
+- Does every task have clear acceptance criteria?
+- Is every task sized to 1-3 file changes?
+- Does every task appear in exactly one feature's subtree?
+- Does every task have a model assignment?
+
+The loop repeats until the reviewer approves. If the reviewer requests changes,
+the feedback is committed to `feedback.md` on the branch and the planner reads
+it before the next attempt.
+
+On cycle 2+, the planner focuses only on unresolved issues. It does not re-plan
+completed work.
 
 ### Develop
 
-Developer agents work through implementation tasks in dependency order.
-Each agent stops at a VERIFY checkpoint when its tasks are complete and tests
-pass locally. A reviewer agent inspects the diff and either approves or sends
-the work back with specific findings. Tasks can only be closed by the developer;
-the reviewer can reopen them.
+The develop loop works through tasks in dependency order until no ready tasks
+remain. Within each iteration:
 
-### Test development
+1. **Model streaks** -- ready tasks are grouped by assigned model (all haiku
+   tasks together, all sonnet tasks together, etc.). One developer agent is
+   dispatched per group. This minimises model-switching cost while preserving
+   dependency order.
 
-Integration test tasks run in parallel across features -- each feature's tests
-are written independently. A reviewer agent checks the test code before any
-tests execute: are the tests actually exercising the feature? do they cover
-the failure cases? are they maintainable?
+2. **Developer agent** -- works its assigned tasks, runs fast tests after each,
+   and stops at a VERIFY checkpoint. A task is only closed by the developer
+   once its acceptance criteria are met.
 
-### Deploy
+3. **Reviewer agent** -- inspects the diff against each task's acceptance
+   criteria. `APPROVED` advances the loop. `CHANGES NEEDED` writes specific
+   feedback to `feedback.md`, reopens the relevant tasks in beads, and the
+   develop loop picks them up in the next iteration.
 
-The deployer agent follows `deploy.md` to push the build to the test
-environment, then confirms the smoke test passes. If the smoke test fails,
-the cycle aborts with a clear error before any tests run.
+The reviewer model is matched to the work: if any task in the iteration ran on
+opus, the reviewer uses opus; otherwise sonnet. Haiku work is always reviewed
+by at least sonnet.
 
-### Integration test run
+### Test
 
-The test runner executes the integration tests feature by feature:
-- **All tests pass** -- feature is closed in beads
-- **Tests fail** -- a bug or enhancement request is created in beads with
-  a priority reflecting the severity, and the feature remains open
-- **Inconclusive** -- feature stays open; description is updated with findings
+When integration testing is configured:
 
-The test runner does not close tasks -- only features and bugs. Defects
-found here flow into the next cycle's plan phase.
+1. **Deploy** -- the deployer follows `deploy.md` to build and push to the test
+   environment, then confirms the smoke test passes. If it fails, the cycle
+   skips testing and proceeds to the exit check.
 
-### Teardown
+2. **Integration test run** -- the test runner executes tests feature by feature:
+   - All pass -> feature closed in beads
+   - Any fail -> a bug or enhancement is created in beads with a priority
+     reflecting severity; feature stays open
+   - Inconclusive -> feature stays open; notes updated
 
-The deployer follows `integ-test-playbook.md` to clean up the test environment.
-On subsequent cycles it runs `Reset` rather than a full teardown/setup to save time.
+3. **Teardown** -- the test environment is reset. Cycle 2+ uses the faster
+   `Reset` path rather than a full teardown and setup.
+
+Defects filed during testing flow into the next cycle's plan phase.
 
 ### Exit check
 
-After teardown, the workflow queries beads for all open issues in the sprint's
-scope: the original epics, their features and tasks, and any bugs or
-enhancements created during testing. It filters to the goal priority threshold.
+After each cycle, the workflow counts all open issues within the sprint's scope
+(the epics and their full subtrees, plus any bugs filed during testing) at or
+above the goal priority. If the count is zero, the sprint succeeds. If the
+identical set of issues remains open from the previous cycle, the sprint aborts --
+something structural needs human attention.
 
-If the count hits zero, the sprint exits successfully. If the set of open
-issue IDs has not changed since the previous cycle (nothing was resolved),
-the sprint aborts -- something structural is blocking progress and human
-attention is needed.
+---
+
+## Resume and crash recovery
+
+If a sprint is interrupted mid-cycle, simply re-trigger it with the same
+arguments. At the top of each cycle, the workflow inspects beads to determine
+what has already been done:
+
+- If planning is already complete (features and tasks are in place with
+  acceptance criteria), the plan loop is skipped entirely.
+- Any tasks left in `in_progress` state from a crashed agent are reset to
+  `open` so they re-enter the develop queue cleanly.
+
+No state is stored in memory -- everything is reconstructed from beads and git.
+
+---
+
+## Model assignment
+
+Matching model power to task complexity is a core capability, not an option.
+The planner assigns an exact model to every task when it builds the DAG:
+
+| Model | When the planner uses it |
+|---|---|
+| haiku | Mechanical work: rename, config tweak, move file, simple wiring |
+| sonnet | Standard work: new function, test suite, API endpoint, refactor |
+| opus | Hard work: architecture, multi-file design, ambiguous requirements |
+
+The planner tries to group tasks so consecutive tasks in dependency order share
+a model -- this forms a streak that runs in a single agent dispatch rather than
+switching models between each task.
+
+Reviewers and planners always use the strongest model. Only developer tasks run
+on the planner-assigned model.
 
 ---
 
 ## CI integration
 
-The workflow records the git commit SHA at the end of the Develop phase. CI
-is expected to trigger automatically from the push. The workflow runs the
-integration test loop while CI runs in parallel. Before harvest, the ci-watcher
-polls until CI reports green.
+The workflow records the git HEAD SHA at the end of the develop phase. CI is
+expected to trigger automatically from the push. Before harvest, the ci-watcher
+polls until CI reports green or red.
 
-If CI is not configured, the workflow creates a P2 beads task:
-`Add CI pipeline to project`. This task enters the normal develop loop in
-the next cycle and requires a reviewer like any other engineering work.
+If CI is not configured, a P2 beads task `Add CI pipeline to project` is
+created and enters the normal develop loop in the next cycle.
+
+---
+
+## Cost tracking
+
+Every agent dispatch is measured using actual output token counts. After each
+dispatch, the workflow logs:
+
+```
+$0.0312 doer-c1-i0 -- tasks BD-5, BD-6
+$0.0145 reviewer-c1-i1 -- reviewing tasks BD-5, BD-6
+```
+
+At the end of each cycle, the full dispatch ledger is written as JSONL to
+`sprint-log.jsonl` in the repository root and committed to the branch. Each
+line records:
+
+```json
+{"cycle":1,"phase":"Develop","label":"doer-c1-i0","model":"claude-sonnet-4-6","context":"tasks BD-5, BD-6","outTokens":967,"costUsd":0.0145}
+```
+
+At sprint end, a cost summary is printed grouped by role:
+
+```
+=== Sprint cost summary (output tokens only) ===
+  doer                  $0.1823     2431 tok  8 call(s)
+  reviewer              $0.0967     6447 tok  4 call(s)
+  planner               $0.0312      416 tok  2 call(s)
+  TOTAL                 $0.3102
+```
+
+To query the log after a sprint:
+
+```bash
+# cost by role
+jq -r '[(.label | gsub("-c[0-9].*$"; "")), (.costUsd | tostring)] | @tsv' sprint-log.jsonl \
+  | awk '{sum[$1]+=$2} END {for(r in sum) printf "%s\t$%.4f\n", r, sum[r]}'
+
+# what each dollar was spent on
+jq -r '"$\(.costUsd)  \(.label)  \(.context)"' sprint-log.jsonl
+```
+
+Costs reflect output tokens only -- input tokens are not exposed by the workflow
+harness. The true cost will be higher, typically 2-4x depending on model and
+context size.
 
 ---
 
 ## What you get at the end
 
 When the sprint goal is met:
+
 - All targeted features are closed in beads
 - A reviewed pull request is open against `base_branch`
 - `docs/` is updated with architecture decisions and feature documentation
 - `CHANGELOG.md` has a new entry summarising the sprint
-- Scaffold files (`PLAN.md`, `progress.json`, etc.) are removed from the branch
-- Token usage across all agents and cycles is summarised in the PR description
+- `sprint-log.jsonl` is committed to the branch with per-dispatch cost data
+- A cost summary table is printed in the workflow output
 
 If the sprint exits via `max_cycles` without meeting the goal:
+
 - A PR is still raised, clearly marked as partial
 - All open issues remain in beads for the next sprint
 - The PR description explains what was completed and what remains
-
----
-
-## Cost and model usage
-
-The workflow uses three model tiers:
-
-| Tier | Model | Used for |
-|---|---|---|
-| Fast | haiku | setup, scaffolding, beads queries, CI polling |
-| Standard | sonnet | development, review, testing, deployment |
-| Strong | opus | planning (cycle start), final review (before harvest) |
-
-A typical sprint with two features and one cycle runs approximately:
-1 opus plan, 1 opus final review, 4-8 sonnet develop/review passes,
-2-4 sonnet test/deploy passes. Token totals are tracked per agent and
-per cycle in beads for cost analysis.
 
 ---
 
@@ -365,8 +403,9 @@ per cycle in beads for cost analysis.
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| Plan loop does not converge | Epic descriptions too thin | Add detail to beads issue descriptions before re-triggering |
-| Smoke test fails every cycle | Deploy steps broken | Fix `deploy.md`; test manually before re-triggering |
+| Plan loop does not converge | Epic descriptions too thin | Add detail to the beads issue descriptions before re-triggering |
+| `bd ready` shows features, not tasks | Dependencies wired backwards | The plan-reviewer should catch this; if it recurs, inspect `bd graph --compact <epic-id>` -- tasks should be at layer 0 |
+| Smoke test fails every cycle | Deploy steps broken | Fix `deploy.md` and test manually before re-triggering |
 | Same issues open across two cycles | Defects deeper than tasks can fix | Review the open issues; consider re-scoping the epic |
 | CI always red | CI config broken | Address the CI beads task first; it blocks harvest |
 | `max_cycles` reached | Sprint is too large | Split the epics into smaller targeted sprints |
@@ -374,8 +413,6 @@ per cycle in beads for cost analysis.
 ---
 
 ## Working with the beads backlog between sprints
-
-Between sprints, the backlog is a live beads database. Teams can:
 
 ```bash
 bd list --status=open          # see everything pending
@@ -386,6 +423,6 @@ bd create --title="..."        # add new items
 bd close BD-42                 # remove resolved items
 ```
 
-P3/P4 items carried forward from a sprint are visible alongside new
-work items. Prioritise before triggering the next sprint so the planner
-has a clear signal about what matters most.
+P3/P4 items carried forward from a sprint are visible alongside new work items.
+Prioritise before triggering the next sprint so the planner has a clear signal
+about what matters most.
