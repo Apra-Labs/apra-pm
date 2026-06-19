@@ -194,6 +194,19 @@ async function countReadyTasks() {
   return r || { count: 0, ids: [] };
 }
 
+async function commitFeedback(repo, branch, notes, role, label, phase) {
+  await agent(
+    `Repo: ${repo}\nBranch: ${branch}\n\n` +
+    `Write the following reviewer feedback to feedback.md (overwrite if it exists):\n\n` +
+    `${notes}\n\n` +
+    `Then commit and push:\n` +
+    `  git -C ${repo} add feedback.md\n` +
+    `  git -C ${repo} -c user.name='${role}' -c user.email='${role}@pm.local' commit -m "feedback: ${label}"\n` +
+    `  git -C ${repo} push origin ${branch}`,
+    { model: MODEL_HAIKU, label: `feedback-commit-${label}`, phase }
+  );
+}
+
 // ------------------------------------------------------------------ SETUP
 
 phase('Plan');
@@ -269,6 +282,7 @@ while (cycleCount < maxCycles) {
   phase('Plan');
 
   let planApproved = false;
+  let planFeedback = '';
   const MAX_PLAN_ITER = 3;
 
   for (let pi = 0; pi < MAX_PLAN_ITER && !planApproved; pi++) {
@@ -279,6 +293,9 @@ while (cycleCount < maxCycles) {
       `Sprint epics: ${epicSummary}\n` +
       (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
       `\n` +
+      (planFeedback
+        ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
+        : '') +
       (cycleCount === 1
         ? `This is cycle 1. Read the sprint epics with: bd show ${epicIds.join(' ')}\n` +
           `Create a feature+task DAG in beads for each epic:\n` +
@@ -331,7 +348,9 @@ while (cycleCount < maxCycles) {
       planApproved = true;
       log(`Plan APPROVED on cycle ${cycleCount} round ${pi + 1}`);
     } else {
-      log(`Plan needs changes: ${(planReview && planReview.notes || '').slice(0, 120)}`);
+      planFeedback = (planReview && planReview.notes) || '';
+      log(`Plan needs changes: ${planFeedback.slice(0, 120)}`);
+      await commitFeedback(repo, branch, planFeedback, 'pm-plan-reviewer', planReviewerLabel, 'Plan');
     }
   }
 
@@ -347,6 +366,7 @@ while (cycleCount < maxCycles) {
 
   const MAX_DEV_ITER = 10;
   let devIter = 0;
+  let devFeedback = '';
 
   while (devIter < MAX_DEV_ITER) {
     const ready = await countReadyTasks();
@@ -361,6 +381,9 @@ while (cycleCount < maxCycles) {
 
     const doerResult = await agent(
       `Repo: ${repo}\nBranch: ${branch}\n\n` +
+      (devFeedback
+        ? `Reviewer feedback from the previous iteration (read feedback.md in ${repo} for full details):\n${devFeedback}\nAddress every finding before closing tasks.\n\n`
+        : '') +
       `Run: bd ready\n` +
       `Work the type=task issues that have no blockers. For each task:\n` +
       `  - Run: bd update <id> --claim\n` +
@@ -403,8 +426,12 @@ while (cycleCount < maxCycles) {
     log(`Reviewer verdict: ${review && review.verdict || 'null'}`);
 
     if (!approved(review)) {
-      log(`Reviewer feedback: ${(review && review.notes || '').slice(0, 120)}`);
+      devFeedback = (review && review.notes) || '';
+      log(`Reviewer feedback: ${devFeedback.slice(0, 120)}`);
+      await commitFeedback(repo, branch, devFeedback, 'pm-reviewer', reviewerLabel, 'Develop');
       // Reopened tasks will show in bd ready next iteration
+    } else {
+      devFeedback = '';
     }
   }
 
