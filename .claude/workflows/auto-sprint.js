@@ -78,7 +78,6 @@ const REVIEW_SCHEMA = {
   properties: {
     verdict: { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
     notes:   { type: 'string' },
-    tokens:  { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } },
   },
 };
 
@@ -87,7 +86,6 @@ const DOER_STATUS_SCHEMA = {
   properties: {
     status:  { type: 'string', enum: ['VERIFY'] },
     notes:   { type: 'string' },
-    tokens:  { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } },
   },
 };
 
@@ -150,7 +148,6 @@ const INTEG_RUN_SCHEMA = {
     featuresClosed: { type: 'number' },
     issuesCreated:  { type: 'number' },
     summary:        { type: 'string' },
-    tokens:         { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } },
   },
 };
 
@@ -173,27 +170,6 @@ function approved(review) {
   return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
 }
 
-function logTokens(label, model, t) {
-  if (!t) return;
-  log(`tokens ${label} (${model}): in=${t.input||0} out=${t.output||0} cache=${t.cache_read||0}`);
-}
-
-// tokenLogInstr: for agents that commit separately after returning (reviewers).
-function tokenLogInstr(label, model) {
-  return (
-    `\nWhen done, run: bd remember "${label} ${model} tokens: input=<N> output=<N>"\n` +
-    `Estimate input as total tokens you received; output as total tokens you generated.`
-  );
-}
-
-// tokenLogInstrVerify: for doer -- logs tokens as part of the VERIFY commit.
-function tokenLogInstrVerify(label, model) {
-  return (
-    `\nBefore your VERIFY commit, run: bd remember "${label} ${model} tokens: input=<N> output=<N>"\n` +
-    `Estimate input as total tokens you received; output as total tokens you generated.\n` +
-    `This must happen before you commit and push.`
-  );
-}
 
 async function countBeadsBlockers(thr, epics) {
   const epicList = epics.join(' ');
@@ -315,20 +291,10 @@ let prevOpenIds  = [];
 let headSha      = '';
 let abortReason  = '';
 
-// Accumulate token counts per cycle for bd remember summary.
-let cycleInputTokens  = 0;
-let cycleOutputTokens = 0;
 
-function addTokens(t) {
-  if (!t) return;
-  cycleInputTokens  += (t.input  || 0);
-  cycleOutputTokens += (t.output || 0);
-}
 
 while (cycleCount < maxCycles) {
   cycleCount++;
-  cycleInputTokens  = 0;
-  cycleOutputTokens = 0;
   log(`\n=== Cycle ${cycleCount}/${maxCycles} | goal: ${goal} ===`);
 
   // ---------------------------------------------------------------- RESUME CHECK
@@ -417,8 +383,7 @@ while (cycleCount < maxCycles) {
           `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
           `Do NOT re-create tasks that are already closed.\n`
         : '') +
-      `Confirm with any text when done.` +
-      tokenLogInstr(plannerLabel, MODEL_OPUS),
+      `Confirm with any text when done.`,
       { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner' }
     );
 
@@ -447,12 +412,9 @@ while (cycleCount < maxCycles) {
       `  6. Every task has model metadata set (check bd show output for METADATA section)\n` +
       `  7. No new scope has been added beyond epics and open bugs/enhancements\n\n` +
       `CHANGES NEEDED if any of the above fail. Notes must be specific: include issue IDs and\n` +
-      `exact "bd dep add" commands to fix each dep direction problem.` +
-      tokenLogInstr(planReviewerLabel, MODEL_SONNET),
+      `exact "bd dep add" commands to fix each dep direction problem.`,
       { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: REVIEW_SCHEMA, agentType: 'plan-reviewer' }
     );
-    logTokens(planReviewerLabel, MODEL_SONNET, planReview && planReview.tokens);
-    addTokens(planReview && planReview.tokens);
 
     if (approved(planReview)) {
       planApproved = true;
@@ -507,8 +469,7 @@ while (cycleCount < maxCycles) {
         `  - Run: bd close <id> when the task is complete\n` +
         `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
         `Work all listed tasks then stop and return status "VERIFY".\n` +
-        `Always return VERIFY -- never return anything else.` +
-        tokenLogInstrVerify(doerLabel, streak.model),
+        `Always return VERIFY -- never return anything else.`,
         { model: streak.model, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
       );
 
@@ -518,8 +479,6 @@ while (cycleCount < maxCycles) {
         streakAbort = true;
         break;
       }
-      logTokens(doerLabel, streak.model, doerResult.tokens);
-      addTokens(doerResult.tokens);
 
       if (doerResult.status !== 'VERIFY') {
         log(`Unexpected doer status "${doerResult.status}" -- aborting`);
@@ -550,12 +509,9 @@ while (cycleCount < maxCycles) {
       `Check: code correctness, test coverage, adherence to each task's acceptance criteria.\n` +
       `If a task needs rework, reopen it: bd update <id> --status=open\n` +
       `CHANGES NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
-      `APPROVED means all committed work meets acceptance criteria.` +
-      tokenLogInstr(reviewerLabel, reviewerModel),
+      `APPROVED means all committed work meets acceptance criteria.`,
       { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
     );
-    logTokens(reviewerLabel, reviewerModel, review && review.tokens);
-    addTokens(review && review.tokens);
     log(`Reviewer verdict: ${review && review.verdict || 'null'}`);
 
     if (!approved(review)) {
@@ -603,11 +559,8 @@ while (cycleCount < maxCycles) {
       `5. If deployed is false, include the error output in notes.`,
       { model: MODEL_SONNET, label: deployLabel, phase: 'Test', agentType: 'deployer',
         schema: { type: 'object', required: ['deployed'], properties: {
-          deployed: { type: 'boolean' }, notes: { type: 'string' },
-          tokens: { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cache_read: { type: 'number' } } } } } }
+          deployed: { type: 'boolean' }, notes: { type: 'string' } } } }
     );
-    logTokens(deployLabel, MODEL_SONNET, deployResult && deployResult.tokens);
-    addTokens(deployResult && deployResult.tokens);
 
     if (!deployResult || !deployResult.deployed) {
       const msg = (deployResult && deployResult.notes) || 'no details';
@@ -642,8 +595,6 @@ while (cycleCount < maxCycles) {
         `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
         { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
       );
-      logTokens(integLabel, MODEL_SONNET, integResult && integResult.tokens);
-      addTokens(integResult && integResult.tokens);
       if (integResult) {
         log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
         log(`Summary: ${integResult.summary}`);
@@ -678,7 +629,6 @@ while (cycleCount < maxCycles) {
   await agent(
     `Run: bd remember "auto-sprint cycle ${cycleCount}: ` +
     `${blockers.count} open P<=${threshold} issues, ` +
-    `~${cycleInputTokens} input tokens ~${cycleOutputTokens} output tokens, ` +
     `open: ${currentOpenIds.join(' ') || 'none'}"`,
     { model: MODEL_HAIKU, label: `memo-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop' }
   );
@@ -743,11 +693,9 @@ const finalReview = await agent(
   `  - Are there obvious gaps or regressions?\n` +
   `  - Is the codebase in a releasable state for what was completed?\n` +
   `APPROVED means the work is ready to harvest and raise as a PR.\n` +
-  `CHANGES NEEDED means critical issues were found; include specific findings in notes.` +
-  tokenLogInstr(finalReviewLabel, MODEL_OPUS),
+  `CHANGES NEEDED means critical issues were found; include specific findings in notes.`,
   { model: MODEL_OPUS, label: finalReviewLabel, phase: 'Harvest', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
 );
-logTokens(finalReviewLabel, MODEL_OPUS, finalReview && finalReview.tokens);
 log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);
 
 if (!approved(finalReview)) {
