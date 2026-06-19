@@ -275,6 +275,14 @@ async function checkCycleState(epicIds) {
   return r || { planDone: false, inProgressIds: [] };
 }
 
+// ------------------------------------------------------------------ STATE
+
+let cycleCount   = 0;
+let epicDone     = false;
+let prevOpenIds  = [];
+let headSha      = '';
+let abortReason  = '';
+
 // ------------------------------------------------------------------ SETUP
 
 phase('Plan');
@@ -322,14 +330,6 @@ const epicSummary = epicIds.join(', ');
 log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
 
 // ------------------------------------------------------------------ EPIC LOOP
-
-let cycleCount   = 0;
-let epicDone     = false;
-let prevOpenIds  = [];
-let headSha      = '';
-let abortReason  = '';
-
-
 
 while (cycleCount < maxCycles) {
   cycleCount++;
