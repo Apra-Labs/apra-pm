@@ -38,16 +38,23 @@ function providerConfig(llm) {
 
 // Minimal permissions the orchestrator needs: dispatch subagents, and run git /
 // beads / gh / the project's test command via the shell. Read access to the skill.
+// Permissions shared across all providers that support settings.json.
 function requiredPermissions(cfg) {
   const skills = path.join(cfg.configDir, 'skills').replace(/\\/g, '/');
   return [
     'Agent',
     'Task',
     'Bash(git:*)',
-    'Bash(bd:*)',
+    'Bash(bd:*)',   // beads CLI -- required by all agents on all providers
     'Bash(gh:*)',
     `Read(${skills}/**)`,
-    'Skill(auto-sprint)',  // suppress "Use skill 'auto-sprint'?" prompt
+  ];
+}
+
+// Additional permissions specific to Claude Code (not understood by other providers).
+function claudeOnlyPermissions() {
+  return [
+    'Skill(auto-sprint)',    // suppress "Use skill 'auto-sprint'?" prompt
     'Workflow(auto-sprint)', // suppress "Run a dynamic workflow?" prompt
   ];
 }
@@ -240,7 +247,9 @@ function main() {
     }
     added = 0;
   } else {
-    added = mergePermissions(settingsFile, requiredPermissions(cfg));
+    const perms = requiredPermissions(cfg);
+    if (args.llm === 'claude') perms.push(...claudeOnlyPermissions());
+    added = mergePermissions(settingsFile, perms);
   }
   console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
 
