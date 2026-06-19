@@ -170,17 +170,29 @@ function approved(review) {
   return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
 }
 
-// Real output-token tracking via differential budget.spent() snapshots.
-// budget.spent() is the only actual usage the workflow harness exposes;
-// it counts output tokens across the whole workflow run.
-let cycleOutputTokens = 0;
+// Output price per 1M tokens (USD). Input not exposed by the harness.
+const OUTPUT_PRICE_PER_M = {
+  [MODEL_HAIKU]:  4.00,
+  [MODEL_SONNET]: 15.00,
+  [MODEL_OPUS]:   75.00,
+};
+
+function outputCostUsd(model, tokens) {
+  const rate = OUTPUT_PRICE_PER_M[model] || OUTPUT_PRICE_PER_M[MODEL_SONNET];
+  return (tokens / 1_000_000) * rate;
+}
+
+// Real output-token cost via differential budget.spent() snapshots.
+// budget.spent() is the only actual usage the harness exposes (output tokens only).
+let cycleCostUsd = 0;
 
 async function dispatch(prompt, opts) {
   const before = budget.spent();
-  const result = await dispatch(prompt, opts);
-  const out = budget.spent() - before;
-  cycleOutputTokens += out;
-  if (out > 0) log(`tokens ${opts.label || '?'} (${opts.model || '?'}): output=${out}`);
+  const result = await agent(prompt, opts);
+  const outTokens = budget.spent() - before;
+  const cost = outputCostUsd(opts.model || MODEL_SONNET, outTokens);
+  cycleCostUsd += cost;
+  if (outTokens > 0) log(`cost ${opts.label || '?'} (${opts.model || '?'}): $${cost.toFixed(4)} (${outTokens} output tokens)`);
   return result;
 }
 
@@ -309,7 +321,7 @@ let abortReason  = '';
 
 while (cycleCount < maxCycles) {
   cycleCount++;
-  cycleOutputTokens = 0;
+  cycleCostUsd = 0;
   log(`\n=== Cycle ${cycleCount}/${maxCycles} | goal: ${goal} ===`);
 
   // ---------------------------------------------------------------- RESUME CHECK
@@ -644,7 +656,7 @@ while (cycleCount < maxCycles) {
   await dispatch(
     `Run: bd remember "auto-sprint cycle ${cycleCount}: ` +
     `${blockers.count} open P<=${threshold} issues, ` +
-    `output_tokens=${cycleOutputTokens}, ` +
+    `cost=$${cycleCostUsd.toFixed(2)} (output only), ` +
     `open: ${currentOpenIds.join(' ') || 'none'}"`,
     { model: MODEL_HAIKU, label: `memo-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop' }
   );
