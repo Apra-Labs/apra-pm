@@ -379,9 +379,10 @@ while (cycleCount < maxCycles) {
     const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
     const planReview = await agent(
       `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n\n` +
-      `Review the beads DAG just created.\n` +
-      `Run: bd list --status=open to inspect the current structure.\n` +
-      `Run: bd show <id> to inspect individual issues.\n\n` +
+      `Review the beads DAG for these epics ONLY: ${epicSummary}\n` +
+      `Run: bd list --tree ${epicIds.join(' ')} to inspect the sprint structure.\n` +
+      `Run: bd show <id> to inspect individual issues.\n` +
+      `Do NOT review or comment on issues outside these epics.\n\n` +
       `APPROVE if:\n` +
       `  - Every open feature has at least one implementation task and one [test] task\n` +
       `  - Every task description has clear acceptance criteria\n` +
@@ -463,11 +464,15 @@ while (cycleCount < maxCycles) {
     }
 
     const review = await agent(
-      `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n\n` +
-      `Review the latest commits on branch ${branch}.\n` +
-      `Check: code correctness, test coverage, adherence to task acceptance criteria.\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+      `Sprint epics: ${epicSummary}\nTasks worked this iteration: ${(ready.ids || []).join(', ')}\n\n` +
+      `Review ONLY the work done for the tasks listed above.\n` +
+      `Run: bd show <id> for each task to read its acceptance criteria.\n` +
+      `Run: git -C ${repo} diff ${base_branch}...${branch} to see the changes.\n` +
+      `Do NOT comment on code or issues outside the listed tasks.\n` +
+      `Check: code correctness, test coverage, adherence to each task's acceptance criteria.\n` +
       `If a task needs rework, reopen it: bd update <id> --status=open\n` +
-      `CHANGES NEEDED verdict must include specific actionable feedback.\n` +
+      `CHANGES NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
       `APPROVED means all committed work meets acceptance criteria.` +
       tokenLogInstr(reviewerLabel, MODEL_SONNET),
       { model: MODEL_SONNET, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
