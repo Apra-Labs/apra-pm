@@ -110,7 +110,8 @@ marked in_progress may be incomplete on disk if a dispatch was interrupted). See
 - **Check before create** (epic and task) -- `bd search ... --status all`; reuse if
   found, never duplicate.
 - **Check before claim** -- dispatch only if the task is `open`.
-- `bd init` / `bd close` are idempotent and safe to re-run.
+- `bd close` is idempotent and safe to re-run.
+- **Never re-run `bd init`** on a repo that already has `.beads/` -- it pulls from remote, recreates the Dolt database, and overwrites local issue state. If the database is missing, prefer `bd export` + restore over `bd init`.
 - Premature close -> `bd reopen <id>`.
 - Never use `bd edit` -- it opens an interactive editor and blocks. Use
   `bd update --status/--assignee/--notes` inline.
