@@ -117,11 +117,22 @@ const BEADS_BLOCKERS_SCHEMA = {
   },
 };
 
-const READY_TASKS_SCHEMA = {
-  type: 'object', required: ['count'],
+// One entry per model streak: tasks sharing the same model that can be worked
+// in a single doer dispatch. Ordered by priority (P0 first).
+const READY_STREAKS_SCHEMA = {
+  type: 'object', required: ['streaks', 'totalCount'],
   properties: {
-    count: { type: 'number' },
-    ids:   { type: 'array', items: { type: 'string' } },
+    totalCount: { type: 'number' },
+    streaks: {
+      type: 'array',
+      items: {
+        type: 'object', required: ['model', 'ids'],
+        properties: {
+          model: { type: 'string' },
+          ids:   { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
   },
 };
 
@@ -198,13 +209,18 @@ async function countBeadsBlockers(thr, epics) {
   return r || { count: 999, ids: [] };
 }
 
-async function countReadyTasks() {
+async function getReadyStreaks() {
   const r = await agent(
     `Run: bd ready\n` +
-    `From that output, count issues with type=task. Return count and their IDs.`,
-    { model: MODEL_HAIKU, label: 'count-ready', schema: READY_TASKS_SCHEMA }
+    `Filter to type=task issues only.\n` +
+    `For each task run: bd show <id> and look for a line "Model: <model-id>" in the description.\n` +
+    `If no Model line is found, default to "${MODEL_SONNET}".\n\n` +
+    `Group tasks into streaks by model. Within each streak, order tasks by priority (P0 first).\n` +
+    `Order streaks themselves by the highest priority task they contain (P0 first).\n\n` +
+    `Return totalCount (total ready tasks) and streaks array.`,
+    { model: MODEL_HAIKU, label: 'ready-streaks', schema: READY_STREAKS_SCHEMA }
   );
-  return r || { count: 0, ids: [] };
+  return r || { totalCount: 0, streaks: [] };
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
@@ -366,6 +382,14 @@ while (cycleCount < maxCycles) {
       `  - Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
       `  - Each task must be completable in one agent session (1-3 file changes max)\n` +
       `  - Every task needs clear acceptance criteria in its description\n` +
+      `  - Assign each task a model based on complexity and end the description with:\n` +
+      `    "Model: <model-id>" (on its own line, no trailing text)\n` +
+      `    Available models and when to use them:\n` +
+      `      ${MODEL_HAIKU}  -- mechanical work: rename, config tweak, move file, simple wiring\n` +
+      `      ${MODEL_SONNET} -- standard work: new function, test suite, API endpoint, refactor\n` +
+      `      ${MODEL_OPUS}   -- hard work: architecture, multi-file design, ambiguous requirements\n` +
+      `  - Group tasks so consecutive tasks in dependency order share a model where\n` +
+      `    possible -- this minimises model-switching overhead during execution\n` +
       (cycleCount > 1
         ? `This is cycle ${cycleCount}. Focus on open issues only.\n` +
           `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
@@ -422,56 +446,70 @@ while (cycleCount < maxCycles) {
 
   phase('Develop');
 
-  const MAX_DEV_ITER = 10;
+  const MAX_DEV_ITER = 20;
   let devIter = 0;
   let devFeedback = '';
 
   while (devIter < MAX_DEV_ITER) {
-    const ready = await countReadyTasks();
-    if (ready.count === 0) {
+    const streakResult = await getReadyStreaks();
+    if (streakResult.totalCount === 0) {
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
       break;
     }
-    log(`Ready tasks: ${ready.count} (${(ready.ids || []).join(', ')})`);
+    log(`Ready: ${streakResult.totalCount} task(s) across ${streakResult.streaks.length} model streak(s)`);
 
-    const doerLabel     = `doer-c${cycleCount}-i${devIter}`;
-    const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
+    // Dispatch one doer per model streak; collect all worked task IDs for the reviewer.
+    const workedIds = [];
+    let streakAbort = false;
 
-    const doerResult = await agent(
-      `Repo: ${repo}\nBranch: ${branch}\n\n` +
-      (devFeedback
-        ? `Reviewer feedback from the previous iteration (read feedback.md in ${repo} for full details):\n${devFeedback}\nAddress every finding before closing tasks.\n\n`
-        : '') +
-      `Run: bd ready\n` +
-      `Work the type=task issues that have no blockers. For each task:\n` +
-      `  - Run: bd update <id> --claim\n` +
-      `  - Implement the work described (code, tests, config -- whatever the task requires)\n` +
-      `  - Run: bd close <id> when the task is complete\n` +
-      `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
-      `Work all ready tasks then stop and return status "VERIFY".\n` +
-      `Always return VERIFY -- never return anything else.` +
-      tokenLogInstrVerify(doerLabel, MODEL_SONNET),
-      { model: MODEL_SONNET, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
-    );
+    for (const streak of streakResult.streaks) {
+      const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model.split('-').slice(-2, -1)[0] || streak.model}`;
+      log(`Streak: model=${streak.model} tasks=${streak.ids.join(', ')}`);
 
-    if (!doerResult) {
-      log(`Doer returned null on cycle ${cycleCount} dev iter ${devIter} -- aborting`);
-      abortReason = 'doer null';
-      break;
+      const doerResult = await agent(
+        `Repo: ${repo}\nBranch: ${branch}\n\n` +
+        (devFeedback
+          ? `Reviewer feedback from the previous iteration (read feedback.md in ${repo} for full details):\n${devFeedback}\nAddress every finding before closing tasks.\n\n`
+          : '') +
+        `Work ONLY these tasks (in order): ${streak.ids.join(', ')}\n` +
+        `Confirm each is still unblocked with: bd show <id>\n` +
+        `For each task:\n` +
+        `  - Run: bd update <id> --claim\n` +
+        `  - Implement the work described (code, tests, config -- whatever the task requires)\n` +
+        `  - Run: bd close <id> when the task is complete\n` +
+        `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
+        `Work all listed tasks then stop and return status "VERIFY".\n` +
+        `Always return VERIFY -- never return anything else.` +
+        tokenLogInstrVerify(doerLabel, streak.model),
+        { model: streak.model, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer' }
+      );
+
+      if (!doerResult) {
+        log(`Doer returned null (streak ${streak.model}) -- aborting`);
+        abortReason = 'doer null';
+        streakAbort = true;
+        break;
+      }
+      logTokens(doerLabel, streak.model, doerResult.tokens);
+      addTokens(doerResult.tokens);
+
+      if (doerResult.status !== 'VERIFY') {
+        log(`Unexpected doer status "${doerResult.status}" -- aborting`);
+        abortReason = 'unexpected doer status';
+        streakAbort = true;
+        break;
+      }
+      workedIds.push(...streak.ids);
     }
+
     devIter++;
-    logTokens(doerLabel, MODEL_SONNET, doerResult.tokens);
-    addTokens(doerResult.tokens);
+    if (streakAbort) break;
 
-    if (doerResult.status !== 'VERIFY') {
-      log(`Unexpected doer status "${doerResult.status}" -- aborting`);
-      abortReason = 'unexpected doer status';
-      break;
-    }
-
+    // One reviewer pass covering all streaks worked this iteration.
+    const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
     const review = await agent(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-      `Sprint epics: ${epicSummary}\nTasks worked this iteration: ${(ready.ids || []).join(', ')}\n\n` +
+      `Sprint epics: ${epicSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
       `Review ONLY the work done for the tasks listed above.\n` +
       `Run: bd show <id> for each task to read its acceptance criteria.\n` +
       `Run: git -C ${repo} diff ${base_branch}...${branch} to see the changes.\n` +
@@ -480,10 +518,10 @@ while (cycleCount < maxCycles) {
       `If a task needs rework, reopen it: bd update <id> --status=open\n` +
       `CHANGES NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
       `APPROVED means all committed work meets acceptance criteria.` +
-      tokenLogInstr(reviewerLabel, MODEL_SONNET),
-      { model: MODEL_SONNET, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
+      tokenLogInstr(reviewerLabel, MODEL_OPUS),
+      { model: MODEL_OPUS, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
     );
-    logTokens(reviewerLabel, MODEL_SONNET, review && review.tokens);
+    logTokens(reviewerLabel, MODEL_OPUS, review && review.tokens);
     addTokens(review && review.tokens);
     log(`Reviewer verdict: ${review && review.verdict || 'null'}`);
 
