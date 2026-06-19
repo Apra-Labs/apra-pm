@@ -221,14 +221,17 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
 }
 
 async function checkCycleState(epicIds) {
-  const epicList = epicIds.join(' ');
+  const showCmds = epicIds.map(id => `bd show ${id}`).join('\n');
+  const graphCmds = epicIds.map(id => `bd graph --compact ${id}`).join('\n');
   const r = await agent(
-    `Run: bd list --tree ${epicList}\n` +
+    `Run each of these to inspect the sprint epics and their full dependency subtrees:\n` +
+    `${showCmds}\n` +
+    `${graphCmds}\n` +
     `Run: bd list --status=in_progress\n\n` +
     `From those outputs answer:\n\n` +
     `planDone: true if ALL of the following hold --\n` +
-    `  - At least one type=feature issue exists as a child of the epics (${epicList})\n` +
-    `  - Every open feature has at least one type=task child\n` +
+    `  - At least one type=feature issue appears in the dependency graph of each epic\n` +
+    `  - Every open feature has at least one type=task in its dependency graph\n` +
     `  - Every task has a non-empty description (acceptance criteria present)\n` +
     `  Set false if any of these conditions are not met.\n\n` +
     `inProgressIds: list the IDs of ALL issues currently in_progress status.\n` +
@@ -352,9 +355,11 @@ while (cycleCount < maxCycles) {
       `Then build or complete the feature+task DAG -- create only what is missing:\n` +
       `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
       `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
-      `  - Create type=feature issues as children of each epic (bd dep add feature epic)\n` +
+      `  - Create type=feature issues as children of each epic: bd dep add <epic-id> <feature-id>\n` +
+      `    (epic depends on feature = feature must complete before epic closes)\n` +
       `  - Create type=task issues for each feature: implementation tasks AND integration\n` +
       `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
+      `  - Wire each feature to depend on its tasks: bd dep add <feature-id> <task-id>\n` +
       `  - Wire implementation task deps before test tasks: bd dep add test-task impl-task\n` +
       `    so test tasks are only unblocked after implementation is complete\n` +
       `  - Tasks that depend on other tasks: bd dep add child parent\n` +
@@ -380,8 +385,9 @@ while (cycleCount < maxCycles) {
     const planReview = await agent(
       `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n\n` +
       `Review the beads DAG for these epics ONLY: ${epicSummary}\n` +
-      `Run: bd list --tree ${epicIds.join(' ')} to inspect the sprint structure.\n` +
-      `Run: bd show <id> to inspect individual issues.\n` +
+      `Run: ${epicIds.map(id => `bd show ${id}`).join(' && ')} to inspect each epic.\n` +
+      `Run: ${epicIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
+      `Run: bd show <id> to inspect individual issues in depth.\n` +
       `Do NOT review or comment on issues outside these epics.\n\n` +
       `APPROVE if:\n` +
       `  - Every open feature has at least one implementation task and one [test] task\n` +
