@@ -211,13 +211,17 @@ async function countBeadsBlockers(thr, epics) {
 
 async function getReadyStreaks() {
   const r = await agent(
-    `Run: bd ready\n` +
-    `Filter to type=task issues only.\n` +
-    `For each task run: bd show <id> and look for a line "Model: <model-id>" in the description.\n` +
-    `If no Model line is found, default to "${MODEL_SONNET}".\n\n` +
-    `Group tasks into streaks by model. Within each streak, order tasks by priority (P0 first).\n` +
-    `Order streaks themselves by the highest priority task they contain (P0 first).\n\n` +
-    `Return totalCount (total ready tasks) and streaks array.`,
+    `Run these three commands to fetch ready tasks grouped by assigned model:\n` +
+    `  bd list --ready --type=task --metadata-field model=${MODEL_HAIKU} --json\n` +
+    `  bd list --ready --type=task --metadata-field model=${MODEL_SONNET} --json\n` +
+    `  bd list --ready --type=task --metadata-field model=${MODEL_OPUS} --json\n` +
+    `Also run: bd list --ready --type=task --json\n` +
+    `  Any task ID in that last list but absent from the three model lists has no model\n` +
+    `  assigned; default those to "${MODEL_SONNET}".\n\n` +
+    `Build the streaks array: one entry per non-empty model group.\n` +
+    `Within each streak order IDs by priority (P0 first).\n` +
+    `Order streaks by the highest priority task they contain (P0 first).\n` +
+    `totalCount = total number of ready tasks across all streaks.`,
     { model: MODEL_HAIKU, label: 'ready-streaks', schema: READY_STREAKS_SCHEMA }
   );
   return r || { totalCount: 0, streaks: [] };
@@ -382,8 +386,8 @@ while (cycleCount < maxCycles) {
       `  - Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
       `  - Each task must be completable in one agent session (1-3 file changes max)\n` +
       `  - Every task needs clear acceptance criteria in its description\n` +
-      `  - Assign each task a model based on complexity and end the description with:\n` +
-      `    "Model: <model-id>" (on its own line, no trailing text)\n` +
+      `  - Assign each task a model based on complexity -- after creating or updating each\n` +
+      `    task, run: bd update <id> --set-metadata model=<model-id>\n` +
       `    Available models and when to use them:\n` +
       `      ${MODEL_HAIKU}  -- mechanical work: rename, config tweak, move file, simple wiring\n` +
       `      ${MODEL_SONNET} -- standard work: new function, test suite, API endpoint, refactor\n` +
