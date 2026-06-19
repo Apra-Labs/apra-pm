@@ -370,22 +370,40 @@ while (cycleCount < maxCycles) {
       (planFeedback
         ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
         : '') +
-      `Run: bd list --tree ${epicIds.join(' ')} to inspect existing state first.\n` +
+      `Inspect existing state first:\n` +
+      `  ${epicIds.map(id => `bd show ${id} && bd graph --compact ${id}`).join('\n  ')}\n` +
       `Run: bd show <id> on any existing features/tasks to read their current descriptions.\n` +
       `Then build or complete the feature+task DAG -- create only what is missing:\n` +
       `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
       `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
-      `  - Create type=feature issues as children of each epic: bd dep add <epic-id> <feature-id>\n` +
-      `    (epic depends on feature = feature must complete before epic closes)\n` +
-      `  - Create type=task issues for each feature: implementation tasks AND integration\n` +
+      `\n` +
+      `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
+      `The correct wiring direction is: parents depend on children (children unblock first).\n` +
+      `\n` +
+      `  Step 1 -- wire epic -> feature (epic waits for features):\n` +
+      `    bd dep add <epic-id> <feature-id>\n` +
+      `    After this: "bd ready" will NOT show the epic (it's waiting). Features show as ready.\n` +
+      `\n` +
+      `  Step 2 -- wire feature -> tasks (feature waits for tasks):\n` +
+      `    bd dep add <feature-id> <impl-task-id>\n` +
+      `    bd dep add <feature-id> <test-task-id>\n` +
+      `    After this: "bd ready" will show impl-task (the leaf). Feature is now blocked.\n` +
+      `\n` +
+      `  Step 3 -- wire test after impl:\n` +
+      `    bd dep add <test-task-id> <impl-task-id>\n` +
+      `    After this: "bd ready" shows only impl-task. test-task unblocks once impl-task closes.\n` +
+      `\n` +
+      `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT features or epics.\n` +
+      `  If features appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
+      `\n` +
+      `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
+      `\n` +
+      `  Create type=feature issues as children of each epic (use bd dep add epic feature per above).\n` +
+      `  Create type=task issues for each feature: implementation tasks AND integration\n` +
       `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
-      `  - Wire each feature to depend on its tasks: bd dep add <feature-id> <task-id>\n` +
-      `  - Wire implementation task deps before test tasks: bd dep add test-task impl-task\n` +
-      `    so test tasks are only unblocked after implementation is complete\n` +
-      `  - Tasks that depend on other tasks: bd dep add child parent\n` +
-      `  - Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
-      `  - Each task must be completable in one agent session (1-3 file changes max)\n` +
-      `  - Every task needs clear acceptance criteria in its description\n` +
+      `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
+      `  Each task must be completable in one agent session (1-3 file changes max)\n` +
+      `  Every task needs clear acceptance criteria in its description\n` +
       `  - Assign each task a model based on complexity -- after creating or updating each\n` +
       `    task, run: bd update <id> --set-metadata model=<model-id>\n` +
       `    Available models and when to use them:\n` +
@@ -416,14 +434,20 @@ while (cycleCount < maxCycles) {
       `Run: ${epicIds.map(id => `bd show ${id}`).join(' && ')} to inspect each epic.\n` +
       `Run: ${epicIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
       `Run: bd show <id> to inspect individual issues in depth.\n` +
+      `Run: bd ready -- this is your FIRST correctness check.\n` +
       `Do NOT review or comment on issues outside these epics.\n\n` +
-      `APPROVE if:\n` +
-      `  - Every open feature has at least one implementation task and one [test] task\n` +
-      `  - Every task description has clear acceptance criteria\n` +
-      `  - No task is so large it requires more than ~3 file changes\n` +
-      `  - Dependencies are wired correctly (test tasks blocked by impl tasks)\n` +
-      `  - No new scope has been added beyond epics and open bugs/enhancements\n\n` +
-      `CHANGES NEEDED if any of the above fail. Notes must be specific and actionable.` +
+      `APPROVE only if ALL of the following pass:\n` +
+      `  1. "bd ready" returns only type=task issues. If any feature or epic appears in "bd ready",\n` +
+      `     the dependencies are wired backwards (tasks should block features, not the reverse).\n` +
+      `     This is a hard CHANGES NEEDED -- list every misplaced issue by ID.\n` +
+      `  2. Every open feature has at least one implementation task and one [test] task\n` +
+      `  3. Every task description has clear acceptance criteria\n` +
+      `  4. No task is so large it requires more than ~3 file changes\n` +
+      `  5. No task appears in more than one feature's dependency graph (check bd graph output)\n` +
+      `  6. Every task has model metadata set (check bd show output for METADATA section)\n` +
+      `  7. No new scope has been added beyond epics and open bugs/enhancements\n\n` +
+      `CHANGES NEEDED if any of the above fail. Notes must be specific: include issue IDs and\n` +
+      `exact "bd dep add" commands to fix each dep direction problem.` +
       tokenLogInstr(planReviewerLabel, MODEL_SONNET),
       { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: REVIEW_SCHEMA, agentType: 'plan-reviewer' }
     );
