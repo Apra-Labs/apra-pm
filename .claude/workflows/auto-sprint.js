@@ -674,10 +674,13 @@ while (cycleCount < maxCycles) {
   const cycleTotal = cycleLedger.reduce((s, e) => s + e.costUsd, 0);
   log(`Cycle ${cycleCount} cost: $${cycleTotal.toFixed(4)} output across ${cycleLedger.length} dispatches`);
   await dispatch(
-    `Append the following lines to sprint-log.jsonl in ${repo} (create the file if it does not exist):\n\n` +
+    `Append the following lines to sprint-log.jsonl in ${repo} (create the file if it does not exist, path: ${repo}/sprint-log.jsonl):\n\n` +
     `${jsonlLines}\n\n` +
-    `Use: echo '<line>' >> ${repo}/sprint-log.jsonl for each line, or write the file if creating.\n` +
-    `Do not modify any other file. Confirm when done.`,
+    `Then commit and push the file:\n` +
+    `  git -C ${repo} add sprint-log.jsonl\n` +
+    `  git -C ${repo} -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-log cycle ${cycleCount}"\n` +
+    `  git -C ${repo} push origin ${branch}\n` +
+    `Do not modify any other file.`,
     { model: MODEL_HAIKU, label: `log-flush-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop',
       context: `flushing ${cycleLedger.length} dispatch records` }
   );
@@ -794,4 +797,29 @@ await dispatch(
   { model: MODEL_SONNET, label: 'harvest-pr', phase: 'Harvest' }
 );
 
-return { cycles: cycleCount, epicDone, goal, harvest: 'ok' };
+// ------------------------------------------------------------------ COST SUMMARY
+// Pure JS -- no agent call. Groups dispatchLedger by role (derived from label prefix)
+// and by model, prints a table, and reports total sprint cost.
+
+const roleOf = label => label.replace(/-c\d.*$/, '');  // "doer-c1-i0-haiku" -> "doer"
+
+const byRole = {};
+for (const e of dispatchLedger) {
+  const role = roleOf(e.label);
+  if (!byRole[role]) byRole[role] = { costUsd: 0, outTokens: 0, calls: 0 };
+  byRole[role].costUsd    += e.costUsd;
+  byRole[role].outTokens  += e.outTokens;
+  byRole[role].calls      += 1;
+}
+
+const sprintTotal = dispatchLedger.reduce((s, e) => s + e.costUsd, 0);
+
+log('\n=== Sprint cost summary (output tokens only) ===');
+for (const [role, s] of Object.entries(byRole).sort((a, b) => b[1].costUsd - a[1].costUsd)) {
+  log(`  ${role.padEnd(20)} $${s.costUsd.toFixed(4).padStart(8)}  ${String(s.outTokens).padStart(8)} tok  ${s.calls} call(s)`);
+}
+log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
+log(`  (input token cost not included -- see sprint-log.jsonl for per-dispatch detail)`);
+log('================================================\n');
+
+return { cycles: cycleCount, epicDone, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
