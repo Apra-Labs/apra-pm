@@ -509,6 +509,11 @@ while (cycleCount < maxCycles) {
     devIter++;
     if (streakAbort) break;
 
+    // Reviewer model matches the highest-tier model used across all streaks:
+    // any opus streak -> opus; otherwise sonnet (haiku work reviewed by sonnet minimum).
+    const usedModels = streakResult.streaks.map(s => s.model);
+    const reviewerModel = usedModels.includes(MODEL_OPUS) ? MODEL_OPUS : MODEL_SONNET;
+
     // One reviewer pass covering all streaks worked this iteration.
     const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
     const review = await agent(
@@ -522,10 +527,10 @@ while (cycleCount < maxCycles) {
       `If a task needs rework, reopen it: bd update <id> --status=open\n` +
       `CHANGES NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
       `APPROVED means all committed work meets acceptance criteria.` +
-      tokenLogInstr(reviewerLabel, MODEL_OPUS),
-      { model: MODEL_OPUS, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
+      tokenLogInstr(reviewerLabel, reviewerModel),
+      { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
     );
-    logTokens(reviewerLabel, MODEL_OPUS, review && review.tokens);
+    logTokens(reviewerLabel, reviewerModel, review && review.tokens);
     addTokens(review && review.tokens);
     log(`Reviewer verdict: ${review && review.verdict || 'null'}`);
 
