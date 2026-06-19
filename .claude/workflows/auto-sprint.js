@@ -170,10 +170,24 @@ function approved(review) {
   return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
 }
 
+// Real output-token tracking via differential budget.spent() snapshots.
+// budget.spent() is the only actual usage the workflow harness exposes;
+// it counts output tokens across the whole workflow run.
+let cycleOutputTokens = 0;
+
+async function dispatch(prompt, opts) {
+  const before = budget.spent();
+  const result = await dispatch(prompt, opts);
+  const out = budget.spent() - before;
+  cycleOutputTokens += out;
+  if (out > 0) log(`tokens ${opts.label || '?'} (${opts.model || '?'}): output=${out}`);
+  return result;
+}
+
 
 async function countBeadsBlockers(thr, epics) {
   const epicList = epics.join(' ');
-  const r = await agent(
+  const r = await dispatch(
     `Run: bd list --status=open\n` +
     `From that output, identify all issues that are either:\n` +
     `  (a) one of these epics: ${epicList}, or a descendant of them (run bd show <id> to check), or\n` +
@@ -186,7 +200,7 @@ async function countBeadsBlockers(thr, epics) {
 }
 
 async function getReadyStreaks() {
-  const r = await agent(
+  const r = await dispatch(
     `Run these three commands to fetch ready tasks grouped by assigned model:\n` +
     `  bd list --ready --type=task --metadata-field model=${MODEL_HAIKU} --json\n` +
     `  bd list --ready --type=task --metadata-field model=${MODEL_SONNET} --json\n` +
@@ -204,7 +218,7 @@ async function getReadyStreaks() {
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
-  await agent(
+  await dispatch(
     `Repo: ${repo}\nBranch: ${branch}\n\n` +
     `Write the following reviewer feedback to feedback.md (overwrite if it exists):\n\n` +
     `${notes}\n\n` +
@@ -219,7 +233,7 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
 async function checkCycleState(epicIds) {
   const showCmds = epicIds.map(id => `bd show ${id}`).join('\n');
   const graphCmds = epicIds.map(id => `bd graph --compact ${id}`).join('\n');
-  const r = await agent(
+  const r = await dispatch(
     `Run each of these to inspect the sprint epics and their full dependency subtrees:\n` +
     `${showCmds}\n` +
     `${graphCmds}\n` +
@@ -241,7 +255,7 @@ async function checkCycleState(epicIds) {
 
 phase('Plan');
 
-const setup = await agent(
+const setup = await dispatch(
   `Sprint workspace setup.\n\n` +
   `Step 1: Get repo root.\n` +
   `  Run: git rev-parse --show-toplevel\n\n` +
@@ -295,6 +309,7 @@ let abortReason  = '';
 
 while (cycleCount < maxCycles) {
   cycleCount++;
+  cycleOutputTokens = 0;
   log(`\n=== Cycle ${cycleCount}/${maxCycles} | goal: ${goal} ===`);
 
   // ---------------------------------------------------------------- RESUME CHECK
@@ -308,7 +323,7 @@ while (cycleCount < maxCycles) {
   if (cycleState.inProgressIds.length > 0) {
     log(`Resetting ${cycleState.inProgressIds.length} orphaned in_progress task(s) to open`);
     for (const id of cycleState.inProgressIds) {
-      await agent(
+      await dispatch(
         `Run: bd update ${id} --status=open`,
         { model: MODEL_HAIKU, label: `reset-${id}`, phase: 'Plan' }
       );
@@ -328,7 +343,7 @@ while (cycleCount < maxCycles) {
   for (let pi = 0; pi < MAX_PLAN_ITER && !planApproved; pi++) {
     const plannerLabel = `planner-c${cycleCount}-r${pi}`;
 
-    const plannerResult = await agent(
+    const plannerResult = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
       `Sprint epics: ${epicSummary}\n` +
       (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
@@ -393,7 +408,7 @@ while (cycleCount < maxCycles) {
     }
 
     const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
-    const planReview = await agent(
+    const planReview = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n\n` +
       `Review the beads DAG for these epics ONLY: ${epicSummary}\n` +
       `Run: ${epicIds.map(id => `bd show ${id}`).join(' && ')} to inspect each epic.\n` +
@@ -456,7 +471,7 @@ while (cycleCount < maxCycles) {
       const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model.split('-').slice(-2, -1)[0] || streak.model}`;
       log(`Streak: model=${streak.model} tasks=${streak.ids.join(', ')}`);
 
-      const doerResult = await agent(
+      const doerResult = await dispatch(
         `Repo: ${repo}\nBranch: ${branch}\n\n` +
         (devFeedback
           ? `Reviewer feedback from the previous iteration (read feedback.md in ${repo} for full details):\n${devFeedback}\nAddress every finding before closing tasks.\n\n`
@@ -499,7 +514,7 @@ while (cycleCount < maxCycles) {
 
     // One reviewer pass covering all streaks worked this iteration.
     const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
-    const review = await agent(
+    const review = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
       `Sprint epics: ${epicSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
       `Review ONLY the work done for the tasks listed above.\n` +
@@ -527,12 +542,12 @@ while (cycleCount < maxCycles) {
   if (abortReason) break;
 
   // Push branch so CI can trigger, then record HEAD SHA.
-  await agent(
+  await dispatch(
     `Run: git push origin ${branch}\nIf the branch does not yet exist on origin, use: git push -u origin ${branch}`,
     { model: MODEL_HAIKU, label: `push-c${cycleCount}`, phase: 'Develop' }
   );
 
-  const shaAgent = await agent(
+  const shaAgent = await dispatch(
     `Run: git rev-parse HEAD\nReturn the full SHA string.`,
     { model: MODEL_HAIKU, label: `head-sha-c${cycleCount}`, phase: 'Develop',
       schema: { type: 'object', required: ['sha'], properties: { sha: { type: 'string' } } } }
@@ -547,7 +562,7 @@ while (cycleCount < maxCycles) {
 
     // -- Deploy --
     const deployLabel = `deployer-c${cycleCount}`;
-    const deployResult = await agent(
+    const deployResult = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n\n` +
       `Follow the integration test playbook and deploy.md:\n` +
       (cycleCount === 1
@@ -567,7 +582,7 @@ while (cycleCount < maxCycles) {
       log(`Deploy failed on cycle ${cycleCount}: ${msg.slice(0, 200)}`);
       log('Skipping integration tests this cycle -- teardown and continue');
       // Teardown before next cycle
-      await agent(
+      await dispatch(
         `Run the Teardown section of integ-test-playbook.md to clean up the test environment.`,
         { model: MODEL_SONNET, label: `teardown-c${cycleCount}-fail`, phase: 'Test', agentType: 'deployer' }
       );
@@ -575,7 +590,7 @@ while (cycleCount < maxCycles) {
       // -- Integration test run --
       const integLabel = `integ-runner-c${cycleCount}`;
 
-      const integResult = await agent(
+      const integResult = await dispatch(
         `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
         `Sprint epics: ${epicSummary}\n\n` +
         `Run: bd list --type=feature --status=open\n` +
@@ -601,7 +616,7 @@ while (cycleCount < maxCycles) {
       }
 
       // -- Teardown --
-      await agent(
+      await dispatch(
         `Run the Teardown section of integ-test-playbook.md to fully clean up the test environment.`,
         { model: MODEL_SONNET, label: `teardown-c${cycleCount}`, phase: 'Test', agentType: 'deployer' }
       );
@@ -626,9 +641,10 @@ while (cycleCount < maxCycles) {
   }
 
   // Record cycle summary in beads memory.
-  await agent(
+  await dispatch(
     `Run: bd remember "auto-sprint cycle ${cycleCount}: ` +
     `${blockers.count} open P<=${threshold} issues, ` +
+    `output_tokens=${cycleOutputTokens}, ` +
     `open: ${currentOpenIds.join(' ') || 'none'}"`,
     { model: MODEL_HAIKU, label: `memo-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop' }
   );
@@ -648,7 +664,7 @@ phase('Harvest');
 
 let ciResult = null;
 if (headSha) {
-  ciResult = await agent(
+  ciResult = await dispatch(
     `Check CI status for commit ${headSha} on branch ${branch}.\n` +
     `Run: gh run list --branch ${branch} --limit 3 --json status,conclusion,databaseId\n` +
     `If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n` +
@@ -663,7 +679,7 @@ if (headSha) {
     log(`CI status: ${ciResult.status}`);
     if (ciResult.status === 'not_configured') {
       log('CI not configured -- creating beads task');
-      await agent(
+      await dispatch(
         `Run: bd create --title="Add CI pipeline to project" ` +
         `--description="The auto-sprint workflow found no CI runs for branch ${branch}. ` +
         `CI is required for the sprint exit gate. ` +
@@ -683,7 +699,7 @@ if (headSha) {
 // ------------------------------------------------------------------ FINAL REVIEW
 
 const finalReviewLabel = 'final-reviewer';
-const finalReview = await agent(
+const finalReview = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
   `Sprint epics: ${epicSummary}\nGoal: ${goal}\n` +
   (abortReason ? `Sprint ended early: ${abortReason}. Review what was completed.\n` : '') +
@@ -707,7 +723,7 @@ if (!approved(finalReview)) {
 // ------------------------------------------------------------------ HARVEST
 
 const harvestLabel = 'harvester';
-const harvestResult = await agent(
+const harvestResult = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
   `Sprint epics: ${epicSummary}\nCycles completed: ${cycleCount}\nGoal met: ${epicDone}\n\n` +
   `The sprint is complete. Harvest the sprint artefacts:\n` +
@@ -729,7 +745,7 @@ if (!harvestResult || harvestResult.status !== 'OK') {
 
 // ------------------------------------------------------------------ PR
 
-await agent(
+await dispatch(
   `In repo ${repo} on branch ${branch}, create a GitHub pull request targeting ${base_branch}.\n` +
   `Command: gh pr create --base ${base_branch} --head ${branch}\n` +
   `Title: summarise what was implemented across ${cycleCount} cycle(s).\n` +
