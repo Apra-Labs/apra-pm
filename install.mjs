@@ -283,7 +283,9 @@ function main() {
   console.log('pm installed.');
   console.log('');
   if (args.llm === 'claude') {
-    console.log('  Claude Code: /auto-sprint {"branch":"feat/my-branch","issues":["BD-1"],"goal":"P1/P2"}');
+    console.log('  Claude Code: /auto-sprint BD-1              (uses current branch)');
+    console.log('               /auto-sprint BD-1 BD-2         (multiple epics)');
+    console.log('               /auto-sprint {"issues":["BD-1"],"branch":"feat/x","goal":"P1"}');
     console.log('  Other sessions: /pm  (provider-agnostic skill)');
   } else {
     console.log('  Invoke the "pm" skill to drive a sprint.');

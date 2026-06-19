@@ -33,17 +33,30 @@ export const meta = {
 //   requirementsFile -- optional context file for the planner          (default: none)
 //   base_branch      -- PR target                                      (default: "main")
 
+// Args can be any of:
+//   "BD-1"                          bare issue ID
+//   "BD-1 BD-2"                     space/comma-separated issue IDs
+//   ["BD-1","BD-2"]                 JSON array of issue IDs
+//   {"issues":["BD-1"],"goal":"P1"} JSON object (full control)
+//
+// branch always defaults to the current git branch when omitted.
 let opts = {};
 if (args) {
-  try {
-    const parsed = JSON.parse(args);
-    opts = (parsed && typeof parsed === 'object') ? parsed : { branch: String(parsed) };
-  } catch (e) {
-    opts = { branch: String(args) };
+  let parsed = null;
+  try { parsed = JSON.parse(args); } catch {}
+
+  if (Array.isArray(parsed)) {
+    opts = { issues: parsed };
+  } else if (parsed && typeof parsed === 'object') {
+    opts = parsed;
+  } else {
+    // bare string: treat as space/comma-separated issue IDs
+    const ids = String(args).split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+    opts = { issues: ids };
   }
 }
 
-const branch           = opts.branch           || '';
+const branch           = opts.branch           || '';   // empty = auto-detect in setup
 const rawIssues        = opts.issues            || [];
 const epicIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
 const goal             = opts.goal             || 'P1/P2';
@@ -51,12 +64,8 @@ const maxCycles        = Number(opts.max_cycles) || 5;
 const requirementsFile = opts.requirementsFile  || '';
 const base_branch      = opts.base_branch       || 'main';
 
-if (!branch) {
-  log('ERROR: branch is required');
-  return { error: 'missing branch' };
-}
 if (epicIds.length === 0) {
-  log('ERROR: at least one beads issue ID is required in args.issues');
+  log('ERROR: at least one beads issue ID is required (pass as arg: /auto-sprint BD-1)');
   return { error: 'missing issues' };
 }
 
@@ -291,11 +300,15 @@ const setup = await dispatch(
   `Sprint workspace setup.\n\n` +
   `Step 1: Get repo root.\n` +
   `  Run: git rev-parse --show-toplevel\n\n` +
-  `Step 2: Assert sprint branch "${branch}".\n` +
-  `  - Already on "${branch}": do nothing.\n` +
-  `  - Exists locally: git checkout "${branch}"\n` +
-  `  - Exists on origin: git checkout --track origin/"${branch}"\n` +
-  `  - Otherwise: git checkout -b "${branch}"\n\n` +
+  (branch
+    ? `Step 2: Assert sprint branch "${branch}".\n` +
+      `  - Already on "${branch}": do nothing.\n` +
+      `  - Exists locally: git checkout "${branch}"\n` +
+      `  - Exists on origin: git checkout --track origin/"${branch}"\n` +
+      `  - Otherwise: git checkout -b "${branch}"\n\n`
+    : `Step 2: Detect current branch.\n` +
+      `  Run: git rev-parse --abbrev-ref HEAD\n` +
+      `  Use this as the sprint branch. Do NOT switch or create any branch.\n\n`) +
   `Step 3: Check for required project files.\n` +
   `  Run: test -f deploy.md && echo YES || echo NO   -> deployMdExists\n` +
   `  Run: test -f integ-test-playbook.md && echo YES || echo NO  -> playbookExists\n\n` +
