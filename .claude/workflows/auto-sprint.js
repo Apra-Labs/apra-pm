@@ -143,6 +143,19 @@ const INTEG_RUN_SCHEMA = {
   },
 };
 
+// Returned by the resume-check agent at the top of every cycle.
+// planDone   -- true if the epic already has features AND every feature has at
+//               least one task with non-empty acceptance criteria; skip plan loop.
+// inProgressIds -- tasks currently in_progress; reset to open before the develop
+//                  loop so a crashed doer never orphans work forever.
+const CYCLE_STATE_SCHEMA = {
+  type: 'object', required: ['planDone', 'inProgressIds'],
+  properties: {
+    planDone:       { type: 'boolean' },
+    inProgressIds:  { type: 'array', items: { type: 'string' } },
+  },
+};
+
 // ------------------------------------------------------------------ helpers
 
 function approved(review) {
@@ -205,6 +218,24 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
     `  git -C ${repo} push origin ${branch}`,
     { model: MODEL_HAIKU, label: `feedback-commit-${label}`, phase }
   );
+}
+
+async function checkCycleState(epicIds) {
+  const epicList = epicIds.join(' ');
+  const r = await agent(
+    `Run: bd list --tree ${epicList}\n` +
+    `Run: bd list --status=in_progress\n\n` +
+    `From those outputs answer:\n\n` +
+    `planDone: true if ALL of the following hold --\n` +
+    `  - At least one type=feature issue exists as a child of the epics (${epicList})\n` +
+    `  - Every open feature has at least one type=task child\n` +
+    `  - Every task has a non-empty description (acceptance criteria present)\n` +
+    `  Set false if any of these conditions are not met.\n\n` +
+    `inProgressIds: list the IDs of ALL issues currently in_progress status.\n` +
+    `  These are orphaned from a previous crashed run and must be reset before work resumes.`,
+    { model: MODEL_HAIKU, label: 'cycle-state', schema: CYCLE_STATE_SCHEMA }
+  );
+  return r || { planDone: false, inProgressIds: [] };
 }
 
 // ------------------------------------------------------------------ SETUP
@@ -277,13 +308,33 @@ while (cycleCount < maxCycles) {
   cycleOutputTokens = 0;
   log(`\n=== Cycle ${cycleCount}/${maxCycles} | goal: ${goal} ===`);
 
-  // ---------------------------------------------------------------- PLAN
+  // ---------------------------------------------------------------- RESUME CHECK
 
   phase('Plan');
 
-  let planApproved = false;
+  const cycleState = await checkCycleState(epicIds);
+  log(`Cycle state: planDone=${cycleState.planDone} inProgress=[${cycleState.inProgressIds.join(', ')}]`);
+
+  // Reset any tasks orphaned in_progress from a previous crashed run.
+  if (cycleState.inProgressIds.length > 0) {
+    log(`Resetting ${cycleState.inProgressIds.length} orphaned in_progress task(s) to open`);
+    for (const id of cycleState.inProgressIds) {
+      await agent(
+        `Run: bd update ${id} --status=open`,
+        { model: MODEL_HAIKU, label: `reset-${id}`, phase: 'Plan' }
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------- PLAN
+
+  let planApproved = cycleState.planDone;
   let planFeedback = '';
   const MAX_PLAN_ITER = 3;
+
+  if (planApproved) {
+    log(`Plan already complete -- skipping plan loop for cycle ${cycleCount}`);
+  }
 
   for (let pi = 0; pi < MAX_PLAN_ITER && !planApproved; pi++) {
     const plannerLabel = `planner-c${cycleCount}-r${pi}`;
@@ -296,25 +347,25 @@ while (cycleCount < maxCycles) {
       (planFeedback
         ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
         : '') +
-      (cycleCount === 1
-        ? `This is cycle 1. Read the sprint epics with: bd show ${epicIds.join(' ')}\n` +
-          `Create a feature+task DAG in beads for each epic:\n` +
-          `  - Create type=feature issues as children of each epic (bd dep add feature epic)\n` +
-          `  - Create type=task issues for each feature: implementation tasks AND integration\n` +
-          `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
-          `  - Wire implementation task deps before test tasks: bd dep add test-task impl-task\n` +
-          `    so test tasks are only unblocked after implementation is complete\n` +
-          `  - Tasks that depend on other tasks: bd dep add child parent\n` +
-          `  - Assign priority: features P1/P2, tasks P2/P3\n` +
-          `  - Each task must be completable in one agent session (1-3 file changes max)\n` +
-          `  - Every task needs clear acceptance criteria in its description\n`
-        : `This is cycle ${cycleCount}. Focus on open issues.\n` +
-          `Run: bd list --status=open\n` +
-          `For each open feature or bug, ensure it has sufficient implementation tasks\n` +
-          `AND test development tasks broken into small chunks.\n` +
-          `Create missing tasks. Update descriptions that lack acceptance criteria.\n` +
+      `Run: bd list --tree ${epicIds.join(' ')} to inspect existing state first.\n` +
+      `Run: bd show <id> on any existing features/tasks to read their current descriptions.\n` +
+      `Then build or complete the feature+task DAG -- create only what is missing:\n` +
+      `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
+      `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
+      `  - Create type=feature issues as children of each epic (bd dep add feature epic)\n` +
+      `  - Create type=task issues for each feature: implementation tasks AND integration\n` +
+      `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
+      `  - Wire implementation task deps before test tasks: bd dep add test-task impl-task\n` +
+      `    so test tasks are only unblocked after implementation is complete\n` +
+      `  - Tasks that depend on other tasks: bd dep add child parent\n` +
+      `  - Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
+      `  - Each task must be completable in one agent session (1-3 file changes max)\n` +
+      `  - Every task needs clear acceptance criteria in its description\n` +
+      (cycleCount > 1
+        ? `This is cycle ${cycleCount}. Focus on open issues only.\n` +
           `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
-          `Do NOT re-create tasks that are already closed.\n`) +
+          `Do NOT re-create tasks that are already closed.\n`
+        : '') +
       `Confirm with any text when done.` +
       tokenLogInstr(plannerLabel, MODEL_OPUS),
       { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner' }
