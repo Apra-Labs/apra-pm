@@ -644,7 +644,7 @@ const setup = await dispatch(
   `  If sprint-logs/calibration.json exists in the repo root:\n` +
   `    Read it and return its contents as the "calibration" field.\n` +
   `  If it does NOT exist (first run):\n` +
-  `    Create the sprint-logs/ directory: mkdir -p "${repo}/sprint-logs"\n` +
+  `    Create the sprint-logs/ directory: mkdir -p sprint-logs\n` +
   `    Write the following JSON exactly to sprint-logs/calibration.json:\n` +
   JSON.stringify(DEFAULT_CALIBRATION, null, 2) + `\n` +
   `    Return the same content as the "calibration" field.\n\n` +
