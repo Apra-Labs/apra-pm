@@ -240,12 +240,16 @@ let OUTPUT_PRICE_PER_M = {
 // agent writes this to sprint-logs/calibration.json; subsequent runs read that file.
 // To change prices or buckets: update this object -- the file is regenerated next run.
 const DEFAULT_CALIBRATION = {
+  _doc: 'Sprint cost calibration. All estimation constants live here -- nothing is hardcoded in agents. Fields named _doc are documentation strings; skip them when reading values. The historical section is written automatically by the harvester after each sprint; do not edit it manually.',
+  schema_version: 1,
   model_prices_per_1m_output_tokens: {
+    _doc: 'USD per 1M output tokens. Source: Anthropic published pricing 2026-06-04. Update when pricing changes. This file is the single source of truth -- DEFAULT_CALIBRATION in auto-sprint.js is only used to bootstrap this file on first run.',
     [MODEL_HAIKU]:   5.00,
     [MODEL_SONNET]: 15.00,
     [MODEL_OPUS]:   25.00,
   },
   role_models: {
+    _doc: "Fixed model per workflow role. 'doer' and 'reviewer' are NOT here -- the planner sets model per task in beads metadata; reviewer escalates to max(task_model, sonnet). Change an entry here to reroute a role to a different model tier.",
     'setup':             MODEL_HAIKU,
     'planner':           MODEL_OPUS,
     'plan-reviewer':     MODEL_SONNET,
@@ -257,15 +261,30 @@ const DEFAULT_CALIBRATION = {
     'check-blockers':    MODEL_HAIKU,
     'ready-streaks':     MODEL_HAIKU,
   },
-  doer_model_fallback:   { model: MODEL_SONNET },
-  complexity_buckets: {
-    S: { doer_tokens:  600 },
-    M: { doer_tokens: 1400 },
-    L: { doer_tokens: 2800 },
+  doer_model_fallback: {
+    _doc: 'Model assumed for doer cost estimation when a task has no model metadata in beads. In practice the planner always sets model metadata -- this is a safety net only.',
+    model: MODEL_SONNET,
   },
-  reviewer_ratio:        { value: 0.4 },
-  cycle_assumptions:     { optimistic: 1.0, expected: 1.5, pessimistic: 2.5 },
+  reviewer_model_rule: {
+    _doc: 'Reviewer model is max(doer_task_model, minimum). If the doer used opus, reviewer uses opus; otherwise reviewer uses sonnet. This mirrors the reviewerModel selection in auto-sprint.js.',
+    minimum: MODEL_SONNET,
+  },
+  complexity_buckets: {
+    _doc: 'Estimated doer output tokens per task by complexity bucket S/M/L. Plan-reviewer assigns a bucket to each task by reading its description. historical.bucket_avg_tokens overrides these defaults once enough sprint data has been collected.',
+    S: { _doc: 'Small: 1 file, narrow scoped change -- rename, config key, simple wiring, pure boilerplate', doer_tokens:  600 },
+    M: { _doc: 'Medium: 2-3 files, moderate logic -- new API endpoint, test suite, small focused refactor',  doer_tokens: 1400 },
+    L: { _doc: 'Large: 3+ files or non-trivial design -- new auth flow, data migration, cross-cutting refactor', doer_tokens: 2800 },
+  },
+  reviewer_ratio: {
+    _doc: 'Reviewer estimated output tokens as a fraction of doer tokens for the same task. 0.4 means reviewer uses ~40% as many output tokens as the doer. Overridden by historical.reviewer_ratio_avg when available.',
+    value: 0.4,
+  },
+  cycle_assumptions: {
+    _doc: "Expected number of dev/review cycles. Per-task cost is multiplied by these to produce sprint-level cost scenarios. Update 'expected' if your team consistently lands at a different cycle count.",
+    optimistic: 1.0, expected: 1.5, pessimistic: 2.5,
+  },
   fixed_overhead_tokens: {
+    _doc: "Estimated output tokens for agents that run once per sprint regardless of task count. 'log_flush_per_cycle' is multiplied by the expected cycle count. Keys use underscores; the role lookup strips underscores to match role_models keys.",
     setup:               200,
     planner:            2000,
     plan_reviewer:      1500,
@@ -273,13 +292,18 @@ const DEFAULT_CALIBRATION = {
     ci_watcher:          300,
     log_flush_per_cycle: 100,
   },
-  input_cost_multiplier: { value: 4.0 },
+  input_cost_multiplier: {
+    _doc: 'Multiply output-only USD estimate by this to approximate true cost (input + output). 4.0 is conservative for long-context agents. Replace with an empirical ratio once the workflow harness exposes input token counts.',
+    value: 4.0,
+  },
   outlier_thresholds: {
+    _doc: 'Percentage deviation bands used to classify estimation accuracy in the sprint analysis report.',
     notable_pct:              50,
     outlier_pct:             200,
     calibration_failure_pct: 500,
   },
   historical: {
+    _doc: 'Written by harvester after each sprint. Contains actual per-role output token averages from sprint-log JSONL files. Used by auto-sprint.js computeSprintQuote() to improve future estimates. Do not edit manually.',
     max_sprints_in_sample: 5,
     sprints_sampled:       0,
     last_updated:          null,
@@ -424,7 +448,7 @@ function computeSprintAnalysis(quote, logEntries, calibration, actualCycles) {
   ];
 
   const header =
-    `| Role       | Est tokens | Act tokens |   D%%  | Est USD  | Act USD  |\n` +
+    `| Role       | Est tokens | Act tokens |   D%   | Est USD  | Act USD  |\n` +
     `|------------|------------|------------|-------|----------|----------|\n`;
   const body = rows.map(([role, et, at, eu, au]) =>
     `| ${role.padEnd(10)} | ${fmtN(et).padStart(10)} | ${fmtN(at).padStart(10)} | ${pct(et, at).padStart(5)} | ${fmtU(eu).padStart(8)} | ${fmtU(au).padStart(8)} |`

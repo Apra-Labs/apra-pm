@@ -187,7 +187,7 @@ test('computeSprintAnalysis: labels without cycle suffix are grouped to role', (
 
 const SAMPLE_ANALYSIS = {
   actualCycles: 2,
-  totEstUsd: 0.05,
+  totEstOutputUsd: 0.05,
   totActUsd: 0.06,
   byRole: {
     doer:      { tokens: 2300, costUsd: 0.0345, dispatches: 2 },
