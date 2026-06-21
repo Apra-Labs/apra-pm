@@ -13,11 +13,20 @@ this doc and the skill itself otherwise stand on their own.
 
 ## What pm is
 
-One orchestrator session drives a project's development by dispatching four
-subagents -- `planner`, `plan-reviewer`, `doer`, `reviewer` -- through the
-plan-review and doer-review loops to APPROVED and a PR. The orchestrator and all
-four agents run in one session under a single provider, sharing the local
-filesystem. The orchestrator never writes code.
+The repo ships two surfaces that share the same eight agent definitions:
+
+- **pm skill** -- one orchestrator session dispatches `planner`, `plan-reviewer`,
+  `doer`, and `reviewer` (plus optionally `deployer` and `harvester`) via natural
+  language from any provider. State lives in git files (`PLAN.md`, `progress.json`,
+  `feedback.md`) and beads. Designed for provider-agnostic, interactive use.
+
+- **auto-sprint workflow** -- a deterministic JavaScript loop that drives all eight
+  agents in fixed order until a beads-based quality goal is met. State lives
+  entirely in beads (no PLAN.md or progress.json); all routing logic is in the
+  workflow script. Claude Code only.
+
+This document describes the design intent behind the pm skill. For auto-sprint,
+see `docs/sprint-workflow.md`.
 
 ## State model -- git and beads
 
@@ -64,10 +73,12 @@ end.
 
 The planner assigns each task the exact model to run it on -- a weaker, faster model
 for mechanical work, the strongest for high-ambiguity design -- chosen from the
-models available in the current environment, and writes it into `PLAN.md`. The
-orchestrator dispatches each doer with that model. The planner, plan-reviewer, and
-reviewer always run on the strongest model available, since planning and review are
-the quality gates. Making the planner's model choices smarter is a later refinement.
+models available in the current environment. In the pm skill the assignment is
+written into `PLAN.md`; in auto-sprint it is stored in beads task metadata. The
+orchestrator dispatches each doer with that model verbatim. The planner,
+plan-reviewer, and reviewer always run on the strongest model available, since
+planning and review are the quality gates. The reviewer escalates to at least sonnet
+regardless of the doer's assigned model.
 
 ## Lifecycle
 

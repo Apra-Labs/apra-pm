@@ -12,7 +12,7 @@ The `pm` skill is the provider-agnostic path: invoke it in any harness and it
 drives the full plan -> develop -> harvest lifecycle via natural language.
 
 The `auto-sprint` workflow is Claude-only and fully deterministic: a JavaScript
-loop drives the eight agents through repeating cycles until a user-defined quality
+loop drives eight agents through repeating cycles until a user-defined quality
 bar (zero P1 issues, zero P1/P2 issues, etc.) is met or the cycle limit is reached.
 No agent ever decides whether to continue -- all routing is in the workflow script.
 
@@ -20,21 +20,37 @@ No agent ever decides whether to continue -- all routing is in the workflow scri
 
 ```
 while (open issues above goal threshold > 0 AND cycles < max):
-  Plan       -- planner (opus) creates feature+task DAG in beads
-               plan-reviewer (sonnet) validates coverage and acceptance criteria
-  Develop    -- doer (sonnet) works bd-ready tasks; reviewer (sonnet) approves or reopens
-  Deploy     -- deployer (sonnet) follows deploy.md + integ-test-playbook.md
-  Test Run   -- integ-test-runner (sonnet) closes passing features, files bugs for failures
+  Plan       -- planner (opus) decomposes epics into a feature+task DAG in beads
+               plan-reviewer validates coverage, acceptance criteria, and assigns
+               a complexity bucket (S/M/L) and model to every task
+  Develop    -- doer works bd-ready tasks on the model the planner assigned;
+               reviewer approves or reopens (reviewer model >= sonnet)
+  Deploy     -- deployer follows deploy.md + integ-test-playbook.md
+  Test Run   -- integ-test-runner closes passing features, files bugs for failures
   Teardown   -- deployer resets the test environment
   Exit check -- beads query: are open issues above threshold? same set as last cycle?
 
-CI check (haiku, non-blocking): poll after Develop; gate before Harvest
-Harvest (once): harvester (sonnet) updates docs/README/CHANGELOG and raises PR
-Final review (opus): quality gate before harvest
+CI check (haiku, non-blocking): polls after Develop; gates before Harvest
+Harvest (once): harvester updates docs/CHANGELOG and raises PR
 ```
 
-Model tiers: haiku for scaffolding/queries, sonnet for development/review/testing,
-opus for planning and final review only.
+### Cost estimation and calibration
+
+After the plan is approved, the workflow produces a cost quote for the sprint --
+three scenarios (optimistic / expected / pessimistic) -- using per-task complexity
+buckets and the model each task was assigned. All arithmetic is pure JavaScript;
+no agent does any calculation.
+
+At sprint end, actual token spend (from the durable sprint log) is compared against
+the quote and written to CHANGELOG. The harvester then updates
+`sprint-logs/calibration.json` with rolling-average actuals, so each successive
+sprint produces tighter estimates. The calibration loop targets +-50% accuracy;
+500%+ deviation triggers a calibration failure flag.
+
+Model prices used for estimation: haiku $5/M, sonnet $15/M, opus $25/M output tokens.
+
+Sprint logs are durable per-branch outputs named
+`sprint-logs/<branch>-<yyyymmdd_hhmmss>.jsonl` and are never deleted.
 
 See `docs/sprint-workflow.md` for the full user guide.
 
@@ -49,6 +65,9 @@ See `skills/pm/SKILL.md` and its sub-docs for the full workflow.
 skills/pm/               the pm skill (SKILL.md + sub-docs)
 agents/                  eight sprint agent definitions (shared by both surfaces)
 .claude/workflows/       auto-sprint.js -- deterministic Claude Code workflow
+lib/                     sprint-cost.mjs -- testable cost arithmetic module
+test/                    sprint-cost.test.mjs -- 45 unit tests (npm test)
+sprint-logs/             calibration.json + per-sprint JSONL cost logs (durable)
 install.mjs              installer: copies skill + agents + workflow into provider config dir
 e2e/                     end-to-end suite: drive the skill headless on the toy repo
 docs/                    sprint-workflow.md user guide + design intent
