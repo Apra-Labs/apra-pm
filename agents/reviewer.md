@@ -18,7 +18,7 @@ git diff <base-branch>..<branch> --stat
 ## Step 2 -- Find completed tasks
 
 ```bash
-bd list --status=closed --closed-after=$(date -I)
+bd list --status=closed --closed-after=$(date +%Y-%m-%d)
 ```
 
 For each recently closed task, run `bd show <id>` to read its acceptance criteria.
@@ -40,6 +40,7 @@ For each task closed since the last review check:
 
 **File hygiene**: for every file added or modified, it must be justifiable against the sprint tasks.
 Flag temp files, tool config that slipped in, unrelated scripts.
+Do NOT flag `sprint-logs/` -- these are durable per-branch cost logs written by the workflow, not scaffold.
 
 ## Step 4 -- Run the test suite
 

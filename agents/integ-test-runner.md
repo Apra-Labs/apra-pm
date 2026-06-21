@@ -22,8 +22,9 @@ Work through each open feature one at a time.
 For each open feature:
 
 1. `bd show <feature-id>` -- read the feature description to understand what it does
-2. Find the `[test]` task(s) for this feature: `bd list --status=closed --parent=<feature-id>`
-   (test tasks were closed by the doer after writing the test code)
+2. Find the `[test]` task(s) for this feature: `bd dep list <feature-id>`
+   Filter the output for items with `[test]` in the title -- these are the test tasks
+   closed by the doer after writing the test code.
 3. Run the integration tests for this feature. The test tasks describe what to run.
 4. Observe the result carefully: which assertions passed, which failed, with what output
 

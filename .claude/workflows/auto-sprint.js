@@ -33,7 +33,11 @@ export const meta = {
 //   requirementsFile -- optional context file for the planner          (default: none)
 //   base_branch      -- PR target                                      (default: "main")
 
-// Args can be any of:
+// NOTE: the arg-parsing block below is intentionally duplicated from lib/parse-sprint-args.mjs,
+// which exists only for unit testing (workflow scripts cannot import arbitrary files).
+// Keep both in sync when modifying parsing logic.
+//
+// Accepted forms:
 //   "BD-1"                          bare issue ID
 //   "BD-1 BD-2"                     space/comma-separated issue IDs
 //   ["BD-1","BD-2"]                 JSON array of issue IDs
@@ -56,7 +60,7 @@ if (args) {
   }
 }
 
-const branch           = opts.branch           || '';   // empty = auto-detect in setup
+let branch             = opts.branch           || '';   // empty = auto-detect in setup; reassigned after setup resolves
 const rawIssues        = opts.issues            || [];
 const epicIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
 const goal             = opts.goal             || 'P1/P2';
@@ -78,7 +82,7 @@ const threshold = GOAL_THRESHOLD[goal] || 2;
 
 const MODEL_OPUS   = 'claude-opus-4-8';
 const MODEL_SONNET = 'claude-sonnet-4-6';
-const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
+const MODEL_HAIKU  = 'claude-haiku-4-5';
 
 // ------------------------------------------------------------------ schemas
 
@@ -87,6 +91,46 @@ const REVIEW_SCHEMA = {
   properties: {
     verdict: { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
     notes:   { type: 'string' },
+  },
+};
+
+const PLAN_REVIEW_SCHEMA = {
+  type: 'object', required: ['verdict', 'notes', 'taskAssignments'],
+  properties: {
+    verdict:         { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
+    notes:           { type: 'string' },
+    taskAssignments: {
+      type: 'array',
+      items: {
+        type: 'object', required: ['id', 'bucket', 'model'],
+        properties: {
+          id:     { type: 'string' },
+          bucket: { type: 'string', enum: ['S', 'M', 'L'] },
+          model:  { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
+const LOG_DATA_SCHEMA = {
+  type: 'object', required: ['entries'],
+  properties: {
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          cycle:     {},
+          phase:     { type: 'string' },
+          label:     { type: 'string' },
+          model:     { type: 'string' },
+          context:   { type: 'string' },
+          outTokens: { type: 'number' },
+          costUsd:   { type: 'number' },
+        },
+      },
+    },
   },
 };
 
@@ -107,12 +151,14 @@ const HARVEST_SCHEMA = {
 };
 
 const SETUP_SCHEMA = {
-  type: 'object', required: ['repo', 'branch', 'deployMdExists', 'playbookExists'],
+  type: 'object', required: ['repo', 'branch', 'deployMdExists', 'playbookExists', 'startedAt'],
   properties: {
     repo:           { type: 'string' },
     branch:         { type: 'string' },
     deployMdExists: { type: 'boolean' },
     playbookExists: { type: 'boolean' },
+    startedAt:      { type: 'string', description: 'yyyymmdd_hhmmss from date +%Y%m%d_%H%M%S' },
+    calibration:    {},  // any JSON value or null; validated by computeSprintQuote()
   },
 };
 
@@ -179,12 +225,258 @@ function approved(review) {
   return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
 }
 
-// Output price per 1M tokens (USD). Input not exposed by the harness.
-const OUTPUT_PRICE_PER_M = {
-  [MODEL_HAIKU]:  4.00,
+// Live pricing for dispatch cost tracking. Initialized from DEFAULT_CALIBRATION;
+// synced to calibration.json values after setup() returns.
+// Prices are output tokens only in USD per 1M. Source: Anthropic pricing 2026-06-04.
+// See also: sprint-logs/calibration.json model_prices_per_1m_output_tokens.
+let OUTPUT_PRICE_PER_M = {
+  [MODEL_HAIKU]:   5.00,
   [MODEL_SONNET]: 15.00,
-  [MODEL_OPUS]:   75.00,
+  [MODEL_OPUS]:   25.00,
 };
+
+// ------------------------------------------------------------------ CALIBRATION DEFAULTS
+// Single source of truth for all estimation constants. On first sprint run the setup
+// agent writes this to sprint-logs/calibration.json; subsequent runs read that file.
+// To change prices or buckets: update this object -- the file is regenerated next run.
+const DEFAULT_CALIBRATION = {
+  model_prices_per_1m_output_tokens: {
+    [MODEL_HAIKU]:   5.00,
+    [MODEL_SONNET]: 15.00,
+    [MODEL_OPUS]:   25.00,
+  },
+  role_models: {
+    'setup':             MODEL_HAIKU,
+    'planner':           MODEL_OPUS,
+    'plan-reviewer':     MODEL_SONNET,
+    'deployer':          MODEL_SONNET,
+    'integ-test-runner': MODEL_SONNET,
+    'ci-watcher':        MODEL_HAIKU,
+    'harvester':         MODEL_SONNET,
+    'log-flush':         MODEL_HAIKU,
+    'check-blockers':    MODEL_HAIKU,
+    'ready-streaks':     MODEL_HAIKU,
+  },
+  doer_model_fallback:   { model: MODEL_SONNET },
+  complexity_buckets: {
+    S: { doer_tokens:  600 },
+    M: { doer_tokens: 1400 },
+    L: { doer_tokens: 2800 },
+  },
+  reviewer_ratio:        { value: 0.4 },
+  cycle_assumptions:     { optimistic: 1.0, expected: 1.5, pessimistic: 2.5 },
+  fixed_overhead_tokens: {
+    setup:               200,
+    planner:            2000,
+    plan_reviewer:      1500,
+    harvester:          3000,
+    ci_watcher:          300,
+    log_flush_per_cycle: 100,
+  },
+  input_cost_multiplier: { value: 4.0 },
+  outlier_thresholds: {
+    notable_pct:              50,
+    outlier_pct:             200,
+    calibration_failure_pct: 500,
+  },
+  historical: {
+    max_sprints_in_sample: 5,
+    sprints_sampled:       0,
+    last_updated:          null,
+    cycle_avg:             null,
+    reviewer_ratio_avg:    null,
+    bucket_avg_tokens:     {},
+    roles:                 {},
+  },
+};
+
+// ------------------------------------------------------------------ COST ARITHMETIC
+// All sprint cost computations are pure JavaScript -- no agent touches a number.
+// NOTE: these functions are duplicated in lib/sprint-cost.mjs (which exists only for
+// unit testing -- workflow scripts cannot import arbitrary files). Keep both in sync.
+
+// Reviewer model mirrors auto-sprint dispatch logic: max(taskModel, sonnet).
+function reviewerModelFor(taskModel) {
+  return taskModel === MODEL_OPUS ? MODEL_OPUS : MODEL_SONNET;
+}
+
+function computeSprintQuote(taskAssignments, calibration) {
+  const prices    = calibration.model_prices_per_1m_output_tokens;
+  const hist      = calibration.historical || {};
+  const buckets   = calibration.complexity_buckets;
+  const revRatio  = (hist.sprints_sampled >= 1 && hist.reviewer_ratio_avg != null)
+    ? hist.reviewer_ratio_avg : calibration.reviewer_ratio.value;
+  const cycles    = calibration.cycle_assumptions;
+  const overhead  = calibration.fixed_overhead_tokens;
+  const inputMult = calibration.input_cost_multiplier.value;
+  const fallback  = (calibration.doer_model_fallback || {}).model || MODEL_SONNET;
+  const calibSrc  = hist.sprints_sampled >= 1
+    ? `historical (${hist.sprints_sampled} sprint${hist.sprints_sampled !== 1 ? 's' : ''})`
+    : 'defaults';
+
+  const tasks = (taskAssignments || []).map(t => {
+    const model      = t.model || fallback;
+    const histToks   = (hist.bucket_avg_tokens || {})[t.bucket];
+    const doerTokens = (hist.sprints_sampled >= 1 && histToks != null)
+      ? Math.round(histToks) : (buckets[t.bucket] || buckets.M).doer_tokens;
+    const reviewerTokens = Math.round(doerTokens * revRatio);
+    const doerPrice      = prices[model]                   || prices[MODEL_SONNET];
+    const revPrice       = prices[reviewerModelFor(model)] || prices[MODEL_SONNET];
+    const outputUsd      = (doerTokens * doerPrice + reviewerTokens * revPrice) / 1_000_000;
+    return { id: t.id, bucket: t.bucket, model, doerTokens, reviewerTokens, outputUsd };
+  });
+
+  const perTaskSubtotal = tasks.reduce((s, t) => s + t.outputUsd, 0);
+
+  const rm = calibration.role_models || {};
+  let overheadUsd = 0;
+  for (const [key, tokens] of Object.entries(overhead)) {
+    if (key === 'log_flush_per_cycle') continue;
+    const role  = key.replace(/_/g, '-');
+    const model = rm[role] || MODEL_SONNET;
+    overheadUsd += tokens * (prices[model] || prices[MODEL_SONNET]) / 1_000_000;
+  }
+  const logFlushUsd = (overhead.log_flush_per_cycle || 0)
+    * (prices[rm['log-flush'] || MODEL_HAIKU] || prices[MODEL_HAIKU]) / 1_000_000;
+
+  const scenario = mult => {
+    const out = perTaskSubtotal * mult + overheadUsd + logFlushUsd * mult;
+    return { outputOnly: out, total: out * inputMult };
+  };
+
+  return {
+    tasks,
+    calibrationSource: calibSrc,
+    inputMultiplier:   inputMult,
+    scenarios: {
+      optimistic:  scenario(cycles.optimistic),
+      expected:    scenario(cycles.expected),
+      pessimistic: scenario(cycles.pessimistic),
+    },
+  };
+}
+
+function computeSprintAnalysis(quote, logEntries, calibration, actualCycles) {
+  const prices    = calibration.model_prices_per_1m_output_tokens;
+  const inputMult = calibration.input_cost_multiplier.value;
+  const thr       = calibration.outlier_thresholds;
+  const cycles    = calibration.cycle_assumptions;
+  const rm        = calibration.role_models || {};
+  const overhead  = calibration.fixed_overhead_tokens;
+
+  const roleOf = label => label.replace(/-c\d.*$/, '');
+
+  const byRole = {};
+  for (const e of (logEntries || [])) {
+    const role = roleOf(e.label || '');
+    if (!role) continue;
+    if (!byRole[role]) byRole[role] = { tokens: 0, costUsd: 0, dispatches: 0 };
+    byRole[role].tokens    += e.outTokens || 0;
+    byRole[role].costUsd   += e.costUsd   || 0;
+    byRole[role].dispatches++;
+  }
+
+  const estCycles = cycles.expected;
+  const tasks = quote ? quote.tasks || [] : [];
+
+  const estDoerTokens     = tasks.reduce((s, t) => s + t.doerTokens,     0) * estCycles;
+  const estReviewerTokens = tasks.reduce((s, t) => s + t.reviewerTokens, 0) * estCycles;
+  const estDoerUsd        = tasks.reduce((s, t) =>
+    s + t.doerTokens     * (prices[t.model]                   || prices[MODEL_SONNET]) / 1_000_000, 0) * estCycles;
+  const estReviewerUsd    = tasks.reduce((s, t) =>
+    s + t.reviewerTokens * (prices[reviewerModelFor(t.model)] || prices[MODEL_SONNET]) / 1_000_000, 0) * estCycles;
+
+  let estOverheadTokens = 0, estOverheadUsd = 0;
+  for (const [key, tokens] of Object.entries(overhead)) {
+    const mult  = key === 'log_flush_per_cycle' ? estCycles : 1;
+    const role  = key.replace(/_/g, '-');
+    const model = key === 'log_flush_per_cycle' ? (rm['log-flush'] || MODEL_HAIKU) : (rm[role] || MODEL_SONNET);
+    estOverheadTokens += tokens * mult;
+    estOverheadUsd    += tokens * mult * (prices[model] || prices[MODEL_SONNET]) / 1_000_000;
+  }
+
+  const actDoerTokens     = byRole['doer']?.tokens     || 0;
+  const actDoerUsd        = byRole['doer']?.costUsd    || 0;
+  const actReviewerTokens = byRole['reviewer']?.tokens  || 0;
+  const actReviewerUsd    = byRole['reviewer']?.costUsd || 0;
+  let actOverheadTokens = 0, actOverheadUsd = 0;
+  for (const [role, data] of Object.entries(byRole)) {
+    if (role !== 'doer' && role !== 'reviewer') {
+      actOverheadTokens += data.tokens;
+      actOverheadUsd    += data.costUsd;
+    }
+  }
+
+  const totEstTokens = Math.round(estDoerTokens + estReviewerTokens + estOverheadTokens);
+  const totActTokens = actDoerTokens + actReviewerTokens + actOverheadTokens;
+  const totEstUsd    = estDoerUsd + estReviewerUsd + estOverheadUsd;
+  const totActUsd    = actDoerUsd + actReviewerUsd + actOverheadUsd;
+
+  const pct  = (est, act) => est > 0 ? `${act > est ? '+' : ''}${Math.round((act - est) / est * 100)}%` : 'n/a';
+  const fmtN = n => Math.round(n).toLocaleString('en-US');
+  const fmtU = n => `$${n.toFixed(3)}`;
+
+  const rows = [
+    ['doer',     Math.round(estDoerTokens),     actDoerTokens,     estDoerUsd,     actDoerUsd     ],
+    ['reviewer', Math.round(estReviewerTokens), actReviewerTokens, estReviewerUsd, actReviewerUsd ],
+    ['overhead', Math.round(estOverheadTokens), actOverheadTokens, estOverheadUsd, actOverheadUsd ],
+    ['TOTAL',    totEstTokens,                  totActTokens,      totEstUsd,      totActUsd      ],
+  ];
+
+  const header =
+    `| Role       | Est tokens | Act tokens |   D%%  | Est USD  | Act USD  |\n` +
+    `|------------|------------|------------|-------|----------|----------|\n`;
+  const body = rows.map(([role, et, at, eu, au]) =>
+    `| ${role.padEnd(10)} | ${fmtN(et).padStart(10)} | ${fmtN(at).padStart(10)} | ${pct(et, at).padStart(5)} | ${fmtU(eu).padStart(8)} | ${fmtU(au).padStart(8)} |`
+  ).join('\n');
+
+  const outliers = rows.slice(0, 3).filter(([, et, at]) => et > 0 && Math.abs((at - et) / et * 100) > thr.outlier_pct).map(r => r[0]);
+  const failures = rows.slice(0, 3).filter(([, et, at]) => et > 0 && Math.abs((at - et) / et * 100) > thr.calibration_failure_pct).map(r => r[0]);
+
+  const src = quote ? quote.calibrationSource : 'none';
+  const analysisText =
+    `#### Sprint cost analysis\n` +
+    `Calibration: ${src}   Cycles: estimated ${estCycles}, actual ${actualCycles}\n\n` +
+    header + body + `\n` +
+    `True-cost estimate (output x ${inputMult}x): ${fmtU(totEstUsd * inputMult)}\n\n` +
+    `Outliers (>${thr.outlier_pct}% variance): ${outliers.length ? outliers.join(', ') : 'none'}\n` +
+    `Calibration failures (>${thr.calibration_failure_pct}%): ${failures.length ? failures.join(', ') : 'none'}\n`;
+
+  return { analysisText, byRole, actualCycles, totEstOutputUsd: totEstUsd, totEstTrueUsd: totEstUsd * inputMult, totActUsd };
+}
+
+function computeUpdatedCalibration(calibration, analysis, startedAt) {
+  const hist = JSON.parse(JSON.stringify(calibration.historical || {}));
+  const max  = hist.max_sprints_in_sample || 5;
+  const prev = Math.min(hist.sprints_sampled || 0, max - 1);
+  const n    = prev + 1;
+  const blend = (old, val) => old == null ? val : (old * prev + val) / n;
+
+  hist.sprints_sampled = n;
+  hist.last_updated    = startedAt.replace(/^(\d{4})(\d{2})(\d{2}).*/, '$1-$2-$3');
+  hist.cycle_avg       = blend(hist.cycle_avg, analysis.actualCycles);
+  hist.roles           = hist.roles || {};
+
+  for (const [role, data] of Object.entries(analysis.byRole)) {
+    const avg    = data.dispatches > 0 ? data.tokens / data.dispatches : 0;
+    const prev_r = hist.roles[role] || { avg_output_tokens: null, sample_n: 0 };
+    hist.roles[role] = {
+      avg_output_tokens: blend(prev_r.avg_output_tokens, avg),
+      sample_n: prev_r.sample_n + data.dispatches,
+    };
+  }
+
+  const doerTok = analysis.byRole['doer']?.tokens     || 0;
+  const revTok  = analysis.byRole['reviewer']?.tokens || 0;
+  if (doerTok > 0) hist.reviewer_ratio_avg = blend(hist.reviewer_ratio_avg, revTok / doerTok);
+
+  // bucket_avg_tokens is intentionally not updated here: matching a doer log entry back
+  // to an S/M/L bucket requires joining task IDs in the log entry context field against
+  // the saved taskAssignments. That join is future work; bucket defaults in
+  // calibration.json remain the source for doer_tokens estimates until then.
+
+  return { ...calibration, historical: hist };
+}
 
 function outputCostUsd(model, tokens) {
   const rate = OUTPUT_PRICE_PER_M[model] || OUTPUT_PRICE_PER_M[MODEL_SONNET];
@@ -195,7 +487,7 @@ function outputCostUsd(model, tokens) {
 // budget.spent() is the only actual usage the harness exposes (output tokens only).
 // opts.context -- short human string describing what was worked (e.g. "tasks BD-5,BD-6")
 let cycleCostUsd = 0;
-const dispatchLedger = [];  // accumulates across all cycles; flushed to sprint-log.jsonl per cycle
+const dispatchLedger = [];  // accumulates across all cycles; flushed to sprint-logs/<branch>.jsonl per cycle
 
 async function dispatch(prompt, opts) {
   const before = budget.spent();
@@ -204,7 +496,7 @@ async function dispatch(prompt, opts) {
   const cost = outputCostUsd(opts.model || MODEL_SONNET, outTokens);
   cycleCostUsd += cost;
   const entry = {
-    cycle:   cycleCount,
+    cycle:   cycleCount === 0 ? 'setup' : cycleCount,
     phase:   opts.phase  || '?',
     label:   opts.label  || '?',
     model:   opts.model  || MODEL_SONNET,
@@ -227,7 +519,7 @@ async function countBeadsBlockers(thr, epics) {
     `  (b) have a title containing "[integ]" (created by integration testing this sprint).\n` +
     `Count only those with priority 0 through ${thr} (P0 to P${thr}).\n` +
     `Return count (integer) and their beads IDs as an array.`,
-    { model: MODEL_HAIKU, label: 'check-blockers', schema: BEADS_BLOCKERS_SCHEMA }
+    { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop', schema: BEADS_BLOCKERS_SCHEMA }
   );
   return r || { count: 999, ids: [] };
 }
@@ -245,7 +537,7 @@ async function getReadyStreaks() {
     `Within each streak order IDs by priority (P0 first).\n` +
     `Order streaks by the highest priority task they contain (P0 first).\n` +
     `totalCount = total number of ready tasks across all streaks.`,
-    { model: MODEL_HAIKU, label: 'ready-streaks', schema: READY_STREAKS_SCHEMA }
+    { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop', schema: READY_STREAKS_SCHEMA }
   );
   return r || { totalCount: 0, streaks: [] };
 }
@@ -256,9 +548,9 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
     `Write the following reviewer feedback to feedback.md (overwrite if it exists):\n\n` +
     `${notes}\n\n` +
     `Then commit and push:\n` +
-    `  git -C ${repo} add feedback.md\n` +
-    `  git -C ${repo} -c user.name='${role}' -c user.email='${role}@pm.local' commit -m "feedback: ${label}"\n` +
-    `  git -C ${repo} push origin ${branch}`,
+    `  git -C "${repo}" add feedback.md\n` +
+    `  git -C "${repo}" -c user.name='${role}' -c user.email='${role}@pm.local' commit -m "feedback: ${label}"\n` +
+    `  git -C "${repo}" push origin ${branch}`,
     { model: MODEL_HAIKU, label: `feedback-commit-${label}`, phase }
   );
 }
@@ -279,7 +571,7 @@ async function checkCycleState(epicIds) {
     `  Set false if any of these conditions are not met.\n\n` +
     `inProgressIds: list the IDs of ALL issues currently in_progress status.\n` +
     `  These are orphaned from a previous crashed run and must be reset before work resumes.`,
-    { model: MODEL_HAIKU, label: 'cycle-state', schema: CYCLE_STATE_SCHEMA }
+    { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan', schema: CYCLE_STATE_SCHEMA }
   );
   return r || { planDone: false, inProgressIds: [] };
 }
@@ -309,10 +601,13 @@ const setup = await dispatch(
     : `Step 2: Detect current branch.\n` +
       `  Run: git rev-parse --abbrev-ref HEAD\n` +
       `  Use this as the sprint branch. Do NOT switch or create any branch.\n\n`) +
-  `Step 3: Check for required project files.\n` +
+  `Step 3: Capture start timestamp.\n` +
+  `  Run: date +%Y%m%d_%H%M%S\n` +
+  `  Return the output as startedAt (e.g. "20260620_143022").\n\n` +
+  `Step 4: Check for required project files.\n` +
   `  Run: test -f deploy.md && echo YES || echo NO   -> deployMdExists\n` +
   `  Run: test -f integ-test-playbook.md && echo YES || echo NO  -> playbookExists\n\n` +
-  `Step 4: Merge deploy permissions into .claude/settings.json.\n` +
+  `Step 5: Merge deploy permissions into .claude/settings.json.\n` +
   `  For each of deploy.md and integ-test-playbook.md that exists:\n` +
   `    a. Read the file and extract lines under the "## Permissions" section\n` +
   `       (stop at the next ## heading). Each non-empty line is a permission entry\n` +
@@ -321,7 +616,15 @@ const setup = await dispatch(
   `    c. For each extracted permission not already in permissions.allow, add it.\n` +
   `    d. Write the updated .claude/settings.json back.\n` +
   `  If neither file has a ## Permissions section, skip this step.\n\n` +
-  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists.`,
+  `Step 6: Load or bootstrap calibration data.\n` +
+  `  If sprint-logs/calibration.json exists in the repo root:\n` +
+  `    Read it and return its contents as the "calibration" field.\n` +
+  `  If it does NOT exist (first run):\n` +
+  `    Create the sprint-logs/ directory: mkdir -p "${repo}/sprint-logs"\n` +
+  `    Write the following JSON exactly to sprint-logs/calibration.json:\n` +
+  JSON.stringify(DEFAULT_CALIBRATION, null, 2) + `\n` +
+  `    Return the same content as the "calibration" field.\n\n` +
+  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibration.`,
   { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
 );
 
@@ -331,6 +634,24 @@ if (!setup || !setup.repo || !setup.branch) {
 }
 
 const repo = setup.repo;
+branch = setup.branch;  // use the confirmed/detected branch for all subsequent agent prompts
+
+// Setup always returns calibration (bootstrapping the file if needed). Fall back to
+// DEFAULT_CALIBRATION only if setup itself failed to return a value.
+const calibration = setup.calibration || DEFAULT_CALIBRATION;
+// Sync output prices from loaded calibration so dispatchLedger uses correct rates.
+Object.assign(OUTPUT_PRICE_PER_M, calibration.model_prices_per_1m_output_tokens || {});
+
+// State for cost estimation -- populated after plan is APPROVED.
+let sprintQuote = null;
+
+// Derive a filename-safe version of the branch for sprint-logs/.
+// Replaces path separators and non-safe chars with dashes so that parallel
+// sprints on different branches never write to the same file.
+// Timestamp (yyyymmdd_hhmmss) is captured by the setup agent so it stays
+// stable across workflow resumes (Date.now() is banned in workflow scripts).
+const sprintLogBranch = branch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'default';
+const sprintLogFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.jsonl`;
 const integTestEnabled = setup.deployMdExists && setup.playbookExists;
 
 log(`Repo: ${repo} | Branch: ${setup.branch}`);
@@ -447,32 +768,51 @@ while (cycleCount < maxCycles) {
 
     const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
     const planReview = await dispatch(
-      `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n` +
+      `Calibration file: ${repo}/sprint-logs/calibration.json (read this first if it exists)\n\n` +
       `Review the beads DAG for these epics ONLY: ${epicSummary}\n` +
       `Run: ${epicIds.map(id => `bd show ${id}`).join(' && ')} to inspect each epic.\n` +
       `Run: ${epicIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
       `Run: bd show <id> to inspect individual issues in depth.\n` +
       `Run: bd ready -- this is your FIRST correctness check.\n` +
       `Do NOT review or comment on issues outside these epics.\n\n` +
-      `APPROVE only if ALL of the following pass:\n` +
-      `  1. "bd ready" returns only type=task issues. If any feature or epic appears in "bd ready",\n` +
-      `     the dependencies are wired backwards (tasks should block features, not the reverse).\n` +
-      `     This is a hard CHANGES NEEDED -- list every misplaced issue by ID.\n` +
-      `  2. Every open feature has at least one implementation task and one [test] task\n` +
-      `  3. Every task description has clear acceptance criteria\n` +
-      `  4. No task is so large it requires more than ~3 file changes\n` +
-      `  5. No task appears in more than one feature's dependency graph (check bd graph output)\n` +
-      `  6. Every task has model metadata set (check bd show output for METADATA section)\n` +
-      `  7. No new scope has been added beyond epics and open bugs/enhancements\n\n` +
-      `CHANGES NEEDED if any of the above fail. Notes must be specific: include issue IDs and\n` +
-      `exact "bd dep add" commands to fix each dep direction problem.`,
-      { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: REVIEW_SCHEMA, agentType: 'plan-reviewer',
+      `Follow your runbook (plan-reviewer.md) step by step:\n` +
+      `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
+      `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
+      `    from beads metadata. If a task has no model metadata, note it in your verdict\n` +
+      `    notes as a warning but do NOT return CHANGES NEEDED for it -- the workflow has a fallback.\n` +
+      `  Step 4: return verdict, notes, and taskAssignments (id + bucket + model per task).\n\n` +
+      `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
+      `any dependency direction problems.`,
+      { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: PLAN_REVIEW_SCHEMA, agentType: 'plan-reviewer',
         context: `reviewing plan for epics ${epicSummary}` }
     );
 
     if (approved(planReview)) {
       planApproved = true;
       log(`Plan APPROVED on cycle ${cycleCount} round ${pi + 1}`);
+
+      // Compute sprint cost quote in pure JS -- no agent does arithmetic.
+      sprintQuote = computeSprintQuote(planReview.taskAssignments || [], calibration);
+      const sc = sprintQuote.scenarios;
+      log(`Sprint quote (${sprintQuote.calibrationSource}, ${(planReview.taskAssignments || []).length} tasks): ` +
+          `output-only: opt=$${sc.optimistic.outputOnly.toFixed(3)} ` +
+          `exp=$${sc.expected.outputOnly.toFixed(3)} ` +
+          `pess=$${sc.pessimistic.outputOnly.toFixed(3)} ` +
+          `| true-est (x${sprintQuote.inputMultiplier.toFixed(1)}): ` +
+          `exp=$${sc.expected.total.toFixed(3)}`);
+
+      // Write per-task cost estimates to beads notes via a lightweight haiku dispatch.
+      if (sprintQuote.tasks.length > 0) {
+        const bdCmds = sprintQuote.tasks.map(t =>
+          `bd update ${t.id} --notes="cost-estimate: bucket=${t.bucket} model=${t.model} ` +
+          `doer_tokens=${t.doerTokens} reviewer_tokens=${t.reviewerTokens} output_usd=${t.outputUsd.toFixed(4)}"`
+        ).join('\n');
+        await dispatch(
+          `Write cost estimates to beads task notes.\n\nRun these commands:\n${bdCmds}`,
+          { model: MODEL_HAIKU, label: `write-quote-c${cycleCount}`, phase: 'Plan' }
+        );
+      }
     } else {
       planFeedback = (planReview && planReview.notes) || '';
       log(`Plan needs changes: ${planFeedback.slice(0, 120)}`);
@@ -559,7 +899,7 @@ while (cycleCount < maxCycles) {
       `Sprint epics: ${epicSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
       `Review ONLY the work done for the tasks listed above.\n` +
       `Run: bd show <id> for each task to read its acceptance criteria.\n` +
-      `Run: git -C ${repo} diff ${base_branch}...${branch} to see the changes.\n` +
+      `Run: git -C "${repo}" diff ${base_branch}...${branch} to see the changes.\n` +
       `Do NOT comment on code or issues outside the listed tasks.\n` +
       `Check: code correctness, test coverage, adherence to each task's acceptance criteria.\n` +
       `If a task needs rework, reopen it: bd update <id> --status=open\n` +
@@ -681,18 +1021,21 @@ while (cycleCount < maxCycles) {
     log(`Progress: ${closedFromPrev.length} issue(s) resolved this cycle`);
   }
 
-  // Flush this cycle's dispatch ledger to sprint-log.jsonl in the repo.
+  // Flush this cycle's dispatch ledger to sprint-logs/<branch>.jsonl in the repo.
+  // One file per branch so parallel sprints never collide.
   const cycleLedger = dispatchLedger.filter(e => e.cycle === cycleCount);
   const jsonlLines = cycleLedger.map(e => JSON.stringify(e)).join('\n');
   const cycleTotal = cycleLedger.reduce((s, e) => s + e.costUsd, 0);
   log(`Cycle ${cycleCount} cost: $${cycleTotal.toFixed(4)} output across ${cycleLedger.length} dispatches`);
   await dispatch(
-    `Append the following lines to sprint-log.jsonl in ${repo} (create the file if it does not exist, path: ${repo}/sprint-log.jsonl):\n\n` +
-    `${jsonlLines}\n\n` +
-    `Then commit and push the file:\n` +
-    `  git -C ${repo} add sprint-log.jsonl\n` +
-    `  git -C ${repo} -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-log cycle ${cycleCount}"\n` +
-    `  git -C ${repo} push origin ${branch}\n` +
+    `Append the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+    `If the file does not exist, create it. If the sprint-logs/ directory does not exist, create it first:\n` +
+    `  mkdir -p "${repo}/sprint-logs"\n\n` +
+    `Lines to append:\n${jsonlLines}\n\n` +
+    `Then commit and push:\n` +
+    `  git -C "${repo}" add sprint-logs/\n` +
+    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-log cycle ${cycleCount}"\n` +
+    `  git -C "${repo}" push origin ${branch}\n` +
     `Do not modify any other file.`,
     { model: MODEL_HAIKU, label: `log-flush-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop',
       context: `flushing ${cycleLedger.length} dispatch records` }
@@ -771,16 +1114,29 @@ if (!approved(finalReview)) {
 
 // ------------------------------------------------------------------ HARVEST
 
+// Read the sprint log JSONL so we can compute estimate-vs-actual in pure JS.
+const logReader = await dispatch(
+  `Read the sprint cost log and return its entries as structured data.\n\n` +
+  `Run: test -f "${sprintLogFile}" && cat "${sprintLogFile}" || echo "[]"\n\n` +
+  `The file is JSONL (one JSON object per line). Parse each line and return all entries in the entries array.\n` +
+  `If the file is missing or empty, return { entries: [] }.`,
+  { model: MODEL_HAIKU, label: 'log-reader', phase: 'Harvest', schema: LOG_DATA_SCHEMA }
+);
+const logEntries = (logReader && logReader.entries) || dispatchLedger;
+
+// Compute estimate-vs-actual analysis entirely in JS.
+const sprintAnalysis = computeSprintAnalysis(sprintQuote, logEntries, calibration, cycleCount);
+log('Sprint cost analysis computed (JS):\n' + sprintAnalysis.analysisText);
+
 const harvestLabel = 'harvester';
 const harvestResult = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-  `Sprint epics: ${epicSummary}\nCycles completed: ${cycleCount}\nGoal met: ${epicDone}\n\n` +
-  `The sprint is complete. Harvest the sprint artefacts:\n` +
-  `  - Update docs/ with architecture decisions, feature design, API contracts\n` +
-  `  - Update README.md and prepend a CHANGELOG.md entry\n` +
-  `  - Remove any sprint scaffold files (do not remove project files that predate the sprint)\n` +
-  `  - Close any remaining P3/P4 beads issues with: bd close <id> --reason="deferred"\n` +
-  `  - Include a token cost summary from bd memories: bd memories auto-sprint\n\n` +
+  `Sprint epics: ${epicSummary}\nCycles completed: ${cycleCount}\nGoal met: ${epicDone}\n` +
+  `sprintLogFile: ${sprintLogFile}\n\n` +
+  `The sprint is complete. Harvest the sprint artefacts.\n` +
+  `Follow your runbook (agents/harvester.md).\n\n` +
+  `costAnalysis (insert this block verbatim into CHANGELOG.md after the summary paragraph):\n` +
+  `${sprintAnalysis.analysisText}\n` +
   `Final review notes to include in CHANGELOG:\n` +
   `${(finalReview && finalReview.notes) || '(none)'}\n\n` +
   `Return status "OK" if successful, "FAILED" with notes otherwise.`,
@@ -791,6 +1147,25 @@ if (!harvestResult || harvestResult.status !== 'OK') {
   log(`Harvest failed: ${(harvestResult && harvestResult.notes) || 'null'} -- skipping PR`);
   return { cycles: cycleCount, epicDone, goal, harvest: 'failed' };
 }
+
+// ------------------------------------------------------------------ CALIBRATION UPDATE
+// Update historical averages in calibration.json after every successful sprint.
+// All arithmetic is in JS; the haiku agent only writes the resulting JSON file.
+
+const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt);
+const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
+await dispatch(
+  `Write updated calibration file and commit.\n\n` +
+  `Step 1: Ensure sprint-logs/ directory exists: mkdir -p "${repo}/sprint-logs"\n` +
+  `Step 2: Write this JSON to "${repo}/sprint-logs/calibration.json" exactly as provided below:\n\n` +
+  calibrationJson + `\n\n` +
+  `Step 3: Commit the file:\n` +
+  `  git -C "${repo}" add sprint-logs/calibration.json\n` +
+  `  git -C "${repo}" commit -m "chore: update sprint calibration after ${cycleCount} cycle(s) on ${branch}"\n\n` +
+  `If the file content is unchanged, the commit may be a no-op -- that is fine.\n` +
+  `Return "OK" when done.`,
+  { model: MODEL_HAIKU, label: 'calibration-update', phase: 'Harvest' }
+);
 
 // ------------------------------------------------------------------ PR
 
@@ -832,7 +1207,7 @@ for (const [role, s] of Object.entries(byRole).sort((a, b) => b[1].costUsd - a[1
   log(`  ${role.padEnd(20)} $${s.costUsd.toFixed(4).padStart(8)}  ${String(s.outTokens).padStart(8)} tok  ${s.calls} call(s)`);
 }
 log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
-log(`  (input token cost not included -- see sprint-log.jsonl for per-dispatch detail)`);
+log(`  (input token cost not included -- see ${sprintLogFile} for per-dispatch detail)`);
 log('================================================\n');
 
 return { cycles: cycleCount, epicDone, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };

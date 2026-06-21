@@ -19,7 +19,7 @@ Step 2 - Read open epic IDs
 
 Run this bash command:
 
-  cd {{REPO}} && bd list --status=open --type=feature
+  cd {{REPO}} && bd list --status=open --type=epic
 
 Capture the beads IDs (e.g. BD-1, BD-2) from the output. These are the epics
 the sprint will implement.

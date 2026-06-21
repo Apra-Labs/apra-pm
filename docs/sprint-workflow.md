@@ -346,8 +346,10 @@ $0.0145 reviewer-c1-i1 -- reviewing tasks BD-5, BD-6
 ```
 
 At the end of each cycle, the full dispatch ledger is written as JSONL to
-`sprint-log.jsonl` in the repository root and committed to the branch. Each
-line records:
+`sprint-logs/<branch>-<timestamp>.jsonl` and committed to the branch. The branch name is
+sanitized (path separators and special characters replaced with dashes) and a
+`yyyymmdd_hhmmss` timestamp is appended, so that parallel sprints on the same or different
+branches never write to the same file. Each line records:
 
 ```json
 {"cycle":1,"phase":"Develop","label":"doer-c1-i0","model":"claude-sonnet-4-6","context":"tasks BD-5, BD-6","outTokens":967,"costUsd":0.0145}
@@ -363,15 +365,19 @@ At sprint end, a cost summary is printed grouped by role:
   TOTAL                 $0.3102
 ```
 
-To query the log after a sprint:
+To query the log after a sprint (replace `<branch>` with the sanitized branch name,
+e.g. `feat-auth-overhaul` for branch `feat/auth-overhaul`):
 
 ```bash
-# cost by role
-jq -r '[(.label | gsub("-c[0-9].*$"; "")), (.costUsd | tostring)] | @tsv' sprint-log.jsonl \
+# cost by role -- all runs on this branch
+jq -r '[(.label | gsub("-c[0-9].*$"; "")), (.costUsd | tostring)] | @tsv' sprint-logs/<branch>-*.jsonl \
   | awk '{sum[$1]+=$2} END {for(r in sum) printf "%s\t$%.4f\n", r, sum[r]}'
 
-# what each dollar was spent on
-jq -r '"$\(.costUsd)  \(.label)  \(.context)"' sprint-log.jsonl
+# what each dollar was spent on -- one specific run
+jq -r '"$\(.costUsd)  \(.label)  \(.context)"' sprint-logs/<branch>-<timestamp>.jsonl
+
+# aggregate across all sprints in the repo
+cat sprint-logs/*.jsonl | jq -r '"$\(.costUsd)  \(.label)  \(.context)"'
 ```
 
 Costs reflect output tokens only -- input tokens are not exposed by the workflow
@@ -388,7 +394,7 @@ When the sprint goal is met:
 - A reviewed pull request is open against `base_branch`
 - `docs/` is updated with architecture decisions and feature documentation
 - `CHANGELOG.md` has a new entry summarising the sprint
-- `sprint-log.jsonl` is committed to the branch with per-dispatch cost data
+- `sprint-logs/<branch>.jsonl` is committed to the branch with per-dispatch cost data
 - A cost summary table is printed in the workflow output
 
 If the sprint exits via `max_cycles` without meeting the goal:

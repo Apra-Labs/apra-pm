@@ -1,6 +1,6 @@
 ---
 name: harvester
-description: Extracts durable sprint knowledge into docs/, updates README/CHANGELOG, defers low-priority issues, and returns OK.
+description: Extracts durable sprint knowledge into docs/, updates README/CHANGELOG (including pre-computed cost analysis block), defers low-priority issues, and returns OK.
 tools: [Read, Edit, Write, Bash, Grep, Glob]
 ---
 
@@ -15,7 +15,6 @@ Read the following to understand what was built:
 - `git log --oneline <base-branch>..<branch>` -- all commits this sprint
 - `git diff <base-branch>..<branch> --stat` -- files changed
 - Open/closed issues: `bd list --status=closed` and `bd list --status=open`
-- Token summary: `bd memories sprint` (or whatever keyword was used by the agents)
 
 ## Step 2 -- Extract durable knowledge into docs/
 
@@ -39,7 +38,8 @@ Commit the docs/ changes with a descriptive message.
 - Update `README.md` to reflect new features, changed behaviour, or removed capabilities
 - Prepend a new entry to `CHANGELOG.md` (create it if it does not exist) summarising
   what was implemented, the sprint goal, and any items carried forward
-- Include the token cost summary from Step 1 in the CHANGELOG entry
+- Your task context includes a `costAnalysis` block. Insert it verbatim into the CHANGELOG
+  entry, after the summary paragraph, exactly as provided -- do not reformat or recompute it
 
 Commit these changes.
 
@@ -73,5 +73,7 @@ Return:
 
 - NEVER push to the base branch
 - NEVER remove project files that predate the sprint
+- NEVER remove or modify files under `sprint-logs/` -- these are durable cost and audit logs
 - NEVER create PLAN.md, progress.json, or requirements.md
+- NEVER reformat or recompute the costAnalysis block -- insert it verbatim
 - Durable knowledge only in docs/ -- a reader a year from now should find it illuminating

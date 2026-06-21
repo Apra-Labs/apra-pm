@@ -27,7 +27,7 @@ For each epic create type=feature issues as direct children:
 - Title: a concrete deliverable ("User can reset password via email")
 - Description: what done looks like, who uses it, acceptance criteria
 - Priority: inherit from epic (P1) or set P2 for secondary features
-- Wire: `bd dep add <feature-id> <epic-id>` so the feature blocks the epic
+- Wire: `bd dep add <epic-id> <feature-id>` so the epic is blocked until the feature is done
 
 Each feature must be independently verifiable: integration tests either pass or fail.
 
@@ -47,10 +47,11 @@ For each feature create two classes of tasks:
 - Description: what to test, how to assert pass/fail, which tool/framework to use
 - Priority: same as its feature
 
-Wire dependencies:
-- `bd dep add <impl-task> <feature-id>` (impl tasks blocked until feature ready)
-- `bd dep add <test-task> <impl-task>` (test tasks blocked until all impl tasks complete)
-- Tasks that depend on other tasks: `bd dep add <child> <parent>`
+Wire dependencies (semantics: `bd dep add A B` means A is blocked by B -- B must finish before A can close):
+- `bd dep add <feature-id> <impl-task>` (feature blocked until impl task is done)
+- `bd dep add <feature-id> <test-task>` (feature blocked until test task is done)
+- `bd dep add <test-task> <impl-task>` (test task blocked until impl task is done)
+- For tasks that depend on a prior task: `bd dep add <later-task> <earlier-task>`
 
 ## Step 4 -- Validate your own DAG
 
