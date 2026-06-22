@@ -696,6 +696,31 @@ let sprintQuote = null;
 const sprintLogBranch = branch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'default';
 const sprintLogFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.jsonl`;
 const integTestEnabled = setup.deployMdExists && setup.playbookExists;
+// startedAt "20260622_020952" -> ISO "2026-06-22T02:09:52Z" (pure string, no Date.now())
+const sprintTs = setup.startedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
+let flushedCount = 0;  // how many dispatchLedger entries have been appended to sprintLogFile
+
+// Appends only the NEW (not yet flushed) ledger entries to the sprint log file,
+// commits, and pushes. Call after each meaningful agent boundary for JIT visibility.
+async function appendNewEntries(label, phase) {
+  const newEntries = dispatchLedger.slice(flushedCount);
+  if (newEntries.length === 0) return;
+  const lines = newEntries.map(e => JSON.stringify({ ts: sprintTs, ...e })).join('\n');
+  flushedCount = dispatchLedger.length;  // update before dispatch so log-append entry goes in next batch
+  await dispatch(
+    `Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+    `If the file does not exist, create it. If the sprint-logs/ directory does not exist, create it first:\n` +
+    `  mkdir -p "${repo}/sprint-logs"\n\n` +
+    `Lines to append (one JSON object per line):\n${lines}\n\n` +
+    `Then commit and push:\n` +
+    `  git -C "${repo}" add sprint-logs/\n` +
+    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-log ${label}"\n` +
+    `  git -C "${repo}" push origin ${branch}\n` +
+    `Do not modify any other file.`,
+    { model: MODEL_HAIKU, label: `log-append-${label}`, phase: phase || 'Develop',
+      context: `${newEntries.length} new entries` }
+  );
+}
 
 log(`Repo: ${repo} | Branch: ${setup.branch}`);
 log(`deploy.md: ${setup.deployMdExists} | integ-test-playbook.md: ${setup.playbookExists}`);
@@ -961,6 +986,9 @@ while (cycleCount < maxCycles) {
     } else {
       devFeedback = '';
     }
+
+    // JIT flush: append this iteration's entries immediately so the log grows as work lands.
+    await appendNewEntries(`iter-c${cycleCount}-i${devIter}`, 'Develop');
   }
 
   if (abortReason) break;
@@ -1044,6 +1072,9 @@ while (cycleCount < maxCycles) {
         `Run the Teardown section of integ-test-playbook.md to fully clean up the test environment.`,
         { model: MODEL_SONNET, label: `teardown-c${cycleCount}`, phase: 'Test', agentType: 'deployer' }
       );
+
+      // JIT flush: append test-phase entries (deployer, integ-runner, teardown) immediately.
+      await appendNewEntries(`test-c${cycleCount}`, 'Test');
     }
   }
 
@@ -1053,26 +1084,12 @@ while (cycleCount < maxCycles) {
   const currentOpenIds = (blockers.ids || []).slice().sort();
   log(`Exit check: ${blockers.count} open issues at P<=${threshold} -- IDs: [${currentOpenIds.join(', ')}]`);
 
-  // Flush this cycle's dispatch ledger BEFORE any early-exit so the log is always written.
-  // ts converts startedAt ("20260622_020952") to ISO 8601 ("2026-06-22T02:09:52Z") via string ops only.
-  const sprintTs = startedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
+  // Straggler flush: catches plan-phase, push, head-sha, check-blockers, and any entries
+  // not yet appended (e.g. when integ tests are disabled, or on abortReason paths).
   const cycleLedger = dispatchLedger.filter(e => e.cycle === cycleCount);
-  const jsonlLines = cycleLedger.map(e => JSON.stringify({ ts: sprintTs, ...e })).join('\n');
   const cycleTotal = cycleLedger.reduce((s, e) => s + e.costUsd, 0);
   log(`Cycle ${cycleCount} cost: $${cycleTotal.toFixed(4)} output across ${cycleLedger.length} dispatches`);
-  await dispatch(
-    `Append the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
-    `If the file does not exist, create it. If the sprint-logs/ directory does not exist, create it first:\n` +
-    `  mkdir -p "${repo}/sprint-logs"\n\n` +
-    `Lines to append:\n${jsonlLines}\n\n` +
-    `Then commit and push:\n` +
-    `  git -C "${repo}" add sprint-logs/\n` +
-    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-log cycle ${cycleCount}"\n` +
-    `  git -C "${repo}" push origin ${branch}\n` +
-    `Do not modify any other file.`,
-    { model: MODEL_HAIKU, label: `log-flush-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop',
-      context: `flushing ${cycleLedger.length} dispatch records` }
-  );
+  await appendNewEntries(`end-c${cycleCount}`, integTestEnabled ? 'Test' : 'Develop');
 
   // No-progress check: if no issue from the previous cycle was resolved, abort.
   if (cycleCount > 1 && prevOpenIds.length > 0) {
