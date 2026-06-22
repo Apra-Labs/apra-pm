@@ -1,6 +1,16 @@
 export const meta = {
   name: 'auto-sprint',
-  description: 'Multi-cycle sprint: plan -> develop -> test -> harvest until goal met',
+  description: `Multi-cycle sprint workflow: plan -> develop -> test -> harvest.
+
+args must be a JSON object (not a string) with these fields:
+  issues       REQUIRED. Array of beads epic IDs, e.g. ["BD-1","BD-2"].
+  branch       REQUIRED. Sprint branch name, e.g. "feat/auth". Created if it does not exist.
+  goal         Optional. Exit when no open issues at or above this priority. "P1" | "P1/P2" | "P1/P2/P3". Default: "P1/P2".
+  max_cycles   Optional. Hard cycle ceiling. Default: 5.
+  base_branch  Optional. PR target branch. Default: "main".
+  requirementsFile  Optional. Path to an additional context file for the planner.
+
+Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`,
   phases: [
     { title: 'Plan' },
     { title: 'Develop' },
