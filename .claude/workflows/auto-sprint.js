@@ -154,7 +154,7 @@ const SETUP_SCHEMA = {
     deployMdExists: { type: 'boolean' },
     playbookExists: { type: 'boolean' },
     startedAt:      { type: 'string', description: 'yyyymmdd_hhmmss from date +%Y%m%d_%H%M%S' },
-    calibration:    {},  // any JSON value or null; validated by computeSprintQuote()
+    calibrationRaw: { type: 'string' },  // verbatim stdout of cat calibration.json; JS parses it
   },
 };
 
@@ -681,13 +681,14 @@ const setup = await dispatch(
   `  If neither file has a ## Permissions section, skip this step.\n\n` +
   `Step 6: Load or bootstrap calibration data.\n` +
   `  If sprint-logs/calibration.json exists in the repo root:\n` +
-  `    Read it and return its contents as the "calibration" field.\n` +
+  `    Run: cat sprint-logs/calibration.json\n` +
+  `    Return the exact stdout of that command as the "calibrationRaw" field (verbatim -- do not reformat or summarize).\n` +
   `  If it does NOT exist (first run):\n` +
   `    Create the sprint-logs/ directory: mkdir -p sprint-logs\n` +
   `    Write the following JSON exactly to sprint-logs/calibration.json:\n` +
   JSON.stringify(DEFAULT_CALIBRATION, null, 2) + `\n` +
-  `    Return the same content as the "calibration" field.\n\n` +
-  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibration.`,
+  `    Return that same JSON text verbatim as the "calibrationRaw" field.\n\n` +
+  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibrationRaw.`,
   { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
 );
 
@@ -705,9 +706,22 @@ if (branch === 'main' || branch === 'master') {
   return { error: 'protected branch' };
 }
 
-// Setup always returns calibration (bootstrapping the file if needed). Fall back to
-// DEFAULT_CALIBRATION only if setup itself failed to return a value.
-const calibration = setup.calibration || DEFAULT_CALIBRATION;
+// Parse calibration from the raw string the setup agent returned verbatim.
+// Deep-merge with DEFAULT_CALIBRATION so any missing/new field always has a valid value.
+// historical gets its own merge because it accumulates real sprint history on top of the zeros.
+let _parsedCalib = {};
+try { _parsedCalib = JSON.parse(setup.calibrationRaw || '{}'); } catch {}
+const calibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
+  historical:                      Object.assign({}, DEFAULT_CALIBRATION.historical,                      _parsedCalib.historical                      || {}),
+  complexity_buckets:              _parsedCalib.complexity_buckets              || DEFAULT_CALIBRATION.complexity_buckets,
+  model_prices_per_1m_output_tokens: _parsedCalib.model_prices_per_1m_output_tokens || DEFAULT_CALIBRATION.model_prices_per_1m_output_tokens,
+  role_models:                     _parsedCalib.role_models                     || DEFAULT_CALIBRATION.role_models,
+  fixed_overhead_tokens:           _parsedCalib.fixed_overhead_tokens           || DEFAULT_CALIBRATION.fixed_overhead_tokens,
+  cycle_assumptions:               _parsedCalib.cycle_assumptions               || DEFAULT_CALIBRATION.cycle_assumptions,
+  reviewer_ratio:                  _parsedCalib.reviewer_ratio                  || DEFAULT_CALIBRATION.reviewer_ratio,
+  input_cost_multiplier:           _parsedCalib.input_cost_multiplier           || DEFAULT_CALIBRATION.input_cost_multiplier,
+  outlier_thresholds:              _parsedCalib.outlier_thresholds              || DEFAULT_CALIBRATION.outlier_thresholds,
+});
 // Sync output prices from loaded calibration so dispatchLedger uses correct rates.
 Object.assign(OUTPUT_PRICE_PER_M, calibration.model_prices_per_1m_output_tokens || {});
 
