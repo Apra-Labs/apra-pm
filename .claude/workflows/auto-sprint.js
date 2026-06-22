@@ -527,9 +527,12 @@ async function dispatch(prompt, opts) {
 
 
 async function countBeadsBlockers(thr, epics) {
+  // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
+  const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
   const cmds = [
-    ...epics.map(id => `bd graph --json ${id}`),
-    `bd list --status=open --json`,
+    ...epics.map(id => `bd graph --json ${id} | ${idExtract}`),
+    `bd list --status=open --json | ${openExtract}`,
   ];
   const r = await dispatch(
     `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
@@ -541,22 +544,25 @@ async function countBeadsBlockers(thr, epics) {
 
   const subtreeIds = new Set();
   for (let i = 0; i < epics.length; i++) {
-    try { (JSON.parse(r.outputs[i]).issues || []).forEach(x => subtreeIds.add(x.id)); } catch {}
+    (r.outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => subtreeIds.add(id));
   }
   let ids = [];
   try {
     const open = JSON.parse(r.outputs[epics.length]);
     ids = Array.isArray(open)
-      ? open.filter(x => subtreeIds.has(x.id) && x.priority <= thr).map(x => x.id)
+      ? open.filter(x => subtreeIds.has(x.id) && x.p <= thr).map(x => x.id)
       : [];
   } catch {}
   return { count: ids.length, ids };
 }
 
 async function getReadyStreaks(epicIds) {
+  // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
+  const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
   const cmds = [
-    ...epicIds.map(id => `bd graph --json ${id}`),
-    `bd list --ready --type=task --json`,
+    ...epicIds.map(id => `bd graph --json ${id} | ${idExtract}`),
+    `bd list --ready --type=task --json | ${taskExtract}`,
   ];
   const r = await dispatch(
     `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
@@ -568,7 +574,7 @@ async function getReadyStreaks(epicIds) {
 
   const subtreeIds = new Set();
   for (let i = 0; i < epicIds.length; i++) {
-    try { (JSON.parse(r.outputs[i]).issues || []).forEach(x => subtreeIds.add(x.id)); } catch {}
+    (r.outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => subtreeIds.add(id));
   }
   let readyTasks = [];
   try {
@@ -578,9 +584,9 @@ async function getReadyStreaks(epicIds) {
 
   const byModel = {};
   for (const t of readyTasks) {
-    const model = t.metadata?.model || MODEL_SONNET;
+    const model = t.m || MODEL_SONNET;
     if (!byModel[model]) byModel[model] = [];
-    byModel[model].push({ id: t.id, priority: t.priority });
+    byModel[model].push({ id: t.id, priority: t.p });
   }
   const streaks = Object.entries(byModel).map(([model, tasks]) => ({
     model,
@@ -605,9 +611,12 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
 }
 
 async function checkCycleState(epicIds) {
+  // Extract only the fields needed for planDone check to keep output small.
+  const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(d).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
+  const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
   const cmds = [
-    ...epicIds.map(id => `bd graph --json ${id}`),
-    `bd list --status=in_progress --type=task --json`,
+    ...epicIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
+    `bd list --status=in_progress --type=task --json | ${ipExtract}`,
   ];
   const r = await dispatch(
     `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
@@ -617,22 +626,19 @@ async function checkCycleState(epicIds) {
   );
   if (!r?.outputs || r.outputs.length < cmds.length) return { planDone: false, inProgressIds: [] };
 
-  let inProgressIds = [];
-  try {
-    const ip = JSON.parse(r.outputs[epicIds.length]);
-    inProgressIds = Array.isArray(ip) ? ip.map(t => t.id) : [];
-  } catch {}
+  const inProgressIds = (r.outputs[epicIds.length] || '').trim().split(/\s+/).filter(Boolean);
 
   const planDone = epicIds.every((_, i) => {
     try {
-      const issues   = JSON.parse(r.outputs[i]).issues || [];
-      const features = issues.filter(x => x.issue_type === 'feature');
+      const issues   = JSON.parse(r.outputs[i]);
+      if (!Array.isArray(issues)) return false;
+      const features = issues.filter(x => x.t === 'feature');
       if (features.length === 0) return false;
-      const openFts  = features.filter(x => x.status !== 'closed');
+      const openFts  = features.filter(x => x.s !== 'closed');
       if (openFts.length === 0) return true;
-      const tasks    = issues.filter(x => x.issue_type === 'task');
+      const tasks    = issues.filter(x => x.t === 'task');
       if (tasks.length === 0) return false;
-      return tasks.every(x => (x.description || '').trim().length > 0);
+      return tasks.every(x => x.d);
     } catch { return false; }
   });
 
