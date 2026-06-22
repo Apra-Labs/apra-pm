@@ -548,19 +548,28 @@ async function countBeadsBlockers(thr, epics) {
   return r || { count: 999, ids: [] };
 }
 
-async function getReadyStreaks() {
+async function getReadyStreaks(epicIds) {
+  const graphCmds = epicIds.map(id => `bd graph --compact ${id}`).join('\n');
   const r = await dispatch(
-    `Run these three commands to fetch ready tasks grouped by assigned model:\n` +
+    `Sprint epics: ${epicIds.join(', ')}\n\n` +
+    `Step 1: Get all issue IDs that are descendants of the sprint epics (features and tasks):\n` +
+    `${graphCmds}\n` +
+    `Collect every issue ID that appears in the output of those commands.\n\n` +
+    `Step 2: Get all globally ready tasks:\n` +
+    `  bd list --ready --type=task --json\n\n` +
+    `Step 3: INTERSECT -- keep only ready tasks whose ID appears in the epic subtree from Step 1.\n` +
+    `  Discard any ready task that is NOT a descendant of the sprint epics.\n` +
+    `  This prevents out-of-scope pre-existing tasks from entering the sprint.\n\n` +
+    `Step 4: Among the in-scope ready tasks, group by assigned model:\n` +
     `  bd list --ready --type=task --metadata-field model=${MODEL_HAIKU} --json\n` +
     `  bd list --ready --type=task --metadata-field model=${MODEL_SONNET} --json\n` +
     `  bd list --ready --type=task --metadata-field model=${MODEL_OPUS} --json\n` +
-    `Also run: bd list --ready --type=task --json\n` +
-    `  Any task ID in that last list but absent from the three model lists has no model\n` +
-    `  assigned; default those to "${MODEL_SONNET}".\n\n` +
-    `Build the streaks array: one entry per non-empty model group.\n` +
+    `  Any in-scope task absent from all three model lists has no model assigned;\n` +
+    `  default those to "${MODEL_SONNET}".\n\n` +
+    `Build the streaks array from the IN-SCOPE tasks only: one entry per non-empty model group.\n` +
     `Within each streak order IDs by priority (P0 first).\n` +
     `Order streaks by the highest priority task they contain (P0 first).\n` +
-    `totalCount = total number of ready tasks across all streaks.`,
+    `totalCount = total number of in-scope ready tasks across all streaks.`,
     { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop', schema: READY_STREAKS_SCHEMA }
   );
   return r || { totalCount: 0, streaks: [] };
@@ -659,6 +668,12 @@ if (!setup || !setup.repo || !setup.branch) {
 
 const repo = setup.repo;
 branch = setup.branch;  // use the confirmed/detected branch for all subsequent agent prompts
+
+// Refuse to run a sprint directly on a protected branch -- all work must go on a feature branch.
+if (branch === 'main' || branch === 'master') {
+  log(`ERROR: sprint branch resolved to "${branch}" -- refusing to run on a protected branch. Pass a branch arg to create or switch to a sprint branch.`);
+  return { error: 'protected branch' };
+}
 
 // Setup always returns calibration (bootstrapping the file if needed). Fall back to
 // DEFAULT_CALIBRATION only if setup itself failed to return a value.
@@ -859,7 +874,7 @@ while (cycleCount < maxCycles) {
   let devFeedback = '';
 
   while (devIter < MAX_DEV_ITER) {
-    const streakResult = await getReadyStreaks();
+    const streakResult = await getReadyStreaks(epicIds);
     if (streakResult.totalCount === 0) {
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
       break;
