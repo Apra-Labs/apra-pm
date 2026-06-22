@@ -1,13 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const src = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '../.claude/workflows/auto-sprint.js'),
+  'utf-8'
+);
+const match = src.match(/\/\/ PURE_FUNCTIONS_BEGIN[^\n]*\n([\s\S]*?)\/\/ PURE_FUNCTIONS_END/);
+if (!match) throw new Error('PURE_FUNCTIONS_BEGIN/END markers not found in auto-sprint.js');
+const {
   MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU,
   DEFAULT_CALIBRATION,
   reviewerModelFor,
   computeSprintQuote,
   computeSprintAnalysis,
   computeUpdatedCalibration,
-} from '../lib/sprint-cost.mjs';
+  // eslint-disable-next-line no-new-func
+} = new Function(`${match[1]}; return { MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU, DEFAULT_CALIBRATION, reviewerModelFor, computeSprintQuote, computeSprintAnalysis, computeUpdatedCalibration };`)();
 
 // -- reviewerModelFor ----------------------------------------------------------
 

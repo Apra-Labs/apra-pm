@@ -78,7 +78,7 @@ if (epicIds.length === 0) {
 const GOAL_THRESHOLD = { 'P1': 1, 'P1/P2': 2, 'P1/P2/P3': 3 };
 const threshold = GOAL_THRESHOLD[goal] || 2;
 
-// ------------------------------------------------------------------ models
+// PURE_FUNCTIONS_BEGIN -- extracted by test/sprint-cost.test.mjs via vm; keep this block self-contained
 
 const MODEL_OPUS   = 'claude-opus-4-8';
 const MODEL_SONNET = 'claude-sonnet-4-6';
@@ -295,8 +295,6 @@ const DEFAULT_CALIBRATION = {
 
 // ------------------------------------------------------------------ COST ARITHMETIC
 // All sprint cost computations are pure JavaScript -- no agent touches a number.
-// NOTE: these functions are duplicated in lib/sprint-cost.mjs (which exists only for
-// unit testing -- workflow scripts cannot import arbitrary files). Keep both in sync.
 
 // Reviewer model mirrors auto-sprint dispatch logic: max(taskModel, sonnet).
 function reviewerModelFor(taskModel) {
@@ -483,6 +481,8 @@ function computeUpdatedCalibration(calibration, analysis, startedAt) {
 
   return { ...calibration, historical: hist };
 }
+
+// PURE_FUNCTIONS_END
 
 function outputCostUsd(model, tokens) {
   const rate = OUTPUT_PRICE_PER_M[model] || OUTPUT_PRICE_PER_M[MODEL_SONNET];
