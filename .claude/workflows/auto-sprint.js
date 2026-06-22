@@ -113,24 +113,10 @@ const PLAN_REVIEW_SCHEMA = {
   },
 };
 
-const LOG_DATA_SCHEMA = {
-  type: 'object', required: ['entries'],
+const SHELL_OUTPUTS_SCHEMA = {
+  type: 'object', required: ['outputs'],
   properties: {
-    entries: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          cycle:     {},
-          phase:     { type: 'string' },
-          label:     { type: 'string' },
-          model:     { type: 'string' },
-          context:   { type: 'string' },
-          outTokens: { type: 'number' },
-          costUsd:   { type: 'number' },
-        },
-      },
-    },
+    outputs: { type: 'array', items: { type: 'string' } },
   },
 };
 
@@ -211,13 +197,6 @@ const INTEG_RUN_SCHEMA = {
 //               least one task with non-empty acceptance criteria; skip plan loop.
 // inProgressIds -- tasks currently in_progress; reset to open before the develop
 //                  loop so a crashed doer never orphans work forever.
-const CYCLE_STATE_SCHEMA = {
-  type: 'object', required: ['planDone', 'inProgressIds'],
-  properties: {
-    planDone:       { type: 'boolean' },
-    inProgressIds:  { type: 'array', items: { type: 'string' } },
-  },
-};
 
 // ------------------------------------------------------------------ helpers
 
@@ -355,6 +334,7 @@ function computeSprintQuote(taskAssignments, calibration) {
   const rm = calibration.role_models || {};
   let overheadUsd = 0;
   for (const [key, tokens] of Object.entries(overhead)) {
+    if (typeof tokens !== 'number') continue;
     if (key === 'log_flush_per_cycle') continue;
     const role  = key.replace(/_/g, '-');
     const model = rm[role] || MODEL_SONNET;
@@ -412,6 +392,7 @@ function computeSprintAnalysis(quote, logEntries, calibration, actualCycles) {
 
   let estOverheadTokens = 0, estOverheadUsd = 0;
   for (const [key, tokens] of Object.entries(overhead)) {
+    if (typeof tokens !== 'number') continue;
     const mult  = key === 'log_flush_per_cycle' ? estCycles : 1;
     const role  = key.replace(/_/g, '-');
     const model = key === 'log_flush_per_cycle' ? (rm['log-flush'] || MODEL_HAIKU) : (rm[role] || MODEL_SONNET);
@@ -482,7 +463,8 @@ function computeUpdatedCalibration(calibration, analysis, startedAt) {
   hist.roles           = hist.roles || {};
 
   for (const [role, data] of Object.entries(analysis.byRole)) {
-    const avg    = data.dispatches > 0 ? data.tokens / data.dispatches : 0;
+    if (data.tokens === 0) continue;
+    const avg    = data.tokens / data.dispatches;
     const prev_r = hist.roles[role] || { avg_output_tokens: null, sample_n: 0 };
     hist.roles[role] = {
       avg_output_tokens: blend(prev_r.avg_output_tokens, avg),
@@ -535,48 +517,68 @@ async function dispatch(prompt, opts) {
 
 
 async function countBeadsBlockers(thr, epics) {
-  const graphCmds = epics.map(id => `bd graph --compact ${id}`).join('\n');
+  const cmds = [
+    ...epics.map(id => `bd graph --json ${id}`),
+    `bd list --status=open --json`,
+  ];
   const r = await dispatch(
-    `Sprint epics: ${epics.join(', ')}\n\n` +
-    `Step 1: Collect ALL issue IDs that are descendants of the sprint epics:\n` +
-    `${graphCmds}\n` +
-    `Record every ID that appears in the output of those commands.\n\n` +
-    `Step 2: Get all open issues:\n` +
-    `  bd list --status=open\n\n` +
-    `Step 3: INTERSECT -- keep only open issues whose ID appears in the epic subtree from Step 1.\n` +
-    `  Discard any open issue that is NOT a descendant of the sprint epics.\n\n` +
-    `Step 4: From the intersected set, count only those with priority 0 through ${thr} (P0 to P${thr}).\n` +
-    `Return count (integer) and their beads IDs as an array.`,
-    { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop', schema: BEADS_BLOCKERS_SCHEMA }
+    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
+    `Do NOT summarize, reformat, or interpret the output.\n\n` +
+    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
+    { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop', schema: SHELL_OUTPUTS_SCHEMA }
   );
-  return r || { count: 999, ids: [] };
+  if (!r?.outputs || r.outputs.length < cmds.length) return { count: 999, ids: [] };
+
+  const subtreeIds = new Set();
+  for (let i = 0; i < epics.length; i++) {
+    try { (JSON.parse(r.outputs[i]).issues || []).forEach(x => subtreeIds.add(x.id)); } catch {}
+  }
+  let ids = [];
+  try {
+    const open = JSON.parse(r.outputs[epics.length]);
+    ids = Array.isArray(open)
+      ? open.filter(x => subtreeIds.has(x.id) && x.priority <= thr).map(x => x.id)
+      : [];
+  } catch {}
+  return { count: ids.length, ids };
 }
 
 async function getReadyStreaks(epicIds) {
-  const graphCmds = epicIds.map(id => `bd graph --compact ${id}`).join('\n');
+  const cmds = [
+    ...epicIds.map(id => `bd graph --json ${id}`),
+    `bd list --ready --type=task --json`,
+  ];
   const r = await dispatch(
-    `Sprint epics: ${epicIds.join(', ')}\n\n` +
-    `Step 1: Get all issue IDs that are descendants of the sprint epics (features and tasks):\n` +
-    `${graphCmds}\n` +
-    `Collect every issue ID that appears in the output of those commands.\n\n` +
-    `Step 2: Get all globally ready tasks:\n` +
-    `  bd list --ready --type=task --json\n\n` +
-    `Step 3: INTERSECT -- keep only ready tasks whose ID appears in the epic subtree from Step 1.\n` +
-    `  Discard any ready task that is NOT a descendant of the sprint epics.\n` +
-    `  This prevents out-of-scope pre-existing tasks from entering the sprint.\n\n` +
-    `Step 4: Among the in-scope ready tasks, group by assigned model:\n` +
-    `  bd list --ready --type=task --metadata-field model=${MODEL_HAIKU} --json\n` +
-    `  bd list --ready --type=task --metadata-field model=${MODEL_SONNET} --json\n` +
-    `  bd list --ready --type=task --metadata-field model=${MODEL_OPUS} --json\n` +
-    `  Any in-scope task absent from all three model lists has no model assigned;\n` +
-    `  default those to "${MODEL_SONNET}".\n\n` +
-    `Build the streaks array from the IN-SCOPE tasks only: one entry per non-empty model group.\n` +
-    `Within each streak order IDs by priority (P0 first).\n` +
-    `Order streaks by the highest priority task they contain (P0 first).\n` +
-    `totalCount = total number of in-scope ready tasks across all streaks.`,
-    { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop', schema: READY_STREAKS_SCHEMA }
+    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
+    `Do NOT summarize, reformat, or interpret the output.\n\n` +
+    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
+    { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop', schema: SHELL_OUTPUTS_SCHEMA }
   );
-  return r || { totalCount: 0, streaks: [] };
+  if (!r?.outputs || r.outputs.length < cmds.length) return { totalCount: 0, streaks: [] };
+
+  const subtreeIds = new Set();
+  for (let i = 0; i < epicIds.length; i++) {
+    try { (JSON.parse(r.outputs[i]).issues || []).forEach(x => subtreeIds.add(x.id)); } catch {}
+  }
+  let readyTasks = [];
+  try {
+    const all = JSON.parse(r.outputs[epicIds.length]);
+    readyTasks = Array.isArray(all) ? all.filter(t => subtreeIds.has(t.id)) : [];
+  } catch {}
+
+  const byModel = {};
+  for (const t of readyTasks) {
+    const model = t.metadata?.model || MODEL_SONNET;
+    if (!byModel[model]) byModel[model] = [];
+    byModel[model].push({ id: t.id, priority: t.priority });
+  }
+  const streaks = Object.entries(byModel).map(([model, tasks]) => ({
+    model,
+    ids: tasks.sort((a, b) => a.priority - b.priority).map(x => x.id),
+    _min: Math.min(...tasks.map(x => x.priority)),
+  })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
+
+  return { totalCount: readyTasks.length, streaks };
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
@@ -593,24 +595,38 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
 }
 
 async function checkCycleState(epicIds) {
-  const showCmds = epicIds.map(id => `bd show ${id}`).join('\n');
-  const graphCmds = epicIds.map(id => `bd graph --compact ${id}`).join('\n');
+  const cmds = [
+    ...epicIds.map(id => `bd graph --json ${id}`),
+    `bd list --status=in_progress --type=task --json`,
+  ];
   const r = await dispatch(
-    `Run each of these to inspect the sprint epics and their full dependency subtrees:\n` +
-    `${showCmds}\n` +
-    `${graphCmds}\n` +
-    `Run: bd list --status=in_progress\n\n` +
-    `From those outputs answer:\n\n` +
-    `planDone: true if ALL of the following hold --\n` +
-    `  - At least one type=feature issue appears in the dependency graph of each epic\n` +
-    `  - Every open feature has at least one type=task in its dependency graph\n` +
-    `  - Every task has a non-empty description (acceptance criteria present)\n` +
-    `  Set false if any of these conditions are not met.\n\n` +
-    `inProgressIds: list the IDs of ALL issues currently in_progress status.\n` +
-    `  These are orphaned from a previous crashed run and must be reset before work resumes.`,
-    { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan', schema: CYCLE_STATE_SCHEMA }
+    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
+    `Do NOT summarize, reformat, or interpret the output.\n\n` +
+    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
+    { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan', schema: SHELL_OUTPUTS_SCHEMA }
   );
-  return r || { planDone: false, inProgressIds: [] };
+  if (!r?.outputs || r.outputs.length < cmds.length) return { planDone: false, inProgressIds: [] };
+
+  let inProgressIds = [];
+  try {
+    const ip = JSON.parse(r.outputs[epicIds.length]);
+    inProgressIds = Array.isArray(ip) ? ip.map(t => t.id) : [];
+  } catch {}
+
+  const planDone = epicIds.every((_, i) => {
+    try {
+      const issues   = JSON.parse(r.outputs[i]).issues || [];
+      const features = issues.filter(x => x.issue_type === 'feature');
+      if (features.length === 0) return false;
+      const openFts  = features.filter(x => x.status !== 'closed');
+      if (openFts.length === 0) return true;
+      const tasks    = issues.filter(x => x.issue_type === 'task');
+      if (tasks.length === 0) return false;
+      return tasks.every(x => (x.description || '').trim().length > 0);
+    } catch { return false; }
+  });
+
+  return { planDone, inProgressIds };
 }
 
 // ------------------------------------------------------------------ STATE
@@ -1175,15 +1191,7 @@ if (!approved(finalReview)) {
 
 // ------------------------------------------------------------------ HARVEST
 
-// Read the sprint log JSONL so we can compute estimate-vs-actual in pure JS.
-const logReader = await dispatch(
-  `Read the sprint cost log and return its entries as structured data.\n\n` +
-  `Run: test -f "${sprintLogFile}" && cat "${sprintLogFile}" || echo "[]"\n\n` +
-  `The file is JSONL (one JSON object per line). Parse each line and return all entries in the entries array.\n` +
-  `If the file is missing or empty, return { entries: [] }.`,
-  { model: MODEL_HAIKU, label: 'log-reader', phase: 'Harvest', schema: LOG_DATA_SCHEMA }
-);
-const logEntries = (logReader && logReader.entries) || dispatchLedger;
+const logEntries = dispatchLedger;
 
 // Compute estimate-vs-actual analysis entirely in JS.
 const sprintAnalysis = computeSprintAnalysis(sprintQuote, logEntries, calibration, cycleCount);

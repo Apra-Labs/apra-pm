@@ -255,3 +255,31 @@ test('computeUpdatedCalibration: other calibration fields preserved', () => {
   assert.deepEqual(u.model_prices_per_1m_output_tokens, DEFAULT_CALIBRATION.model_prices_per_1m_output_tokens);
   assert.deepEqual(u.complexity_buckets, DEFAULT_CALIBRATION.complexity_buckets);
 });
+
+test('computeUpdatedCalibration: skips roles where all dispatches had zero tokens (cached replay)', () => {
+  const analysis = {
+    ...SAMPLE_ANALYSIS,
+    byRole: {
+      ...SAMPLE_ANALYSIS.byRole,
+      planner: { tokens: 0, costUsd: 0, dispatches: 2 },
+    },
+  };
+  const u = computeUpdatedCalibration(DEFAULT_CALIBRATION, analysis, '20260620_130000');
+  assert.equal(u.historical.roles['planner'], undefined);
+});
+
+test('computeSprintQuote: _doc strings in calibration.json do not cause NaN', () => {
+  const calWithDoc = JSON.parse(JSON.stringify(DEFAULT_CALIBRATION));
+  calWithDoc.fixed_overhead_tokens._doc = 'documentation string';
+  const q = computeSprintQuote([], calWithDoc);
+  assert.ok(!isNaN(q.scenarios.expected.outputOnly));
+  assert.ok(!isNaN(q.scenarios.expected.total));
+});
+
+test('computeSprintAnalysis: _doc strings in calibration.json do not cause NaN', () => {
+  const calWithDoc = JSON.parse(JSON.stringify(DEFAULT_CALIBRATION));
+  calWithDoc.fixed_overhead_tokens._doc = 'documentation string';
+  const r = computeSprintAnalysis(SAMPLE_QUOTE, SAMPLE_LOG, calWithDoc, 2);
+  assert.ok(!isNaN(r.totEstOutputUsd));
+  assert.ok(r.analysisText.includes('#### Sprint cost analysis'));
+});
