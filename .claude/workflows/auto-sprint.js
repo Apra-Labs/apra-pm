@@ -535,13 +535,17 @@ async function dispatch(prompt, opts) {
 
 
 async function countBeadsBlockers(thr, epics) {
-  const epicList = epics.join(' ');
+  const graphCmds = epics.map(id => `bd graph --compact ${id}`).join('\n');
   const r = await dispatch(
-    `Run: bd list --status=open\n` +
-    `From that output, identify all issues that are either:\n` +
-    `  (a) one of these epics: ${epicList}, or a descendant of them (run bd show <id> to check), or\n` +
-    `  (b) have a title containing "[integ]" (created by integration testing this sprint).\n` +
-    `Count only those with priority 0 through ${thr} (P0 to P${thr}).\n` +
+    `Sprint epics: ${epics.join(', ')}\n\n` +
+    `Step 1: Collect ALL issue IDs that are descendants of the sprint epics:\n` +
+    `${graphCmds}\n` +
+    `Record every ID that appears in the output of those commands.\n\n` +
+    `Step 2: Get all open issues:\n` +
+    `  bd list --status=open\n\n` +
+    `Step 3: INTERSECT -- keep only open issues whose ID appears in the epic subtree from Step 1.\n` +
+    `  Discard any open issue that is NOT a descendant of the sprint epics.\n\n` +
+    `Step 4: From the intersected set, count only those with priority 0 through ${thr} (P0 to P${thr}).\n` +
     `Return count (integer) and their beads IDs as an array.`,
     { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop', schema: BEADS_BLOCKERS_SCHEMA }
   );
@@ -1049,21 +1053,11 @@ while (cycleCount < maxCycles) {
   const currentOpenIds = (blockers.ids || []).slice().sort();
   log(`Exit check: ${blockers.count} open issues at P<=${threshold} -- IDs: [${currentOpenIds.join(', ')}]`);
 
-  // No-progress check: if no issue from the previous cycle was resolved, abort.
-  if (cycleCount > 1 && prevOpenIds.length > 0) {
-    const closedFromPrev = prevOpenIds.filter(id => !currentOpenIds.includes(id));
-    if (closedFromPrev.length === 0) {
-      log(`No progress in cycle ${cycleCount}: same ${prevOpenIds.length} issues unresolved -- aborting`);
-      abortReason = 'no progress';
-      break;
-    }
-    log(`Progress: ${closedFromPrev.length} issue(s) resolved this cycle`);
-  }
-
-  // Flush this cycle's dispatch ledger to sprint-logs/<branch>.jsonl in the repo.
-  // One file per branch so parallel sprints never collide.
+  // Flush this cycle's dispatch ledger BEFORE any early-exit so the log is always written.
+  // ts converts startedAt ("20260622_020952") to ISO 8601 ("2026-06-22T02:09:52Z") via string ops only.
+  const sprintTs = startedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
   const cycleLedger = dispatchLedger.filter(e => e.cycle === cycleCount);
-  const jsonlLines = cycleLedger.map(e => JSON.stringify(e)).join('\n');
+  const jsonlLines = cycleLedger.map(e => JSON.stringify({ ts: sprintTs, ...e })).join('\n');
   const cycleTotal = cycleLedger.reduce((s, e) => s + e.costUsd, 0);
   log(`Cycle ${cycleCount} cost: $${cycleTotal.toFixed(4)} output across ${cycleLedger.length} dispatches`);
   await dispatch(
@@ -1079,6 +1073,17 @@ while (cycleCount < maxCycles) {
     { model: MODEL_HAIKU, label: `log-flush-c${cycleCount}`, phase: integTestEnabled ? 'Test' : 'Develop',
       context: `flushing ${cycleLedger.length} dispatch records` }
   );
+
+  // No-progress check: if no issue from the previous cycle was resolved, abort.
+  if (cycleCount > 1 && prevOpenIds.length > 0) {
+    const closedFromPrev = prevOpenIds.filter(id => !currentOpenIds.includes(id));
+    if (closedFromPrev.length === 0) {
+      log(`No progress in cycle ${cycleCount}: same ${prevOpenIds.length} issues unresolved -- aborting`);
+      abortReason = 'no progress';
+      break;
+    }
+    log(`Progress: ${closedFromPrev.length} issue(s) resolved this cycle`);
+  }
 
   if (blockers.count === 0) {
     epicDone = true;
