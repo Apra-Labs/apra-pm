@@ -495,6 +495,92 @@ function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignm
   return { ...calibration, historical: hist };
 }
 
+// ---- shell-dispatch parsers (pure) -------------------------------------------
+// These parse the outputs[] array returned by the bounded Haiku shell dispatches
+// (countBeadsBlockers / getReadyStreaks / checkCycleState). Factoring the parse
+// logic out keeps it unit-testable and guarantees a single, side-effect-free
+// parse path -- the dispatch wrappers never loop or branch on parse failure, they
+// just feed outputs here and accept whatever this returns.
+//
+// `outputs` is the agent-returned array of strings (one per command). `epicCount`
+// is the number of leading `bd graph` ID-list commands; the final element is the
+// JSON list command. All functions degrade safely on missing/garbage input.
+
+// collectSubtreeIds: union the IDs from the leading epicCount whitespace-joined
+// ID-list outputs into a Set.
+function collectSubtreeIds(outputs, epicCount) {
+  const ids = new Set();
+  for (let i = 0; i < epicCount; i++) {
+    String(outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => ids.add(id));
+  }
+  return ids;
+}
+
+// parseBlockers: contract {count, ids} of open issues with priority<=thr inside
+// the epic subtree. Missing/short outputs => sentinel {count: 999, ids: []} so the
+// caller treats blockers as present (fail-safe, never exits the sprint early).
+function parseBlockers(outputs, epicCount, thr) {
+  if (!Array.isArray(outputs) || outputs.length < epicCount + 1) return { count: 999, ids: [] };
+  const subtree = collectSubtreeIds(outputs, epicCount);
+  let ids = [];
+  try {
+    const open = JSON.parse(outputs[epicCount]);
+    ids = Array.isArray(open)
+      ? open.filter(x => subtree.has(x.id) && x.p <= thr).map(x => x.id)
+      : [];
+  } catch { ids = []; }
+  return { count: ids.length, ids };
+}
+
+// parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks in the
+// subtree by model, ordered by min priority.
+function parseReadyStreaks(outputs, epicCount, defaultModel) {
+  if (!Array.isArray(outputs) || outputs.length < epicCount + 1) return { totalCount: 0, streaks: [] };
+  const subtree = collectSubtreeIds(outputs, epicCount);
+  let readyTasks = [];
+  try {
+    const all = JSON.parse(outputs[epicCount]);
+    readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
+  } catch { readyTasks = []; }
+
+  const byModel = {};
+  for (const t of readyTasks) {
+    const model = t.m || defaultModel;
+    if (!byModel[model]) byModel[model] = [];
+    byModel[model].push({ id: t.id, priority: t.p });
+  }
+  const streaks = Object.entries(byModel).map(([model, tasks]) => ({
+    model,
+    ids: tasks.slice().sort((a, b) => a.priority - b.priority).map(x => x.id),
+    _min: Math.min(...tasks.map(x => x.priority)),
+  })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
+
+  return { totalCount: readyTasks.length, streaks };
+}
+
+// parseCycleState: contract {planDone, inProgressIds}. planDone is true for an
+// epic when it has >=1 feature and either all features closed or every task has a
+// description. Missing/short outputs => {planDone: false, ...} (fail-safe: never
+// declares planning complete on bad input).
+function parseCycleState(outputs, epicCount) {
+  if (!Array.isArray(outputs) || outputs.length < epicCount + 1) return { planDone: false, inProgressIds: [] };
+  const inProgressIds = String(outputs[epicCount] || '').trim().split(/\s+/).filter(Boolean);
+  const planDone = Array.from({ length: epicCount }).every((_, i) => {
+    try {
+      const issues = JSON.parse(outputs[i]);
+      if (!Array.isArray(issues)) return false;
+      const features = issues.filter(x => x.t === 'feature');
+      if (features.length === 0) return false;
+      const openFts = features.filter(x => x.s !== 'closed');
+      if (openFts.length === 0) return true;
+      const tasks = issues.filter(x => x.t === 'task');
+      if (tasks.length === 0) return false;
+      return tasks.every(x => x.d);
+    } catch { return false; }
+  });
+  return { planDone, inProgressIds };
+}
+
 // buildSprintSummary assembles a structured human-readable end-of-sprint summary
 // from already-computed inputs. Pure function -- no I/O.
 //
@@ -592,6 +678,52 @@ async function dispatch(prompt, opts) {
 }
 
 
+// ------------------------------------------------------------ shell dispatch
+//
+// All three exit-check helpers below run a tiny, fixed set of read-only commands
+// (`bd graph --json <epic> | node-extract` plus one `bd list ... | node-extract`)
+// via a single Haiku dispatch and parse the result with a pure parser above.
+//
+// Latency-hardening (gh-7: check-blockers once took 12.5 min):
+//   * Root cause -- the dispatch prompt said "return each command's stdout
+//     verbatim" against a strict array-of-strings schema, with NO turn cap. A
+//     stray escaping/parse concern on the (potentially large) `bd graph` output
+//     made the agent re-run commands and re-emit output across many turns, so a
+//     5-second job could burn minutes. The node extractors already shrink output
+//     to an ID list / tiny JSON, so the only real failure mode was looping.
+//   * Fix -- (a) every shell dispatch is a SINGLE-ATTEMPT contract: maxTurns is
+//     bounded to (#commands + 1), so the agent physically cannot loop for
+//     minutes; (b) the prompt is explicit that it must run each command exactly
+//     once and never retry/re-run; (c) parsing is fully tolerant (pure parsers
+//     return a fail-safe sentinel on bad/short output) so there is never a reason
+//     to bounce work back to the agent.
+const SHELL_DISPATCH_PROMPT_HEADER =
+  `Run each command below EXACTLY ONCE, in order. Return each command's stdout ` +
+  `as one string element of outputs[] (same order; outputs.length must equal the ` +
+  `number of commands).\n` +
+  `Rules: do NOT summarize, reformat, interpret, or escape the output. Do NOT ` +
+  `re-run any command. Do NOT retry on empty or unexpected output -- an empty ` +
+  `string is a valid result; just return it. This is a single attempt: run, ` +
+  `capture, return, stop.\n\n`;
+
+function buildShellPrompt(cmds) {
+  return SHELL_DISPATCH_PROMPT_HEADER + cmds.map((c, i) => `${i + 1}. ${c}`).join('\n');
+}
+
+// Bound the agent to one turn per command plus a single wrap-up turn. The harness
+// stops the dispatch at maxTurns, so a misbehaving agent cannot stall for minutes.
+function shellMaxTurns(cmds) {
+  return cmds.length + 1;
+}
+
+async function dispatchShell(cmds, opts) {
+  return dispatch(buildShellPrompt(cmds), {
+    schema: SHELL_OUTPUTS_SCHEMA,
+    maxTurns: shellMaxTurns(cmds),
+    ...opts,
+  });
+}
+
 async function countBeadsBlockers(thr, epics) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
@@ -600,26 +732,8 @@ async function countBeadsBlockers(thr, epics) {
     ...epics.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --status=open --json | ${openExtract}`,
   ];
-  const r = await dispatch(
-    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
-    `Do NOT summarize, reformat, or interpret the output.\n\n` +
-    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
-    { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop', schema: SHELL_OUTPUTS_SCHEMA }
-  );
-  if (!r?.outputs || r.outputs.length < cmds.length) return { count: 999, ids: [] };
-
-  const subtreeIds = new Set();
-  for (let i = 0; i < epics.length; i++) {
-    (r.outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => subtreeIds.add(id));
-  }
-  let ids = [];
-  try {
-    const open = JSON.parse(r.outputs[epics.length]);
-    ids = Array.isArray(open)
-      ? open.filter(x => subtreeIds.has(x.id) && x.p <= thr).map(x => x.id)
-      : [];
-  } catch {}
-  return { count: ids.length, ids };
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop' });
+  return parseBlockers(r?.outputs, epics.length, thr);
 }
 
 async function getReadyStreaks(epicIds) {
@@ -630,37 +744,8 @@ async function getReadyStreaks(epicIds) {
     ...epicIds.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --ready --type=task --json | ${taskExtract}`,
   ];
-  const r = await dispatch(
-    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
-    `Do NOT summarize, reformat, or interpret the output.\n\n` +
-    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
-    { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop', schema: SHELL_OUTPUTS_SCHEMA }
-  );
-  if (!r?.outputs || r.outputs.length < cmds.length) return { totalCount: 0, streaks: [] };
-
-  const subtreeIds = new Set();
-  for (let i = 0; i < epicIds.length; i++) {
-    (r.outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => subtreeIds.add(id));
-  }
-  let readyTasks = [];
-  try {
-    const all = JSON.parse(r.outputs[epicIds.length]);
-    readyTasks = Array.isArray(all) ? all.filter(t => subtreeIds.has(t.id)) : [];
-  } catch {}
-
-  const byModel = {};
-  for (const t of readyTasks) {
-    const model = t.m || MODEL_SONNET;
-    if (!byModel[model]) byModel[model] = [];
-    byModel[model].push({ id: t.id, priority: t.p });
-  }
-  const streaks = Object.entries(byModel).map(([model, tasks]) => ({
-    model,
-    ids: tasks.sort((a, b) => a.priority - b.priority).map(x => x.id),
-    _min: Math.min(...tasks.map(x => x.priority)),
-  })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
-
-  return { totalCount: readyTasks.length, streaks };
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop' });
+  return parseReadyStreaks(r?.outputs, epicIds.length, MODEL_SONNET);
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
@@ -684,31 +769,8 @@ async function checkCycleState(epicIds) {
     ...epicIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
     `bd list --status=in_progress --type=task --json | ${ipExtract}`,
   ];
-  const r = await dispatch(
-    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
-    `Do NOT summarize, reformat, or interpret the output.\n\n` +
-    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
-    { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan', schema: SHELL_OUTPUTS_SCHEMA }
-  );
-  if (!r?.outputs || r.outputs.length < cmds.length) return { planDone: false, inProgressIds: [] };
-
-  const inProgressIds = (r.outputs[epicIds.length] || '').trim().split(/\s+/).filter(Boolean);
-
-  const planDone = epicIds.every((_, i) => {
-    try {
-      const issues   = JSON.parse(r.outputs[i]);
-      if (!Array.isArray(issues)) return false;
-      const features = issues.filter(x => x.t === 'feature');
-      if (features.length === 0) return false;
-      const openFts  = features.filter(x => x.s !== 'closed');
-      if (openFts.length === 0) return true;
-      const tasks    = issues.filter(x => x.t === 'task');
-      if (tasks.length === 0) return false;
-      return tasks.every(x => x.d);
-    } catch { return false; }
-  });
-
-  return { planDone, inProgressIds };
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan' });
+  return parseCycleState(r?.outputs, epicIds.length);
 }
 
 // ------------------------------------------------------------------ STATE
