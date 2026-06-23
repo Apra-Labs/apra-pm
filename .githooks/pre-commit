@@ -7,7 +7,7 @@ set -euo pipefail
 fail=0
 while IFS= read -r f; do
   [ -f "$f" ] || continue
-  case "$f" in *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf) continue ;; esac
+  case "$f" in *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.html) continue ;; esac
   match=$(perl -ne 'print "  $.: $_" if /[^\x00-\x7F]/' "$f" | head -5 || true)
   if [ -n "$match" ]; then
     echo "pre-commit: non-ASCII characters in $f:"
