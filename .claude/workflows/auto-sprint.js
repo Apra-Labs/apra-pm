@@ -495,6 +495,69 @@ function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignm
   return { ...calibration, historical: hist };
 }
 
+// buildSprintSummary assembles a structured human-readable end-of-sprint summary
+// from already-computed inputs. Pure function -- no I/O.
+//
+// Parameters:
+//   analysis      -- result of computeSprintAnalysis (analysisText, byRole, actualCycles, totActUsd...)
+//   sprintQuote   -- result of computeSprintQuote or null
+//   calibration   -- current calibration object
+//   opts          -- { branch, goal, epicDone, cycleCount, tasksCompleted, tasksOpen, startedAt }
+//
+// Returns: { summaryText }  -- markdown string suitable for writing to .analysis.md
+function buildSprintSummary(analysis, sprintQuote, calibration, opts) {
+  const { branch = '', goal = '', epicDone = false, cycleCount = 0,
+          tasksCompleted = 0, tasksOpen = 0, startedAt = '' } = opts || {};
+  const thr  = (calibration && calibration.outlier_thresholds) || { outlier_pct: 50, calibration_failure_pct: 100 };
+  const cycles = (calibration && calibration.cycle_assumptions) || {};
+  const estCycles = cycles.expected || 1;
+
+  // ---- goal / cycle section
+  const goalLine    = `**Goal:** ${goal || '(unset)'}  ->  ${epicDone ? 'MET' : 'NOT MET'}`;
+  const cyclesLine  = `**Cycles:** estimated ${estCycles}, actual ${cycleCount}`;
+  const tasksLine   = `**Tasks:** ${tasksCompleted} completed, ${tasksOpen} open/carried-forward`;
+
+  // ---- cost table (re-use the analysisText already computed)
+  const costSection = analysis ? analysis.analysisText : '(no cost analysis available)';
+
+  // ---- outlier role suggestions
+  const suggestions = [];
+  if (analysis && analysis.byRole) {
+    for (const [role, data] of Object.entries(analysis.byRole)) {
+      if (!data.tokens || !sprintQuote) continue;
+      const estTokensForRole = (sprintQuote.tasks || [])
+        .filter(t => t.role === role || (role === 'doer'))
+        .reduce((s, t) => s + (role === 'reviewer' ? t.reviewerTokens : t.doerTokens), 0);
+      if (estTokensForRole <= 0) continue;
+      const pctOver = (data.tokens - estTokensForRole) / estTokensForRole * 100;
+      if (Math.abs(pctOver) > thr.outlier_pct) {
+        const dir = pctOver > 0 ? 'over' : 'under';
+        suggestions.push(
+          `- \`${role}\` actual ${Math.round(Math.abs(pctOver))}% ${dir} estimate -> ` +
+          `consider ${pctOver > 0 ? 'bumping' : 'reducing'} \`fixed_overhead_tokens.${role.replace(/-/g, '_')}\` or bucket sizes`
+        );
+      }
+    }
+  }
+  const suggestSection = suggestions.length
+    ? `### Suggested calibration adjustments\n\n${suggestions.join('\n')}\n`
+    : `### Suggested calibration adjustments\n\n_No outliers detected -- calibration looks good._\n`;
+
+  const summaryText =
+    `# Sprint summary: ${branch}\n\n` +
+    `**Started:** ${startedAt || '(unknown)'}  \n` +
+    `${goalLine}  \n` +
+    `${cyclesLine}  \n` +
+    `${tasksLine}\n\n` +
+    `---\n\n` +
+    `### Cost analysis\n\n` +
+    costSection + `\n` +
+    `---\n\n` +
+    suggestSection;
+
+  return { summaryText };
+}
+
 // PURE_FUNCTIONS_END
 
 function outputCostUsd(model, tokens) {
@@ -1272,6 +1335,30 @@ const logEntries = dispatchLedger;
 // Compute estimate-vs-actual analysis entirely in JS.
 const sprintAnalysis = computeSprintAnalysis(sprintQuote, logEntries, calibration, cycleCount);
 log('Sprint cost analysis computed (JS):\n' + sprintAnalysis.analysisText);
+
+// Build structured summary and write sprint-logs/<branch>-<ts>.analysis.md artefact.
+const tasksCompleted = epicDone
+  ? (sprintQuote ? sprintQuote.tasks.length : 0)
+  : Math.max(0, (sprintQuote ? sprintQuote.tasks.length : 0) - prevOpenIds.length);
+const tasksOpen = epicDone ? 0 : prevOpenIds.length;
+const sprintSummary = buildSprintSummary(sprintAnalysis, sprintQuote, calibration, {
+  branch, goal, epicDone, cycleCount, tasksCompleted, tasksOpen, startedAt: setup.startedAt,
+});
+log('Sprint summary:\n' + sprintSummary.summaryText);
+const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.analysis.md`;
+await dispatch(
+  `Write sprint analysis artefact and commit.\n\n` +
+  `Step 1: Ensure sprint-logs/ directory exists:\n` +
+  `  mkdir -p "${repo}/sprint-logs"\n\n` +
+  `Step 2: Write the following content to "${repo}/${analysisArtifactFile}" (overwrite if exists):\n\n` +
+  sprintSummary.summaryText + `\n\n` +
+  `Step 3: Commit and push:\n` +
+  `  git -C "${repo}" add "${repo}/${analysisArtifactFile}"\n` +
+  `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-analysis ${branch} ${setup.startedAt}"\n` +
+  `  git -C "${repo}" push origin ${branch}\n` +
+  `Do not modify any other file. Return "OK" when done.`,
+  { model: MODEL_HAIKU, label: 'sprint-analysis-write', phase: 'Harvest' }
+);
 
 const harvestLabel = 'harvester';
 const harvestResult = await dispatch(
