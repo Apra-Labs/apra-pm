@@ -155,6 +155,7 @@ const SETUP_SCHEMA = {
     playbookExists: { type: 'boolean' },
     startedAt:      { type: 'string', description: 'yyyymmdd_hhmmss from date +%Y%m%d_%H%M%S' },
     calibrationRaw: { type: 'string' },  // verbatim stdout of cat calibration.json; JS parses it
+    transcriptDir:  { type: 'string', description: 'Directory where subagent JSONL conversation logs are written (best-effort; may be empty string if not resolvable)' },
   },
 };
 
@@ -696,7 +697,15 @@ const setup = await dispatch(
   `    Write the following JSON exactly to sprint-logs/calibration.json:\n` +
   JSON.stringify(DEFAULT_CALIBRATION, null, 2) + `\n` +
   `    Return that same JSON text verbatim as the "calibrationRaw" field.\n\n` +
-  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibrationRaw.`,
+  `Step 7: Resolve transcript directory.\n` +
+  `  Claude subagent conversation logs (JSONL) are stored under:\n` +
+  `    $HOME/.claude/projects/<project-slug>/\n` +
+  `  where <project-slug> is derived from the repo absolute path by uppercasing the\n` +
+  `  drive letter and replacing path separators with dashes.\n` +
+  `  Run: ls "$HOME/.claude/projects/" 2>/dev/null\n` +
+  `  Find the entry whose slug matches the repo path (e.g. repo=/c/foo/bar -> C--foo-bar).\n` +
+  `  If found, return the full path as transcriptDir. If not found, return an empty string.\n\n` +
+  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibrationRaw, transcriptDir.`,
   { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
 );
 
@@ -782,6 +791,32 @@ if (!integTestEnabled) log('Integration testing disabled for this sprint. Harves
 
 const epicSummary = epicIds.join(', ');
 log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
+
+// ------------------------------------------------------------------ SPRINT META RECORD
+// Write the first JSONL entry (type=meta) capturing sprint metadata and transcript dir.
+// This is benign for existing consumers: computeSprintAnalysis skips entries without a label.
+{
+  const metaLine = JSON.stringify({
+    ts: sprintTs, type: 'meta',
+    branch, startedAt: setup.startedAt,
+    epics: epicIds, goal,
+    transcriptDir: setup.transcriptDir || '',
+  });
+  await dispatch(
+    `Write sprint meta record and commit.\n\n` +
+    `Step 1: Ensure sprint-logs/ directory exists:\n` +
+    `  mkdir -p "${repo}/sprint-logs"\n\n` +
+    `Step 2: Append (do NOT overwrite) the following line to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+    `  If the file does not exist, create it first.\n\n` +
+    `Line:\n${metaLine}\n\n` +
+    `Step 3: Commit and push:\n` +
+    `  git -C "${repo}" add sprint-logs/\n` +
+    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-meta ${branch} ${setup.startedAt}"\n` +
+    `  git -C "${repo}" push origin ${branch}\n` +
+    `Do not modify any other file. Return "OK" when done.`,
+    { model: MODEL_HAIKU, label: 'sprint-meta', phase: 'Plan' }
+  );
+}
 
 // ------------------------------------------------------------------ EPIC LOOP
 
