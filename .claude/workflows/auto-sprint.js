@@ -751,12 +751,17 @@ let flushedCount = 0;  // how many dispatchLedger entries have been appended to 
 async function appendNewEntries(label, phase) {
   const newEntries = dispatchLedger.slice(flushedCount);
   if (newEntries.length === 0) return;
-  const lines = newEntries.map(e => JSON.stringify({ ts: sprintTs, ...e })).join('\n');
+  // ts placeholder is replaced by the agent with the real wall-clock time at flush,
+  // not the fixed sprint-start timestamp, so each flush batch gets its own timestamp.
+  const lines = newEntries.map(e => JSON.stringify({ ts: '__FLUSH_TS__', ...e })).join('\n');
   flushedCount = dispatchLedger.length;  // update before dispatch so log-append entry goes in next batch
   await dispatch(
-    `Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+    `Step 1: Run: date -u +%Y-%m-%dT%H:%M:%SZ\n` +
+    `Save the output as FLUSH_TS (e.g. "2026-06-22T22:15:30Z").\n\n` +
+    `Step 2: Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
     `If the file does not exist, create it. If the sprint-logs/ directory does not exist, create it first:\n` +
     `  mkdir -p "${repo}/sprint-logs"\n\n` +
+    `In the lines below, replace every occurrence of "__FLUSH_TS__" with the FLUSH_TS value from Step 1.\n` +
     `Lines to append (one JSON object per line):\n${lines}\n\n` +
     `Then commit and push:\n` +
     `  git -C "${repo}" add sprint-logs/\n` +
@@ -776,6 +781,9 @@ if (!integTestEnabled) log('Integration testing disabled for this sprint. Harves
 
 const epicSummary = epicIds.join(', ');
 log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
+
+// Flush setup-phase entries immediately so they land with a real timestamp.
+await appendNewEntries('setup', 'Plan');
 
 // ------------------------------------------------------------------ EPIC LOOP
 
@@ -939,6 +947,9 @@ while (cycleCount < maxCycles) {
     abortReason = 'plan not approved';
     break;
   }
+
+  // Flush plan-phase entries before entering Develop so they get their own timestamp.
+  await appendNewEntries(`plan-c${cycleCount}`, 'Plan');
 
   // ---------------------------------------------------------------- DEVELOP
 
@@ -1216,6 +1227,7 @@ log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);
 if (!approved(finalReview)) {
   const notes = (finalReview && finalReview.notes) || '';
   log(`Final review not approved -- aborting before harvest. Notes: ${notes.slice(0, 300)}`);
+  await appendNewEntries('harvest-abort', 'Harvest');
   return { cycles: cycleCount, epicDone, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
 }
 
@@ -1244,6 +1256,7 @@ const harvestResult = await dispatch(
 
 if (!harvestResult || harvestResult.status !== 'OK') {
   log(`Harvest failed: ${(harvestResult && harvestResult.notes) || 'null'} -- skipping PR`);
+  await appendNewEntries('harvest-failed', 'Harvest');
   return { cycles: cycleCount, epicDone, goal, harvest: 'failed' };
 }
 
@@ -1309,4 +1322,5 @@ log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
 log(`  (input token cost not included -- see ${sprintLogFile} for per-dispatch detail)`);
 log('================================================\n');
 
+await appendNewEntries('harvest', 'Harvest');
 return { cycles: cycleCount, epicDone, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
