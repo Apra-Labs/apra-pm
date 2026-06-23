@@ -1,15 +1,31 @@
-Reviewed branch feat/gh-6-7-8-9 vs main. Two files changed (.claude/workflows/auto-sprint.js, test/shell-dispatch.test.mjs), both justified by the four tasks. Full suite green: 66/66 pass (`node --test test/**/*.test.mjs`). Branch hygiene clean -- untracked bash.exe.stackdump / package-lock.json and the modified .beads/interactions.jsonl are local env artefacts, not committed to the branch.
+## apra-pm-r40 -- APPROVED
 
-APPROVED tasks:
+All 5 acceptance criteria are met with passing tests (tests 65-75 in the suite):
+1. `computeUpdatedCalibration: populates bucket_avg_tokens for exercised buckets` covers the per-bucket average assertion with a real taskId->bucket map and doer log entries.
+2. `accumulateBucketTokens: tokens split evenly across listed task IDs` covers multi-task entry token splitting.
+3. `computeUpdatedCalibration: blends bucket_avg_tokens against prior history` covers the blend-across-sprints case with correct arithmetic.
+4. `computeUpdatedCalibration: bucket join populated value flows into computeSprintQuote` covers the round-trip to computeSprintQuote using historical over default.
+5. `computeUpdatedCalibration: no doer log entries leaves bucket_avg_tokens unchanged` covers absent-bucket fallback.
 
-apra-pm-a6h (check-blockers hardening) -- strong. Root cause (no turn cap + "verbatim" prompt causing the agent to loop/re-emit) is documented in both the commit body and an in-code comment. Hardened by construction: new dispatchShell() sets maxTurns = cmds.length + 1, prompt forbids re-run/retry (SHELL_DISPATCH_PROMPT_HEADER, "EXACTLY ONCE"), and parsing moved to fail-safe pure parsers (parseBlockers/parseReadyStreaks/parseCycleState) so bad input never bounces back to the agent. Return contracts unchanged; parseReadyStreaks even fixes an in-place .sort() into .slice().sort(). 11 new tests cover the parsers plus 3 source-introspection tests asserting the bounded-dispatch wiring. Note: the bound depends on the harness honoring opts.maxTurns (agent() is a harness global); the wiring is correct and that is the only available mechanism.
+All 89 tests pass under `npm test`.
 
-apra-pm-c0r (transcript dir + meta record) -- met. SETUP_SCHEMA/setup prompt now resolve transcriptDir (slug derivation $HOME/.claude/projects/<C--path-with-dashes> matches the real harness slug format). type=meta JSONL line is written, committed, and pushed at sprint start (auto-sprint.js ~line 920), before the epic loop and before any appendNewEntries flush, so it is genuinely the first line. The meta line carries no `label`, and computeSprintAnalysis (line ~382) skips entries with no label, so it is benign for existing consumers. <=3 files.
+---
 
-apra-pm-zyr (persist taskAssignments + bucket) -- met. taskAssignments now held at workflow scope (line ~826) and passed to computeUpdatedCalibration at the close call site (line ~1449) without re-querying beads. computeSprintQuote behaviour unchanged (still built from the same planReview.taskAssignments array). Planner prompt updated to require a bucket per task; plan-reviewer schema already requires {id,bucket,model}. The bucket join itself is correctly deferred to apra-pm-jfc (param accepted via `void(taskAssignments)`), consistent with the task scope.
+## apra-pm-4k0 -- CHANGES NEEDED (reopened)
 
-CHANGES NEEDED -- apra-pm-9w9 (reopened):
-buildSprintSummary (auto-sprint.js ~lines 609-626) computes per-role estimate tokens by filtering sprintQuote.tasks with `t.role === role || (role === 'doer')`. But computeSprintQuote tasks have shape {id,bucket,model,doerTokens,reviewerTokens,outputUsd} (line ~338) -- there is NO `role` field. Consequences: for role 'reviewer', `t.role==='reviewer'` is always false and `role==='doer'` is false, so estTokensForRole is always 0 and the loop `continue`s; same for any overhead role. The "Suggested calibration adjustments" section can therefore ONLY ever fire for the doer role. The author clearly intended non-doer roles (the code builds `fixed_overhead_tokens.${role}` text and a reviewer estimate via t.reviewerTokens), so reviewer/overhead outliers are silently dropped -- this misses acceptance criterion #1 ("a suggested calibration adjustment for any outlier role"). Fix: compute the reviewer estimate from t.reviewerTokens and overhead-role estimates from calibration.fixed_overhead_tokens[role] (multiplied by estCycles where applicable) rather than filtering on a nonexistent t.role.
-Additionally, buildSprintSummary has zero test coverage (no test references buildSprintSummary/summaryText), so the suggestion logic -- the new value of this task -- is entirely unexercised; the bug above would have been caught by a single test with a reviewer outlier. (The dedicated test task apra-pm-4k0 is still open and blocked by 9w9, but the defect is a correctness bug in committed code, not merely deferred testing.) The artefact write/commit/push of sprint-logs/<branch>-<ts>.analysis.md and the unchanged analysisText/harvester contract are correct.
+File: `test/sprint-cost.test.mjs`, `buildSprintSummary` section (lines 409-530).
 
-Recommend: fix the role-estimate filter in buildSprintSummary and add at least one buildSprintSummary test covering a reviewer (non-doer) outlier producing a suggestion, then re-close apra-pm-9w9.
+**Gap 1 -- AC criterion 1 missing string assertions (test line 418-430):**
+The test `buildSprintSummary: returns summaryText string` asserts for header, branch name, goal text, 'MET', and suggestions section. It does NOT assert for:
+- "cycles estimated X actual Y" -- the AC explicitly requires `'cycles estimated X actual Y'` in the output (implementation: `**Cycles:** estimated ${estCycles}, actual ${cycleCount}` at auto-sprint.js line 646).
+- "tasks completed C open O" -- the AC explicitly requires `'tasks completed C open O'` (implementation: `**Tasks:** ${tasksCompleted} completed, ${tasksOpen} open/carried-forward` at line 647).
+- The cost table header row (e.g. `| role |` or `#### Sprint cost analysis`).
+
+Add assertions to this test (or a dedicated criterion-1 test) for these three required output fragments.
+
+**Gap 2 -- AC criterion 4 not-met wording unasserted:**
+AC criterion 4: "Goal-not-met path (epicDone=false) renders the not-met wording." Multiple tests pass `epicDone: false` (lines 447, 469, 495, 525) but none of them asserts that the string 'NOT MET' appears in `summaryText`. The implementation is correct (auto-sprint.js line 645: `${epicDone ? 'MET' : 'NOT MET'}`), but the AC requires the test to explicitly verify this path. Add: `assert.ok(summaryText.includes('NOT MET'), 'epicDone=false must render NOT MET')` to any one of the existing `epicDone: false` tests.
+
+---
+
+**File hygiene note (not blocking):** `feedback.md` (commit `7cf80f1`) was written by the previous reviewer cycle and is present on the branch. It is not justified by apra-pm-r40 or apra-pm-4k0 and should be removed before merge, but this is a workflow artefact issue rather than a task deliverable issue.
