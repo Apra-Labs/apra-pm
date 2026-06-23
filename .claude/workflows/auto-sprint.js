@@ -650,13 +650,33 @@ function buildSprintSummary(analysis, sprintQuote, calibration, opts) {
   const costSection = analysis ? analysis.analysisText : '(no cost analysis available)';
 
   // ---- outlier role suggestions
+  // sprintQuote.tasks have shape {id,bucket,model,doerTokens,reviewerTokens,outputUsd} -- no `role` field.
+  // Estimates per role:
+  //   doer     -> sum of t.doerTokens     across all tasks, scaled by estCycles
+  //   reviewer -> sum of t.reviewerTokens across all tasks, scaled by estCycles
+  //   overhead -> calibration.fixed_overhead_tokens[role_key] (log-flush scaled by estCycles)
+  const overhead = (calibration && calibration.fixed_overhead_tokens) || {};
   const suggestions = [];
   if (analysis && analysis.byRole) {
     for (const [role, data] of Object.entries(analysis.byRole)) {
-      if (!data.tokens || !sprintQuote) continue;
-      const estTokensForRole = (sprintQuote.tasks || [])
-        .filter(t => t.role === role || (role === 'doer'))
-        .reduce((s, t) => s + (role === 'reviewer' ? t.reviewerTokens : t.doerTokens), 0);
+      if (!data.tokens) continue;
+      let estTokensForRole = 0;
+      if (role === 'doer') {
+        if (!sprintQuote) continue;
+        estTokensForRole = (sprintQuote.tasks || [])
+          .reduce((s, t) => s + (t.doerTokens || 0), 0) * estCycles;
+      } else if (role === 'reviewer') {
+        if (!sprintQuote) continue;
+        estTokensForRole = (sprintQuote.tasks || [])
+          .reduce((s, t) => s + (t.reviewerTokens || 0), 0) * estCycles;
+      } else {
+        // overhead role: look up in fixed_overhead_tokens (keys use underscores)
+        const key = role.replace(/-/g, '_');
+        const tok = overhead[key];
+        if (typeof tok !== 'number') continue;
+        // log-flush runs once per cycle; other overhead roles run once per sprint
+        estTokensForRole = role === 'log-flush' ? tok * estCycles : tok;
+      }
       if (estTokensForRole <= 0) continue;
       const pctOver = (data.tokens - estTokensForRole) / estTokensForRole * 100;
       if (Math.abs(pctOver) > thr.outlier_pct) {
