@@ -473,22 +473,22 @@
 <div class="slide">
   <div class="label">Issue tracker</div>
   <h2>My issues are in Azure DevOps</h2>
-  <p class="sub">You already use beads. ADO / GitHub Issues / Jira stay as your source of truth &mdash; beads is just the local exit-gate signal the sprint loop polls.</p>
-  <div class="two-col">
+  <p class="sub">Use LLM + <code style="font-size:14px;display:inline;padding:2px 8px">az cli</code> to pull PBIs/Features from ADO into beads, then hand beads to auto-sprint.</p>
+  <div class="two-col" style="align-items:flex-start;gap:28px">
     <div class="col">
       <div class="col-title blue">Bridge pattern</div>
-      <ul class="blist">
-        <li><div class="dot"></div>Create one beads epic that mirrors your ADO epic or work item ID</li>
-        <li><div class="dot"></div>Pass that epic to auto-sprint &mdash; sprint loop polls beads, ADO stays source of truth</li>
-        <li><div class="dot"></div>Planner reads your requirementsFile for full ADO context; no ADO API access needed</li>
+      <ul class="blist" style="gap:12px">
+        <li><div class="dot"></div>Run <code style="font-size:13px;display:inline;padding:1px 7px">az boards work-item list</code> &rarr; ask LLM to create matching beads epics</li>
+        <li><div class="dot"></div>Pass those beads epics to auto-sprint &mdash; sprint loop polls beads for exit-gate signals</li>
+        <li><div class="dot"></div>ADO stays source of truth; auto-sprint never needs an ADO token</li>
       </ul>
     </div>
     <div class="col">
-      <div class="col-title purple">Why not poll ADO directly?</div>
-      <ul class="blist">
-        <li><div class="dot purple"></div>ADO rate limits would throttle per-iteration polling</li>
-        <li><div class="dot purple"></div>beads gives the workflow a fast, deterministic exit-gate signal</li>
-        <li><div class="dot purple"></div>Keeps the sprint loop offline-capable and repo-portable</li>
+      <div class="col-title purple">requirements.md</div>
+      <ul class="blist" style="gap:12px">
+        <li><div class="dot purple"></div>Dump ADO acceptance criteria, design notes, or constraints into <code style="font-size:13px;display:inline;padding:1px 7px">requirements.md</code></li>
+        <li><div class="dot purple"></div>Pass it via <code style="font-size:13px;display:inline;padding:1px 7px">requirementsFile</code> &mdash; planner reads it before making any decisions</li>
+        <li><div class="dot purple"></div>No API access needed &mdash; paste, copy, or generate the file however you like</li>
       </ul>
     </div>
   </div>
@@ -498,26 +498,26 @@
 <div class="slide">
   <div class="label">Preparation</div>
   <h2>Documents to prepare in advance</h2>
-  <p class="sub" style="margin-bottom:16px">Two are required. The rest unlock optional phases.</p>
+  <p class="sub" style="margin-bottom:16px">One is required. The rest unlock additional phases.</p>
   <div class="card-row">
     <div class="card" style="width:186px;border-top:3px solid #ef4444">
       <div class="icon">📋</div>
-      <div class="ctitle">beads epics <span style="color:#ef4444;font-size:11px;font-weight:700">required</span></div>
+      <div class="ctitle">beads epics</div>
       <div class="cdesc">At least one epic in beads describing what to build. One line is enough &mdash; the planner expands it.</div>
     </div>
     <div class="card" style="width:186px;border-top:3px solid #8b5cf6">
       <div class="icon">📄</div>
-      <div class="ctitle">requirements.md <span style="color:#64748b;font-size:11px">optional</span></div>
+      <div class="ctitle">requirements.md</div>
       <div class="cdesc">Detailed requirements, constraints, or design decisions. Passed via <code style="font-size:11px;display:inline;padding:1px 6px">requirementsFile</code>.</div>
     </div>
     <div class="card" style="width:186px;border-top:3px solid #3b82f6">
       <div class="icon">🚀</div>
-      <div class="ctitle">deploy.md <span style="color:#64748b;font-size:11px">optional</span></div>
-      <div class="cdesc">How to build, deploy, and smoke-test. Required only if you want the integration test phase to run.</div>
+      <div class="ctitle">deploy.md</div>
+      <div class="cdesc">How to build, deploy, and smoke-test. Activates the integration test phase.</div>
     </div>
     <div class="card" style="width:186px;border-top:3px solid #10b981">
       <div class="icon">🧪</div>
-      <div class="ctitle">integ-test-playbook.md <span style="color:#64748b;font-size:11px">optional</span></div>
+      <div class="ctitle">integ-test-playbook.md</div>
       <div class="cdesc">Setup / reset / teardown for the test environment. Paired with deploy.md to activate Phase 3.</div>
     </div>
   </div>
