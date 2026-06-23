@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Reject non-ASCII bytes in staged text files, keeping skill prose portable
+# (replace em-dash with --, smart quotes with ', drop emoji/section signs).
+# Enable with:  git config core.hooksPath .githooks
+set -euo pipefail
+
+fail=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  case "$f" in *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.html) continue ;; esac
+  case "$f" in .beads/*|.agents/*|.codex/*|AGENTS.md|CLAUDE.md) continue ;; esac
+  match=$(perl -ne 'print "  $.: $_" if /[^\x00-\x7F]/' "$f" | head -5 || true)
+  if [ -n "$match" ]; then
+    echo "pre-commit: non-ASCII characters in $f:"
+    echo "$match"
+    fail=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-commit: replace the characters above with ASCII and re-stage."
+  exit 1
+fi
+
+# --- BEGIN BEADS INTEGRATION v1.0.5 ---
+# This section is managed by beads. Do not remove these markers.
+if command -v bd >/dev/null 2>&1; then
+  export BD_GIT_HOOK=1
+  _bd_timeout=${BEADS_HOOK_TIMEOUT:-300}
+  _bd_used_perl=0
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$_bd_timeout" bd hooks run pre-commit "$@"
+    _bd_exit=$?
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$_bd_timeout" bd hooks run pre-commit "$@"
+    _bd_exit=$?
+  elif command -v perl >/dev/null 2>&1; then
+    _bd_used_perl=1
+    perl -e 'alarm shift; exec @ARGV' "$_bd_timeout" bd hooks run pre-commit "$@"
+    _bd_exit=$?
+  else
+    echo >&2 "beads: hook 'pre-commit' running without timeout; install coreutils or perl to enable BEADS_HOOK_TIMEOUT"
+    bd hooks run pre-commit "$@"
+    _bd_exit=$?
+  fi
+  if [ $_bd_exit -eq 124 ] || { [ $_bd_used_perl -eq 1 ] && [ $_bd_exit -eq 142 ]; }; then
+    echo >&2 "beads: hook 'pre-commit' timed out after ${_bd_timeout}s — continuing without beads"
+    _bd_exit=0
+  fi
+  if [ $_bd_exit -eq 3 ]; then
+    echo >&2 "beads: database not initialized — skipping hook 'pre-commit'"
+    _bd_exit=0
+  fi
+  if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
+fi
+# --- END BEADS INTEGRATION v1.0.5 ---
