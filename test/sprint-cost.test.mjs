@@ -17,8 +17,9 @@ const {
   computeSprintQuote,
   computeSprintAnalysis,
   computeUpdatedCalibration,
+  accumulateBucketTokens,
   // eslint-disable-next-line no-new-func
-} = new Function(`${match[1]}; return { MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU, DEFAULT_CALIBRATION, reviewerModelFor, computeSprintQuote, computeSprintAnalysis, computeUpdatedCalibration };`)();
+} = new Function(`${match[1]}; return { MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU, DEFAULT_CALIBRATION, reviewerModelFor, computeSprintQuote, computeSprintAnalysis, computeUpdatedCalibration, accumulateBucketTokens };`)();
 
 // -- reviewerModelFor ----------------------------------------------------------
 
@@ -277,6 +278,115 @@ test('computeUpdatedCalibration: skips roles where all dispatches had zero token
   };
   const u = computeUpdatedCalibration(DEFAULT_CALIBRATION, analysis, '20260620_130000');
   assert.equal(u.historical.roles['planner'], undefined);
+});
+
+// -- accumulateBucketTokens ----------------------------------------------------
+
+const BUCKET_ASSIGNMENTS = [
+  { id: 'BD-1', bucket: 'S', model: MODEL_SONNET },
+  { id: 'BD-2', bucket: 'M', model: MODEL_SONNET },
+  { id: 'BD-3', bucket: 'M', model: MODEL_OPUS },
+  { id: 'BD-4', bucket: 'L', model: MODEL_OPUS },
+];
+
+test('accumulateBucketTokens: single doer entry with one task attributes all tokens', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-1', outTokens: 600 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.equal(acc.S.tokens, 600);
+  assert.equal(acc.S.n, 1);
+  assert.equal(acc.M, undefined);
+  assert.equal(acc.L, undefined);
+});
+
+test('accumulateBucketTokens: tokens split evenly across listed task IDs', () => {
+  // BD-1 (S) + BD-2 (M) in one entry -> 1000 tokens split 500/500
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-1, BD-2', outTokens: 1000 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.equal(acc.S.tokens, 500);
+  assert.equal(acc.S.n, 1);
+  assert.equal(acc.M.tokens, 500);
+  assert.equal(acc.M.n, 1);
+});
+
+test('accumulateBucketTokens: two M-bucket IDs in one entry both counted as M', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-2, BD-3', outTokens: 2000 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  // both BD-2 and BD-3 are M -> 1000 each, n=2
+  assert.equal(acc.M.tokens, 2000);
+  assert.equal(acc.M.n, 2);
+});
+
+test('accumulateBucketTokens: ignores non-doer entries', () => {
+  const entries = [
+    { label: 'reviewer-c1-i1', context: 'reviewing tasks BD-1', outTokens: 500 },
+    { label: 'harvester',      context: '',                     outTokens: 800 },
+    { label: 'doer-c1-i1',     context: 'tasks BD-4',           outTokens: 3000 },
+  ];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.deepEqual(Object.keys(acc).sort(), ['L']);
+  assert.equal(acc.L.tokens, 3000);
+});
+
+test('accumulateBucketTokens: skips zero-token (cached) doer entries', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-1', outTokens: 0 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.deepEqual(acc, {});
+});
+
+test('accumulateBucketTokens: unmappable task IDs are skipped', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-99', outTokens: 600 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.deepEqual(acc, {});
+});
+
+test('accumulateBucketTokens: aggregates across multiple doer entries', () => {
+  const entries = [
+    { label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 1200 },
+    { label: 'doer-c2-i1', context: 'tasks BD-3', outTokens: 1600 },
+  ];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.equal(acc.M.tokens, 2800);
+  assert.equal(acc.M.n, 2);
+});
+
+// -- computeUpdatedCalibration bucket_avg_tokens join --------------------------
+
+test('computeUpdatedCalibration: populates bucket_avg_tokens for exercised buckets', () => {
+  const logEntries = [
+    { label: 'doer-c1-i1', context: 'tasks BD-1', outTokens: 600 },  // S
+    { label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 1400 }, // M
+  ];
+  const u = computeUpdatedCalibration(
+    DEFAULT_CALIBRATION, SAMPLE_ANALYSIS, '20260620_130000', BUCKET_ASSIGNMENTS, logEntries);
+  assert.equal(u.historical.bucket_avg_tokens.S, 600);
+  assert.equal(u.historical.bucket_avg_tokens.M, 1400);
+  // L never exercised -> stays absent so computeSprintQuote defaults apply
+  assert.equal(u.historical.bucket_avg_tokens.L, undefined);
+});
+
+test('computeUpdatedCalibration: blends bucket_avg_tokens against prior history', () => {
+  const cal = JSON.parse(JSON.stringify(DEFAULT_CALIBRATION));
+  cal.historical.sprints_sampled = 1;            // prev=1
+  cal.historical.bucket_avg_tokens = { M: 1000 };
+  const logEntries = [{ label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 2000 }]; // M=2000
+  const u = computeUpdatedCalibration(cal, SAMPLE_ANALYSIS, '20260621_090000', BUCKET_ASSIGNMENTS, logEntries);
+  // blend(1000, 2000) with prev=1, n=2 => (1000*1 + 2000)/2 = 1500
+  assert.equal(u.historical.bucket_avg_tokens.M, 1500);
+});
+
+test('computeUpdatedCalibration: bucket join populated value flows into computeSprintQuote', () => {
+  const logEntries = [{ label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 1800 }]; // M
+  const u = computeUpdatedCalibration(
+    DEFAULT_CALIBRATION, SAMPLE_ANALYSIS, '20260620_130000', BUCKET_ASSIGNMENTS, logEntries);
+  // sprints_sampled now >=1 and M has history -> quote uses 1800, not the 1400 default
+  const q = computeSprintQuote([{ id: 'X', bucket: 'M', model: MODEL_SONNET }], u);
+  assert.equal(q.tasks[0].doerTokens, 1800);
+});
+
+test('computeUpdatedCalibration: no doer log entries leaves bucket_avg_tokens unchanged', () => {
+  const u = computeUpdatedCalibration(
+    DEFAULT_CALIBRATION, SAMPLE_ANALYSIS, '20260620_130000', BUCKET_ASSIGNMENTS, []);
+  assert.deepEqual(u.historical.bucket_avg_tokens, {});
 });
 
 test('computeSprintQuote: _doc strings in calibration.json do not cause NaN', () => {

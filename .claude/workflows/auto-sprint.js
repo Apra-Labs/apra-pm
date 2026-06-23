@@ -459,7 +459,43 @@ function computeSprintAnalysis(quote, logEntries, calibration, actualCycles) {
   return { analysisText, byRole, actualCycles, totEstOutputUsd: totEstUsd, totEstTrueUsd: totEstUsd * inputMult, totActUsd };
 }
 
-function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignments) {
+// accumulateBucketTokens: join doer log entries back to their S/M/L buckets.
+// Each doer dispatch entry carries label 'doer-c<N>-i<M>' and context
+// 'tasks A, B, C'. We map every listed task ID to its bucket (via the
+// id->bucket map built from taskAssignments) and attribute the entry's
+// outTokens to those buckets, split evenly across the listed IDs that resolve
+// to a known bucket. Returns { S?:{tokens,n}, M?:..., L?:... } -- only buckets
+// that were actually exercised appear (absent buckets stay absent so
+// computeSprintQuote keeps using its calibration defaults).
+function accumulateBucketTokens(logEntries, taskAssignments) {
+  const bucketOf = {};
+  for (const t of (taskAssignments || [])) {
+    if (t && t.id != null && t.bucket != null) bucketOf[String(t.id)] = t.bucket;
+  }
+  const acc = {};
+  for (const e of (logEntries || [])) {
+    const label = e.label || '';
+    if (label.replace(/-c\d.*$/, '') !== 'doer') continue;       // doer entries only
+    const tokens = e.outTokens || 0;
+    if (tokens <= 0) continue;
+    const ctx = String(e.context || '');
+    const m   = ctx.match(/tasks\s+(.+)$/i);
+    if (!m) continue;
+    const ids = m[1].split(',').map(s => s.trim()).filter(Boolean);
+    // Resolve each listed ID to a bucket; skip IDs we can't map.
+    const buckets = ids.map(id => bucketOf[id]).filter(b => b != null);
+    if (buckets.length === 0) continue;
+    const share = tokens / buckets.length;                       // even split
+    for (const b of buckets) {
+      if (!acc[b]) acc[b] = { tokens: 0, n: 0 };
+      acc[b].tokens += share;
+      acc[b].n      += 1;
+    }
+  }
+  return acc;
+}
+
+function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignments, logEntries) {
   const hist = JSON.parse(JSON.stringify(calibration.historical || {}));
   const max  = hist.max_sprints_in_sample || 5;
   const prev = Math.min(hist.sprints_sampled || 0, max - 1);
@@ -485,12 +521,19 @@ function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignm
   const revTok  = analysis.byRole['reviewer']?.tokens || 0;
   if (doerTok > 0) hist.reviewer_ratio_avg = blend(hist.reviewer_ratio_avg, revTok / doerTok);
 
-  // bucket_avg_tokens join: taskAssignments (id->bucket) is now passed in from workflow
-  // scope. The actual per-task token data is in dispatchLedger context strings which are
-  // not available to this pure function; the join (BD-apra-pm-jfc) will read them from
-  // the sprint-log JSONL. taskAssignments is available here for that future join step.
-  // For now, bucket defaults in calibration.json remain the estimate source.
-  void (taskAssignments); // parameter accepted; full join handled by apra-pm-jfc
+  // bucket_avg_tokens join: attribute each doer log entry's outTokens to the
+  // S/M/L bucket(s) of the task IDs in its context string, then blend the
+  // per-bucket average into hist.bucket_avg_tokens using the same sprints_sampled
+  // accounting as roles above. Buckets with no data this sprint keep their prior
+  // value untouched (and unexercised buckets stay absent), so computeSprintQuote
+  // defaults still apply where we have no history.
+  hist.bucket_avg_tokens = hist.bucket_avg_tokens || {};
+  const bucketAcc = accumulateBucketTokens(logEntries, taskAssignments);
+  for (const [bucket, data] of Object.entries(bucketAcc)) {
+    if (data.n === 0) continue;
+    const avg = data.tokens / data.n;
+    hist.bucket_avg_tokens[bucket] = blend(hist.bucket_avg_tokens[bucket], avg);
+  }
 
   return { ...calibration, historical: hist };
 }
@@ -1446,7 +1489,7 @@ if (!harvestResult || harvestResult.status !== 'OK') {
 // Update historical averages in calibration.json after every successful sprint.
 // All arithmetic is in JS; the haiku agent only writes the resulting JSON file.
 
-const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt, taskAssignments);
+const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt, taskAssignments, logEntries);
 const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
 await dispatch(
   `Write updated calibration file and commit.\n\n` +
