@@ -458,7 +458,7 @@ function computeSprintAnalysis(quote, logEntries, calibration, actualCycles) {
   return { analysisText, byRole, actualCycles, totEstOutputUsd: totEstUsd, totEstTrueUsd: totEstUsd * inputMult, totActUsd };
 }
 
-function computeUpdatedCalibration(calibration, analysis, startedAt) {
+function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignments) {
   const hist = JSON.parse(JSON.stringify(calibration.historical || {}));
   const max  = hist.max_sprints_in_sample || 5;
   const prev = Math.min(hist.sprints_sampled || 0, max - 1);
@@ -484,10 +484,12 @@ function computeUpdatedCalibration(calibration, analysis, startedAt) {
   const revTok  = analysis.byRole['reviewer']?.tokens || 0;
   if (doerTok > 0) hist.reviewer_ratio_avg = blend(hist.reviewer_ratio_avg, revTok / doerTok);
 
-  // bucket_avg_tokens is intentionally not updated here: matching a doer log entry back
-  // to an S/M/L bucket requires joining task IDs in the log entry context field against
-  // the saved taskAssignments. That join is future work; bucket defaults in
-  // calibration.json remain the source for doer_tokens estimates until then.
+  // bucket_avg_tokens join: taskAssignments (id->bucket) is now passed in from workflow
+  // scope. The actual per-task token data is in dispatchLedger context strings which are
+  // not available to this pure function; the join (BD-apra-pm-jfc) will read them from
+  // the sprint-log JSONL. taskAssignments is available here for that future join step.
+  // For now, bucket defaults in calibration.json remain the estimate source.
+  void (taskAssignments); // parameter accepted; full join handled by apra-pm-jfc
 
   return { ...calibration, historical: hist };
 }
@@ -733,6 +735,10 @@ Object.assign(OUTPUT_PRICE_PER_M, calibration.model_prices_per_1m_output_tokens 
 
 // State for cost estimation -- populated after plan is APPROVED.
 let sprintQuote = null;
+// taskAssignments (id->bucket->model) from the last approved plan-review.
+// Held at workflow scope so computeUpdatedCalibration can join doer log entries
+// back to S/M/L buckets at sprint close without re-querying beads.
+let taskAssignments = [];
 
 // Derive a filename-safe version of the branch for sprint-logs/.
 // Replaces path separators and non-safe chars with dashes so that parallel
@@ -857,12 +863,14 @@ while (cycleCount < maxCycles) {
       `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
       `  Each task must be completable in one agent session (1-3 file changes max)\n` +
       `  Every task needs clear acceptance criteria in its description\n` +
-      `  - Assign each task a model based on complexity -- after creating or updating each\n` +
+      `  - Assign each task a model AND complexity bucket based on complexity -- after creating or updating each\n` +
       `    task, run: bd update <id> --set-metadata model=<model-id>\n` +
       `    Available models and when to use them:\n` +
       `      ${MODEL_HAIKU}  -- mechanical work: rename, config tweak, move file, simple wiring\n` +
       `      ${MODEL_SONNET} -- standard work: new function, test suite, API endpoint, refactor\n` +
       `      ${MODEL_OPUS}   -- hard work: architecture, multi-file design, ambiguous requirements\n` +
+      `    Complexity buckets (S/M/L) are assigned by the plan-reviewer based on task scope.\n` +
+      `    Every task MUST receive a bucket assignment -- tasks without a bucket cannot be cost-estimated.\n` +
       `  - Group tasks so consecutive tasks in dependency order share a model where\n` +
       `    possible -- this minimises model-switching overhead during execution\n` +
       (cycleCount > 1
@@ -906,10 +914,13 @@ while (cycleCount < maxCycles) {
       planApproved = true;
       log(`Plan APPROVED on cycle ${cycleCount} round ${pi + 1}`);
 
+      // Persist taskAssignments at workflow scope for the calibration join at sprint close.
+      taskAssignments = planReview.taskAssignments || [];
+
       // Compute sprint cost quote in pure JS -- no agent does arithmetic.
-      sprintQuote = computeSprintQuote(planReview.taskAssignments || [], calibration);
+      sprintQuote = computeSprintQuote(taskAssignments, calibration);
       const sc = sprintQuote.scenarios;
-      log(`Sprint quote (${sprintQuote.calibrationSource}, ${(planReview.taskAssignments || []).length} tasks): ` +
+      log(`Sprint quote (${sprintQuote.calibrationSource}, ${taskAssignments.length} tasks): ` +
           `output-only: opt=$${sc.optimistic.outputOnly.toFixed(3)} ` +
           `exp=$${sc.expected.outputOnly.toFixed(3)} ` +
           `pess=$${sc.pessimistic.outputOnly.toFixed(3)} ` +
@@ -1251,7 +1262,7 @@ if (!harvestResult || harvestResult.status !== 'OK') {
 // Update historical averages in calibration.json after every successful sprint.
 // All arithmetic is in JS; the haiku agent only writes the resulting JSON file.
 
-const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt);
+const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt, taskAssignments);
 const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
 await dispatch(
   `Write updated calibration file and commit.\n\n` +
