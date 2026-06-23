@@ -427,6 +427,15 @@ test('buildSprintSummary: returns summaryText string', () => {
   assert.ok(summaryText.includes('ship it'), 'must include goal');
   assert.ok(summaryText.includes('MET'), 'must show goal met/not met');
   assert.ok(summaryText.includes('Suggested calibration adjustments'), 'must include suggestions section');
+  // AC criterion 1: cycles line
+  assert.ok(summaryText.includes('estimated') && summaryText.includes('actual'),
+    'must include cycles estimated X actual Y');
+  // AC criterion 1: tasks line
+  assert.ok(summaryText.includes('completed') && summaryText.includes('open'),
+    'must include tasks completed C open O');
+  // AC criterion 1: cost table header row
+  assert.ok(summaryText.includes('#### Sprint cost analysis'),
+    'must include cost table header row');
 });
 
 test('buildSprintSummary: reviewer outlier produces a suggestion (non-doer role fix)', () => {
@@ -450,6 +459,8 @@ test('buildSprintSummary: reviewer outlier produces a suggestion (non-doer role 
   assert.ok(summaryText.includes('reviewer'), 'reviewer outlier suggestion must mention reviewer');
   assert.ok(summaryText.includes('over'), 'suggestion must say over estimate');
   assert.match(summaryText, /Suggested calibration adjustments/, 'must have suggestions section');
+  // AC criterion 4: epicDone=false must render NOT MET
+  assert.ok(summaryText.includes('NOT MET'), 'epicDone=false must render NOT MET');
 });
 
 test('buildSprintSummary: doer-only outlier produces suggestion but reviewer (within range) does not', () => {
