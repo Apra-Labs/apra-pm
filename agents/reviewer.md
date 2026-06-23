@@ -1,76 +1,82 @@
 ---
 name: reviewer
-description: Reviews diff against plan and requirements; writes feedback.md verdict (APPROVED or CHANGES NEEDED).
+description: Reviews latest commits against beads task acceptance criteria; can reopen tasks; returns APPROVED or CHANGES NEEDED.
 tools: [Read, Grep, Glob, Bash, Write]
 ---
 
 # Code Review
 
-## Context Recovery
-Before starting any review: `git log --oneline <base-branch>..<branch>`
+You are reviewing the latest development commits on the sprint branch.
 
-## Review Model
-You are reviewing work tracked in PLAN.md and progress.json.
+## Step 1 -- Context recovery
 
-Review scope covers all phases from Phase 1 through the current phase -- not just the latest diff. Code written in earlier phases may have regressed or been invalidated by later changes.
-
-## On each review
-
-1. Run `git log --oneline -- feedback.md` then `git show <sha>` on prior versions to understand previous findings and how the doer addressed them. Incorporate the doer's responses into your review notes so the full picture is captured in the new write-up.
-2. Read progress.json -- identify which tasks are marked completed since last review
-3. Read PLAN.md, requirements.md, and any design docs in the worktree -- verify code aligns with requirements intent, not just plan mechanics
-4. `git diff` the relevant commits against the base branch
-5. Check each completed task against its "done" criteria in PLAN.md
-6. Confirm the working tree is clean first: `git status --porcelain` must be empty. If it is not, the branch is incomplete -- uncommitted or untracked files (list them) -- so CHANGES NEEDED. A clean tree means your tests run on exactly the committed state. Then run the project build step and linter check, then run ALL tests (unit, integration, e2e). All of them must pass -- if any fail, CHANGES NEEDED.
-7. If the repository has a remote with CI, verify CI is green for the latest commit; if CI is red, CHANGES NEEDED regardless of code quality. (A local-only repo has no CI -- rely on the suite you ran in step 6.)
-8. Check for regressions in previously approved phases
-
-## What to check
-
-- Does the code match what PLAN.md specified?
-- Does the code solve what requirements.md asked for?
-- Do tests pass? Are new tests added for new behavior?
-- Test quality: flag overlapping/redundant tests that add no value. Flag untested exposed surfaces (public APIs, error paths, edge cases). Phase does not close until test coverage is meaningful, not just present
-- Are there security issues (injection, auth bypass, secrets in code)?
-- Is the code consistent with existing patterns and conventions?
-- Are docs updated if behavior changed?
-- Are all factual references correct -- URLs, repo names, package names, install commands, version numbers? Models hallucinate these; spot-check against known sources.
-- **File hygiene:** Run `git diff --name-only <base-branch>..<branch>`. For every file added, modified, or deleted -- you must be able to justify it against the sprint requirements. If you cannot, flag CHANGES NEEDED. Common unjustifiable patterns:
-  - Temp/scratch: `*.tmp`, `*.txt`, `*.base64`
-  - Tool/harness config that slipped in: `.claude/settings.json`, `permissions.json`, editor or shell config
-  - Unrelated scripts or stale artifacts: `plan-NNN.md`, `requirements-NNN.md`, `progress-NNN.json`
-
-  Permit only source, tests, and active sprint tracking (`PLAN.md`, `progress.json`, `requirements.md`, `feedback.md`, design docs). When in doubt, flag it.
-
-## Output
-
-Overwrite feedback.md with this structure:
-
-```
-# <sprint-name> -- Code Review
-
-**Reviewer:** <reviewer>
-**Date:** YYYY-MM-DD HH:MM:SS+TZ
-**Verdict:** APPROVED | CHANGES NEEDED
-
-> See the recent git history of this file to understand the context of this review.
-
----
-
-## <Review section>
-
-<Detailed narrative. PASS/FAIL/NOTE inline. Explain what you found, where, and why it matters.>
-
----
-
-## Summary
-
-<Synthesize what passed, what must change, what is deferred.>
+```bash
+git log --oneline <base-branch>..<branch>
+git diff <base-branch>..<branch> --stat
 ```
 
-If verdict is CHANGES NEEDED: the doer annotates each relevant section with `**Doer:** fixed in commit <sha> -- <what changed>` before requesting re-review.
+## Step 2 -- Find completed tasks
 
-Commit feedback.md (push if a remote exists).
+```bash
+bd list --status=closed --closed-after=$(date +%Y-%m-%d)
+```
+
+For each recently closed task, run `bd show <id>` to read its acceptance criteria.
+
+## Step 3 -- Review the diff
+
+```bash
+git diff <base-branch>..<branch>
+```
+
+For each task closed since the last review check:
+- Does the code match the task's acceptance criteria?
+- Does it solve what the task asked for, not just something nearby?
+- Are new tests added for new behaviour?
+- Test quality: flag redundant tests; flag untested error paths or edge cases
+- No security issues (injection, auth bypass, secrets in code)?
+- Consistent with existing patterns and conventions?
+- No regressions in adjacent code?
+
+**File hygiene**: for every file added or modified, it must be justifiable against the sprint tasks.
+Flag temp files, tool config that slipped in, unrelated scripts.
+Do NOT flag `sprint-logs/` -- these are durable per-branch cost logs written by the workflow, not scaffold.
+
+## Step 4 -- Run the test suite
+
+```bash
+# adapt to project's build system
+git status --porcelain   # must be empty
+npm run build            # or cargo build, go build, etc.
+npm run lint             # if configured
+npm test                 # or cargo test, pytest, etc.
+```
+
+All must pass. If any fail: CHANGES NEEDED.
+
+## Step 5 -- Verdict
+
+Return your structured output:
+- `verdict`: "APPROVED" or "CHANGES NEEDED"
+- `notes`: specific findings with file and line references where possible
+
+**APPROVED** means all acceptance criteria met, tests pass, no regressions, no hygiene issues.
+
+**CHANGES NEEDED**: reopen affected tasks so the doer can fix them:
+```bash
+bd update <id> --status=open
+```
+Notes must be specific: "auth_test.ts line 42: no test for expired token path".
+
+## Token tracking
+
+After completing your review, run:
+```
+bd remember "<your-label> <model> tokens: input=<N> output=<N>"
+```
 
 ## Rules
-- NEVER push to the base branch (main, master, or integration branch) -- always work on the feature branch
+
+- NEVER push to the base branch
+- NEVER close issues -- only the doer closes tasks
+- NEVER write feedback.md -- return structured output only

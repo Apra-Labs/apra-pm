@@ -14,10 +14,10 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: 'Suite to run. s1=Claude, s7=Gemini, s8=AGY, s9=OpenCode.'
+        description: 'Suite to run. s1=Claude, s7=Gemini, s8=AGY, s9=OpenCode, s10=Claude-PM-Workflow.'
         required: true
         type: choice
-        options: [s1, s7, s8, s9]
+        options: [s1, s7, s8, s9, s10]
       runner:
         description: 'Runner label override. Leave blank for default (self-hosted for all suites).'
         required: false
@@ -48,6 +48,7 @@ jobs:
             s7) P=gemini ;;
             s8) P=agy ;;
             s9) P=opencode ;;
+            s10) P=claude ;;
             *) echo "::error::unknown suite ${{ inputs.suite }}"; exit 1 ;;
           esac
           echo "provider=$P" >> "$GITHUB_OUTPUT"
@@ -120,6 +121,11 @@ jobs:
             test -f "$AGENTS_DIR/$a.md" || { echo "::error::agent $a missing at $AGENTS_DIR"; exit 1; }
           done
           echo "skill + 4 agents present under $CFG"
+          # s10 requires the auto-sprint workflow to be installed
+          if [ '${{ inputs.suite }}' = 's10' ]; then
+            test -f "$HOME/.claude/workflows/auto-sprint.js" || { echo "::error::auto-sprint workflow missing at $HOME/.claude/workflows/auto-sprint.js"; exit 1; }
+            echo "auto-sprint workflow present"
+          fi
 
       # The capability pm lives on: dispatching a subagent headlessly. This is
       # exactly what stalled agy (subagent invoke -> timeout). Catch it here in ~3 min

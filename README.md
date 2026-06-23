@@ -1,70 +1,121 @@
 # apra-pm
 
-A provider-agnostic **Project Manager** skill for AI coding harnesses. One
-orchestrator session drives four subagents -- `planner`, `plan-reviewer`, `doer`,
-`reviewer` -- across one or more parallel git worktrees, runs each task on a
-planner-chosen, complexity-matched model, and loops the plan-review and doer-review
-cycles to APPROVED and a PR.
+A project management package for AI coding harnesses. It ships two complementary
+surfaces that share the same eight agents:
 
-Sprint state lives in git (on each track's branch) and in a beads (`bd`) task DB.
-The orchestrator and all four agents run in one session under a single provider,
-sharing the local filesystem -- no server, no MCP.
+| Surface | Provider | Entry point | State store |
+|---|---|---|---|
+| **`pm` skill** | Any (Claude, AGY, OpenCode, Gemini, ...) | `/pm` in your harness | beads + git |
+| **`auto-sprint` workflow** | Claude Code only | `/auto-sprint` in Claude Code | beads (no PLAN.md) |
 
-## How it works
+The `pm` skill is the provider-agnostic path: invoke it in any harness and it
+drives the full plan -> develop -> harvest lifecycle via natural language.
 
-The orchestrator never writes code. It dispatches subagents and drives two loops:
+The `auto-sprint` workflow is Claude-only and fully deterministic: a JavaScript
+loop drives eight agents through repeating cycles until a user-defined quality
+bar (zero P1 issues, zero P1/P2 issues, etc.) is met or the cycle limit is reached.
+No agent ever decides whether to continue -- all routing is in the workflow script.
+
+## auto-sprint (Claude Code)
 
 ```
-requirements -> design -> plan (loop) -> execute (doer-review loop) -> deploy -> PR
+while (open issues above goal threshold > 0 AND cycles < max):
+  Plan       -- planner (opus) decomposes epics into a feature+task DAG in beads
+               plan-reviewer validates coverage, acceptance criteria, and assigns
+               a complexity bucket (S/M/L) and model to every task
+  Develop    -- doer works bd-ready tasks on the model the planner assigned;
+               reviewer approves or reopens (reviewer model >= sonnet)
+  Deploy     -- deployer follows deploy.md + integ-test-playbook.md
+  Test Run   -- integ-test-runner closes passing features, files bugs for failures
+  Teardown   -- deployer resets the test environment
+  Exit check -- beads query: are open issues above threshold? same set as last cycle?
+
+CI check (haiku, non-blocking): polls after Develop; gates before Harvest
+Harvest (once): harvester updates docs/CHANGELOG and raises PR
 ```
 
-- **Plan loop.** The `planner` writes `PLAN.md` (phase-ordered tasks, each with an
-  assigned model); the `plan-reviewer` approves or sends it back.
-- **Doer-review loop.** The `doer` implements one task at a time and stops at a
-  VERIFY checkpoint with tests passing; the `reviewer` reviews the diff and approves
-  or returns findings. Findings become tracked beads tasks so none are lost.
-- **Model per task.** The planner assigns each task a concrete model -- a fast model
-  for mechanical work, the strongest for hard design. Review and planning always run
-  on the strongest model.
-- **Parallel tracks.** Independent work splits into tracks, each with its own branch,
-  worktree, and full pipeline, running concurrently and integrated at the end.
+### Cost estimation and calibration
 
-See `skills/pm/SKILL.md` and its sub-docs (`worktrees.md`,
-`doer-reviewer-loop.md`, `sprint.md`, `beads.md`) for the full workflow, and
-`docs/pm-direction.md` for the design intent.
+After the plan is approved, the workflow produces a cost quote for the sprint --
+three scenarios (optimistic / expected / pessimistic) -- using per-task complexity
+buckets and the model each task was assigned. All arithmetic is pure JavaScript;
+no agent does any calculation.
+
+At sprint end, actual token spend (from the durable sprint log) is compared against
+the quote and written to CHANGELOG. The harvester then updates
+`sprint-logs/calibration.json` with rolling-average actuals, so each successive
+sprint produces tighter estimates. The calibration loop targets +-50% accuracy;
+500%+ deviation triggers a calibration failure flag.
+
+Model prices used for estimation: haiku $5/M, sonnet $15/M, opus $25/M output tokens.
+
+Sprint logs are durable per-branch outputs named
+`sprint-logs/<branch>-<yyyymmdd_hhmmss>.jsonl` and are never deleted.
+
+See `docs/sprint-workflow.md` for the full user guide.
+
+## pm skill (all providers)
+
+The `pm` skill drives the same agents via natural language from any harness.
+See `skills/pm/SKILL.md` and its sub-docs for the full workflow.
 
 ## Layout
 
 ```
-skills/pm/     the skill (SKILL.md + sub-docs the orchestrator reads on demand)
-agents/             planner, plan-reviewer, doer, reviewer definitions
-install.mjs         installer: copies the skill + agents into a provider config dir
-e2e/                end-to-end suite: drive the skill headless on the toy repo
-docs/               design intent
-.githooks/          pre-commit (ASCII-only guard)
+skills/pm/               the pm skill (SKILL.md + sub-docs)
+agents/                  eight sprint agent definitions (shared by both surfaces)
+.claude/workflows/       auto-sprint.js -- deterministic Claude Code workflow
+lib/                     sprint-cost.mjs -- testable cost arithmetic module
+test/                    sprint-cost.test.mjs -- 45 unit tests (npm test)
+sprint-logs/             calibration.json + per-sprint JSONL cost logs (durable)
+install.mjs              installer: copies skill + agents + workflow into provider config dir
+e2e/                     end-to-end suite: drive the skill headless on the toy repo
+docs/                    sprint-workflow.md user guide + design intent
+.githooks/               pre-commit (ASCII-only guard)
 ```
 
 ## Install
 
-Installs the skill and agents into your harness's config directory and grants the
-minimal permissions the orchestrator needs.
+Installs the skill, agents, and (for Claude) the workflow into your harness config.
 
 ```
-node install.mjs --llm claude     # or: gemini | agy   (default: claude)
+node install.mjs --llm claude     # or: gemini | agy | opencode   (default: claude)
 ```
 
 This writes:
-- `<configDir>/skills/pm/` -- the skill
-- `<configDir>/agents/*.md` -- the four agents
+- `<configDir>/skills/pm/` -- the pm skill
+- `<configDir>/agents/*.md` -- eight agents
 - `<configDir>/settings.json` -- minimal permissions (merged, non-destructive)
+- `~/.claude/workflows/auto-sprint.js` -- the auto-sprint workflow (claude only)
 
-Requires `git` and beads (`bd`) on PATH.
+Requires `git`, `gh` (GitHub CLI), and beads (`bd`) on PATH.
 
 ## Use
 
-Invoke the `pm` skill in your harness and give it a requirement. It drives the
-lifecycle above to a PR (or, for a local-only repo, a reviewed branch). For small,
-low-risk work it uses a lightweight single-cycle path instead of the full harness.
+**Claude Code** -- trigger the deterministic multi-cycle workflow:
+
+```
+/auto-sprint {"branch": "feat/auth-overhaul", "issues": ["BD-12", "BD-15"], "goal": "P1/P2"}
+```
+
+| Argument | Required | Default | Description |
+|---|---|---|---|
+| `branch` | yes | -- | Sprint branch. Created if it does not exist. |
+| `issues` | yes | -- | Beads epic IDs to implement this sprint. |
+| `goal` | no | `P1/P2` | Exit criterion: `P1`, `P1/P2`, or `P1/P2/P3`. |
+| `max_cycles` | no | `5` | Hard ceiling on sprint cycles. |
+| `requirementsFile` | no | -- | Additional context file for the planner. |
+| `base_branch` | no | `main` | PR target branch. |
+
+Deploy and integration test phases require `deploy.md` and `integ-test-playbook.md`
+in the project root; without them the workflow skips those phases and proceeds
+directly to harvest.
+
+**Other providers** -- invoke the pm skill:
+
+```
+/pm implement the auth overhaul epic (BD-12, BD-15) on branch feat/auth-overhaul
+```
 
 ## E2E
 

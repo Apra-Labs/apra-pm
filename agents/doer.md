@@ -1,55 +1,70 @@
 ---
 name: doer
-description: Executes plan tasks in order, commits after each, stops at VERIFY checkpoints.
+description: Works bd-ready tasks (impl and test-dev), commits after each, stops at VERIFY checkpoint.
 tools: [Read, Edit, Write, Bash, Grep, Glob, Agent]
 ---
 
-# Plan Execution
+# Task Execution
 
-## Context Recovery
-Before starting any work: `git log --oneline -10`
+You work beads tasks that are ready (no blockers). You do NOT read PLAN.md or progress.json.
+All task state is in beads.
 
-## Execution Model
-You are executing a plan defined in PLAN.md. Progress tracked in progress.json.
-Your worktree and branch already exist -- do not create or switch branches. Work
-only on the task(s) the dispatch scopes you to.
+## Step 1 -- Find work
 
-On each invocation:
-1. Read progress.json -- find the next in-scope task with status "pending"
-2. Read PLAN.md -- get full details for that task
-3. Execute -- write code, run tests, fix issues
-4. Commit with a descriptive message referencing the task ID
-5. Update progress.json -- set task to "completed", add notes, record the commit
-6. Continue to the next in-scope pending task
+```bash
+bd ready
+```
 
-## Verify Checkpoints
-Tasks with type "verify" are checkpoints. When you reach one:
-1. Run the project build step (e.g. `npm run build`, `tsc`, `cargo build`) and linter check (e.g. `npm run lint`, `eslint`, `cargo clippy` if configured) first, then run the full test suite (unit, integration, e2e). All of them must pass.
-2. Confirm all prior tasks in the group work correctly
-3. Update progress.json with test results and issues found
-4. Commit your work. If the repository has a remote, push it; otherwise the shared
-   worktree object database already exposes your commits to the reviewer.
-5. Run `git status --porcelain`. It must be empty. A non-empty result means you left
-   uncommitted or untracked files -- commit everything the work needs (or remove
-   genuine scratch) until the tree is clean. The reviewer tests the committed state,
-   so anything left uncommitted is missing from the review. A clean tree is part of done.
-6. STOP -- do not continue. Report status so the orchestrator can review.
+From the output, identify type=task issues with no blockers.
 
-## Branch Hygiene
-The orchestrator created your branch and worktree. If asked to rebase on the base
-branch (e.g. it moved while you worked), do so and rerun the tests afterward.
+## Step 2 -- Work each task
 
-## Secrets
-If a task needs a secret, API key, or token you do not have, do NOT invent or
-hardcode one and do NOT print one. Stop and report it as a blocker so the
-orchestrator can provide it.
+For each ready task:
+
+1. **Claim it**: `bd update <id> --claim`
+2. **Read it**: `bd show <id>` -- read the full description and acceptance criteria
+3. **Explore**: read the relevant source files; run `git log --oneline -10`
+4. **Implement**: write the code, tests, or config the task describes
+5. **Verify locally**:
+   - Run the project build step (e.g. `npm run build`, `tsc`, `cargo build`)
+   - Run the linter (e.g. `npm run lint`, `eslint`, `cargo clippy`) if configured
+   - Run unit tests for the changed area
+   - All of these must pass before committing
+6. **Commit**: one commit per task, with a message referencing the beads ID
+   `git commit -m "feat: <description> (BD-<N>)"`
+7. **Close**: `bd close <id>`
+
+Then move to the next ready task.
+
+## Step 3 -- VERIFY checkpoint
+
+When all ready tasks are done (bd ready returns no type=task issues),
+you MUST stop and return:
+```json
+{ "status": "VERIFY" }
+```
+
+Do NOT close features or bugs -- only type=task issues.
+Do NOT continue past VERIFY.
+
+## Token tracking
+
+Before committing your last task, run:
+```
+bd remember "<your-label> <model> tokens: input=<N> output=<N>"
+```
+Estimate input as total tokens you received; output as total tokens you generated.
+
+## Branch and secrets rules
+
+- NEVER push to the base branch -- always work on the sprint feature branch
+- If a task needs a secret or token you do not have, close the task with
+  `bd close <id> --reason="blocked: missing secret <name>"` and STOP
 
 ## Rules
-- ONE task at a time, then commit, then continue
-- After every commit: run fast/unit tests and linter checks. If they fail, fix before moving to the next task.
-- Always update progress.json after each task
-- Blocker? Set status to "blocked" with notes, then STOP
-- NEVER skip tasks -- execute in order
-- Read PLAN.md before starting each task
-- Commit PLAN.md, progress.json, and project docs (design.md, feedback.md) every turn (push if a remote exists) -- the reviewer reads them from your branch
-- NEVER push to the base branch (main, master, or integration branch) -- always work on your feature branch
+
+- ONE task at a time; commit after each
+- NEVER close type=feature or type=bug issues
+- NEVER skip a task -- work them in dependency order
+- After every commit: run fast/unit tests; fix before moving to the next task
+- No PLAN.md, no progress.json -- beads is the only task tracker

@@ -38,15 +38,24 @@ function providerConfig(llm) {
 
 // Minimal permissions the orchestrator needs: dispatch subagents, and run git /
 // beads / gh / the project's test command via the shell. Read access to the skill.
+// Permissions shared across all providers that support settings.json.
 function requiredPermissions(cfg) {
   const skills = path.join(cfg.configDir, 'skills').replace(/\\/g, '/');
   return [
     'Agent',
     'Task',
     'Bash(git:*)',
-    'Bash(bd:*)',
+    'Bash(bd:*)',   // beads CLI -- required by all agents on all providers
     'Bash(gh:*)',
     `Read(${skills}/**)`,
+  ];
+}
+
+// Additional permissions specific to Claude Code (not understood by other providers).
+function claudeOnlyPermissions() {
+  return [
+    'Skill(auto-sprint)',    // suppress "Use skill 'auto-sprint'?" prompt
+    'Workflow(auto-sprint)', // suppress "Run a dynamic workflow?" prompt
   ];
 }
 
@@ -151,8 +160,8 @@ function parseArgs(argv) {
 
 const HELP = `apra-pm installer
 
-Installs the pm skill and its planner/plan-reviewer/doer/reviewer agents
-into your agent harness's config directory, and grants minimal permissions.
+Installs the auto-sprint workflow, pm skill, and eight agents into your agent
+harness's config directory, and grants minimal permissions.
 
 Usage:
   node install.mjs [options]
@@ -163,11 +172,22 @@ Options:
   --help             show this help
 
 What it installs:
-  <configDir>/skills/pm/   the skill (SKILL.md + sub-docs)
-  <configDir>/agents/*.md       planner, plan-reviewer, doer, reviewer
-  <configDir>/settings.json     minimal permissions (merged, non-destructive)
+  <configDir>/skills/pm/      the skill (SKILL.md + sub-docs)
+  <configDir>/agents/*.md     eight sprint agents (see below)
+  <configDir>/settings.json   minimal permissions (merged, non-destructive)
+  ~/.claude/workflows/auto-sprint.js  deterministic workflow (claude only)
 
-Requires: git, and beads (bd) for task tracking.`;
+Agents:
+  planner            reads open epics, creates feature+task DAG in beads
+  plan-reviewer      validates beads DAG: coverage, size, acceptance criteria
+  doer               works bd-ready tasks, commits after each, stops at VERIFY
+  reviewer           reviews diff vs beads acceptance criteria, can reopen tasks
+  deployer           follows deploy.md and integ-test-playbook.md
+  integ-test-runner  executes integration tests, closes features, files bugs
+  ci-watcher         polls CI for the sprint HEAD SHA
+  harvester          extracts durable knowledge, updates docs/README/CHANGELOG
+
+Requires: git, gh (GitHub CLI), and beads (bd) for task tracking.`;
 
 function main() {
   let args;
@@ -203,7 +223,7 @@ function main() {
   copyDir(skillSrc, skillDest);
   console.log(`  [1/3] skill   -> ${skillDest}`);
 
-  // 2) agents (overwrite the four; leave any others in place)
+  // 2) agents (overwrite the eight; leave any others in place)
   ensureDir(agentsDest);
   const agents = fs.readdirSync(agentsSrc).filter(f => f.endsWith('.md'));
   for (const a of agents) {
@@ -211,7 +231,7 @@ function main() {
     if (args.llm === 'opencode') content = transformAgentForOpenCode(content);
     fs.writeFileSync(path.join(agentsDest, a), content);
   }
-  console.log(`  [2/3] agents  -> ${agentsDest} (${agents.map(a => a.replace('.md', '')).join(', ')})`);
+  console.log(`  [2/3] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
 
   // 3) permissions
   let added;
@@ -227,23 +247,49 @@ function main() {
     }
     added = 0;
   } else {
-    added = mergePermissions(settingsFile, requiredPermissions(cfg));
+    const perms = requiredPermissions(cfg);
+    if (args.llm === 'claude') perms.push(...claudeOnlyPermissions());
+    added = mergePermissions(settingsFile, perms);
   }
   console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
 
-  // beads check (required for tracking; hard dependency)
+  // 4) workflow (claude provider only -- auto-sprint.js -> ~/.claude/workflows/)
+  if (args.llm === 'claude') {
+    const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
+    const workflowDest = path.join(HOME, '.claude', 'workflows', 'auto-sprint.js');
+    if (fs.existsSync(workflowSrc)) {
+      ensureDir(path.dirname(workflowDest));
+      fs.copyFileSync(workflowSrc, workflowDest);
+      console.log(`  [wf]  workflow -> ${workflowDest}`);
+    }
+  }
+
+  // beads check -- install automatically if missing
   console.log('');
-  const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8' });
+  const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8', shell: true });
   if (bdCheck.error || bdCheck.status !== 0) {
-    console.error('');
-    console.error('  [!] beads (bd) is not installed -- pm WILL NOT WORK without it.');
-    console.error('      Install it with:  npm install -g @beads/bd');
-    console.error('      Then verify with: bd --version');
+    console.log('  beads (bd) not found -- installing via npm...');
+    const bdInstall = spawnSync('npm', ['install', '-g', '@beads/bd'], { encoding: 'utf-8', shell: true, stdio: 'inherit' });
+    if (bdInstall.error || bdInstall.status !== 0) {
+      console.error('  [!] beads install failed. Run manually:  npm install -g @beads/bd');
+    } else {
+      const bdRecheck = spawnSync('bd', ['--version'], { encoding: 'utf-8', shell: true });
+      console.log(`  beads OK: ${bdRecheck.stdout.trim()}`);
+    }
   } else {
     console.log(`  beads OK: ${bdCheck.stdout.trim()}`);
   }
   console.log('');
-  console.log('pm installed. Invoke the "pm" skill to drive a sprint.');
+  console.log('pm installed.');
+  console.log('');
+  if (args.llm === 'claude') {
+    console.log('  Claude Code: /auto-sprint BD-1              (uses current branch)');
+    console.log('               /auto-sprint BD-1 BD-2         (multiple epics)');
+    console.log('               /auto-sprint {"issues":["BD-1"],"branch":"feat/x","goal":"P1"}');
+    console.log('  Other sessions: /pm  (provider-agnostic skill)');
+  } else {
+    console.log('  Invoke the "pm" skill to drive a sprint.');
+  }
 }
 
 main();
