@@ -8,8 +8,10 @@ everything else runs normally).
 
 ## Source of the functions
 
-The pure functions live in `~/.claude/workflows/auto-sprint.js` (the user-level
-workflows directory, not the repo) between the markers:
+The pure functions live in `~/.apra-pm/auto-sprint.js` (the canonical
+provider-neutral location installed by `install.mjs`). On Claude Code, the
+installer also copies the same file to `~/.claude/workflows/auto-sprint.js` so
+the `/auto-sprint` workflow works natively. The functions are between the markers:
 
 ```
 // PURE_FUNCTIONS_BEGIN
@@ -21,7 +23,7 @@ The orchestrator extracts and runs them via Node.js `vm` -- no copy, no duplicat
 ```bash
 node -e "
 const fs  = require('fs');
-const src  = fs.readFileSync('~/.claude/workflows/auto-sprint.js', 'utf8');
+const src  = fs.readFileSync(require('os').homedir() + '/.apra-pm/auto-sprint.js', 'utf8');
 const block = src.slice(
   src.indexOf('// PURE_FUNCTIONS_BEGIN'),
   src.indexOf('// PURE_FUNCTIONS_END')
@@ -60,7 +62,7 @@ tier name to actual model ID lives exclusively in `TIER_TO_MODEL` inside
   ```bash
   node -e "
   const fs  = require('fs');
-  const src  = fs.readFileSync('~/.claude/workflows/auto-sprint.js', 'utf8');
+  const src  = fs.readFileSync(require('os').homedir() + '/.apra-pm/auto-sprint.js', 'utf8');
   const block = src.slice(src.indexOf('// PURE_FUNCTIONS_BEGIN'), src.indexOf('// PURE_FUNCTIONS_END'));
   const vm = require('vm'); const ctx = {}; vm.createContext(ctx); vm.runInContext(block, ctx);
   fs.mkdirSync('sprint-logs', { recursive: true });

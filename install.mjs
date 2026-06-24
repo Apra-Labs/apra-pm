@@ -175,7 +175,8 @@ What it installs:
   <configDir>/skills/pm/      the skill (SKILL.md + sub-docs)
   <configDir>/agents/*.md     eight sprint agents (see below)
   <configDir>/settings.json   minimal permissions (merged, non-destructive)
-  ~/.claude/workflows/auto-sprint.js  deterministic workflow (claude only)
+  ~/.apra-pm/auto-sprint.js   pure JS cost functions (all providers)
+  ~/.claude/workflows/auto-sprint.js  native /auto-sprint workflow (claude only)
 
 Agents:
   planner            reads open epics, creates feature+task DAG in beads
@@ -221,7 +222,7 @@ function main() {
   // 1) skill
   clearDir(skillDest);
   copyDir(skillSrc, skillDest);
-  console.log(`  [1/3] skill   -> ${skillDest}`);
+  console.log(`  [1/4] skill   -> ${skillDest}`);
 
   // 2) agents (overwrite the eight; leave any others in place)
   ensureDir(agentsDest);
@@ -231,7 +232,7 @@ function main() {
     if (args.llm === 'opencode') content = transformAgentForOpenCode(content);
     fs.writeFileSync(path.join(agentsDest, a), content);
   }
-  console.log(`  [2/3] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
+  console.log(`  [2/4] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
 
   // 3) permissions
   let added;
@@ -251,16 +252,25 @@ function main() {
     if (args.llm === 'claude') perms.push(...claudeOnlyPermissions());
     added = mergePermissions(settingsFile, perms);
   }
-  console.log(`  [3/3] perms   -> ${settingsFile} (${added} added)`);
+  console.log(`  [3/4] perms   -> ${settingsFile} (${added} added)`);
 
-  // 4) workflow (claude provider only -- auto-sprint.js -> ~/.claude/workflows/)
-  if (args.llm === 'claude') {
-    const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
-    const workflowDest = path.join(HOME, '.claude', 'workflows', 'auto-sprint.js');
-    if (fs.existsSync(workflowSrc)) {
-      ensureDir(path.dirname(workflowDest));
-      fs.copyFileSync(workflowSrc, workflowDest);
-      console.log(`  [wf]  workflow -> ${workflowDest}`);
+  // 4) workflow -- auto-sprint.js carries the pure JS cost functions used by
+  //    cost.md regardless of provider. Always install to ~/.apra-pm/auto-sprint.js
+  //    (the canonical provider-neutral location that cost.md references).
+  //    For Claude, also copy to ~/.claude/workflows/ so the /auto-sprint slash
+  //    command works natively in Claude Code.
+  const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
+  if (fs.existsSync(workflowSrc)) {
+    const canonicalDest = path.join(HOME, '.apra-pm', 'auto-sprint.js');
+    ensureDir(path.dirname(canonicalDest));
+    fs.copyFileSync(workflowSrc, canonicalDest);
+    console.log(`  [4/4] workflow -> ${canonicalDest}`);
+
+    if (args.llm === 'claude') {
+      const claudeDest = path.join(HOME, '.claude', 'workflows', 'auto-sprint.js');
+      ensureDir(path.dirname(claudeDest));
+      fs.copyFileSync(workflowSrc, claudeDest);
+      console.log(`        workflow -> ${claudeDest}  (Claude Code native)`);
     }
   }
 
