@@ -8,3 +8,7 @@
 {"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":486,"costUsd":0.0024}
 {"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"doer-c1-i0-4","model":"claude-sonnet-4-6","context":"tasks apra-pm-f98","outTokens":2794,"costUsd":0.0419}
 {"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"reviewer-c1-i1","model":"claude-sonnet-4-6","context":"reviewing tasks apra-pm-f98","outTokens":1776,"costUsd":0.0266}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i1","model":"claude-haiku-4-5","context":"9 new entries","outTokens":1156,"costUsd":0.0058}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":456,"costUsd":0.0023}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"doer-c1-i1-4","model":"claude-sonnet-4-6","context":"tasks apra-pm-pme","outTokens":2360,"costUsd":0.0354}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"reviewer-c1-i2","model":"claude-sonnet-4-6","context":"reviewing tasks apra-pm-pme","outTokens":2256,"costUsd":0.0338}
