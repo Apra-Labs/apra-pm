@@ -15,9 +15,10 @@
 // cache) is captured per run and reported in the summary for cost-regression tracking.
 //
 // Usage:
-//   node e2e/run-e2e.mjs [--suite s1] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr]
+//   node e2e/run-e2e.mjs [--suite s1,s10] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr]
 //
-// Selection: default is all suites. --suite picks one by id; --provider filters by
+// Selection: default is all suites. --suite accepts comma-separated IDs (e.g. s1,s10)
+// and may be repeated. Suites run in parallel via worker threads. --provider filters by
 // provider. The skill must be installed first (node install.mjs --llm <provider>).
 //
 // Auth: pushing the branch and opening the PR needs write access to the toy. Provide
@@ -34,6 +35,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { parseTelemetryFile, diagnoseFailure } from './extract-results.mjs';
 import { validateSprint } from './validate-sprint.mjs';
 import { postSummary } from './post-summary.mjs';
@@ -69,10 +71,10 @@ function which(bin) {
 }
 
 function parseArgs() {
-  const a = { suite: null, provider: null, timeout: 2700, keepPr: false };
+  const a = { suites: [], provider: null, timeout: 2700, keepPr: false };
   const v = process.argv.slice(2);
   for (let i = 0; i < v.length; i++) {
-    if (v[i] === '--suite') a.suite = v[++i];
+    if (v[i] === '--suite') a.suites.push(...v[++i].split(',').map((s) => s.trim()).filter(Boolean));
     else if (v[i] === '--provider') a.provider = v[++i];
     else if (v[i] === '--timeout') a.timeout = Number(v[++i]);
     else if (v[i] === '--keep-pr') a.keepPr = true;
@@ -91,10 +93,12 @@ function ghEnv(token) { return token ? { ...process.env, GH_TOKEN: token } : pro
 // Set PMLITE_E2E_TRUST_LLM=1 on self-hosted (private) runners where leakage
 // is not a concern and the LLM may need the token for gh CLI calls.
 function llmEnv() {
-  if (process.env.PMLITE_E2E_TRUST_LLM === '1') return process.env;
-  const e = { ...process.env };
-  delete e.GH_TOKEN;
-  delete e.E2E_GH_TOKEN;
+  const e = process.env.PMLITE_E2E_TRUST_LLM === '1' ? { ...process.env } : (() => {
+    const x = { ...process.env }; delete x.GH_TOKEN; delete x.E2E_GH_TOKEN; return x;
+  })();
+  // Workflows run as background tasks in Claude Code's print mode. Without this
+  // the process exits after 600s leaving the workflow unfinished.
+  e.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = '0';
   return e;
 }
 
@@ -134,7 +138,7 @@ function teardownPr(branch, token) {
 }
 
 function selectSuites(a) {
-  if (a.suite) return cfg.suites.filter((s) => s.id === a.suite);
+  if (a.suites.length) return cfg.suites.filter((s) => a.suites.includes(s.id));
   let s = cfg.suites;
   if (a.provider) s = s.filter((x) => x.provider === a.provider);
   return s;
@@ -197,6 +201,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
 
 function runSuite(suite, timeoutS, keepPr) {
   const res = { id: suite.id, provider: suite.provider, status: '', notes: '', pr: null, telemetry: null, gates: null };
+  res.os = process.platform;
   const { bin } = commandFor(suite.provider, '', suite.model);
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
@@ -227,12 +232,12 @@ function runSuite(suite, timeoutS, keepPr) {
     .replaceAll('{{BRANCH}}', branch);
   const { bin: cmd, args } = commandFor(suite.provider, prompt, suite.model);
 
-  console.log(`[${suite.id}] ${cmd} (cwd ${work}, branch ${branch}) ...`);
+  console.log(`[${suite.id}] ${cmd} (cwd ${repo}, branch ${branch}) ...`);
   let timedOut = false;
   if (suite.provider === 'agy') {
-    ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
+    ({ timedOut } = runAgy(cmd, args, repo, logPath, () => !!capturePr(branch, token), timeoutS));
   } else {
-    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
+    const r = spawnSync(cmd, args, { cwd: repo, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
     fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
     timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
   }
@@ -253,28 +258,36 @@ function runSuite(suite, timeoutS, keepPr) {
     res.notes = 'all validation gates passed';
   } else {
     const failed = res.gates.filter((g) => !g.pass).map((g) => g.name);
-    res.status = 'FAIL';
-    const why = timedOut ? `timed out after ${timeoutS}s; ` : '';
-    res.notes = `${why}gates failed: ${failed.join(', ')}`.trim();
-    if (timedOut && !res.pr) res.notes += `; ${diagnoseFailure(logPath)}`.replace(/; $/, '');
+    if (timedOut) {
+      res.status = 'INCOMPLETE';
+      res.notes = `timed out after ${timeoutS}s; partial gates failed: ${failed.join(', ')}`;
+      if (!res.pr) res.notes += `; ${diagnoseFailure(logPath)}`.replace(/; $/, '');
+    } else {
+      res.status = 'FAIL';
+      res.notes = `gates failed: ${failed.join(', ')}`;
+    }
   }
 
   if (!keepPr) teardownPr(branch, token);
   return res;
 }
 
-function main() {
+async function main() {
   const a = parseArgs();
   const suites = selectSuites(a);
   if (!suites.length) { console.error('no suites match the given filters'); process.exit(2); }
 
-  const results = [];
-  for (const s of suites) {
-    const r = runSuite(s, a.timeout, a.keepPr);
-    console.log(`[${r.id}] ${r.status} -- ${r.notes}`);
-    if (r.pr) console.log(`[${r.id}] commits: ${r.pr.commitsUrl}`);
-    results.push(r);
-  }
+  // Run all selected suites in parallel - each gets its own worker thread so the
+  // blocking spawnSync calls don't serialize wall-clock time.
+  const results = await Promise.all(suites.map((s) => new Promise((resolve, reject) => {
+    const w = new Worker(new URL(import.meta.url), { workerData: { suite: s, timeout: a.timeout, keepPr: a.keepPr } });
+    w.on('message', (r) => {
+      console.log(`[${r.id}] ${r.status} -- ${r.notes}`);
+      if (r.pr) console.log(`[${r.id}] commits: ${r.pr.commitsUrl}`);
+      resolve(r);
+    });
+    w.on('error', reject);
+  })));
 
   const outDir = path.join(E2E, '..', 'e2e-results');
   fs.mkdirSync(outDir, { recursive: true });
@@ -293,4 +306,10 @@ function main() {
   process.exit(results.some((r) => r.status === 'FAIL') ? 1 : 0);
 }
 
-main();
+// Worker entry point: run a single suite and post the result back to the parent.
+if (!isMainThread) {
+  const r = runSuite(workerData.suite, workerData.timeout, workerData.keepPr);
+  parentPort.postMessage(r);
+} else {
+  main();
+}
