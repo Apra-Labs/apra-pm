@@ -6,7 +6,7 @@ description: Project Manager skill. One orchestrator session drives planner, pla
 # pm -- Project Manager
 
 You are the orchestrator. From one session you drive a project's development by
-dispatching four kinds of subagent and looping until the work is APPROVED and a PR
+dispatching subagents across sprint-core and lifecycle-support roles, looping until the work is APPROVED and a PR
 is raised. You never write code yourself -- you dispatch, read verdicts, manage
 git and the task DB, and drive the loop.
 
@@ -27,10 +27,17 @@ All sprint state is held in:
 On every dispatch completion and after any restart, re-derive position from git and
 beads -- they are the single source of truth.
 
-## The four roles
+## Role taxonomy
 
-Four subagent roles carry the work. They communicate only through files on the
-track's branch:
+Eight subagent roles carry the work. Roles are split into two groups:
+
+**Sprint core (every cycle):** planner, plan-reviewer, doer, reviewer
+
+**Lifecycle support (as needed):** deployer, integ-test-runner, ci-watcher, harvester
+
+All roles communicate only through files on the track's branch.
+
+### Sprint-core roles
 
 - `planner` -- reads `requirements.md` (and `design.md` if present), writes
   `PLAN.md` (phase-ordered tasks, each with an assigned model).
@@ -40,6 +47,20 @@ track's branch:
   after each, STOPS at every VERIFY checkpoint.
 - `reviewer` -- reads the diff + `progress.json` + `PLAN.md`, writes `feedback.md`
   (`APPROVED` / `CHANGES NEEDED`).
+
+### Lifecycle-support roles
+
+PM dispatches these roles only when specific conditions are met:
+
+- `deployer` -- dispatched after a reviewer APPROVED streak, when `deploy.md` is
+  present in the track's worktree; runs the deploy runbook.
+- `integ-test-runner` -- dispatched after a successful deploy, when
+  `integ-test-playbook.md` is present; executes integration tests against the
+  deployed environment.
+- `ci-watcher` -- polled inline by PM (not dispatched as a subagent) when waiting
+  for CI green; PM runs `gh` CLI directly (R13).
+- `harvester` -- dispatched at sprint close to extract knowledge and write entries
+  into `docs/CHANGELOG`.
 
 ## Tracks and parallelism
 
@@ -64,7 +85,7 @@ files, so concurrent tracks never collide. See `worktrees.md` for topology and
 Each dispatch is one inline subagent call. It carries everything the agent
 needs in the prompt, since agents share the filesystem:
 
-- **Role** -- one of the four above.
+- **Role** -- one of the roles listed in the taxonomy above.
 - **Prompt** -- pins the track's worktree (absolute path + branch) and states the
   task. Per-role templates are in `doer-reviewer-loop.md`.
 - **Inline** -- dispatch a subagent and receive its result in the same turn, then
