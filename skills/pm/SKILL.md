@@ -5,6 +5,9 @@ description: Project Manager skill. One orchestrator session drives planner, pla
 
 # pm -- Project Manager
 
+> **Routing note -- /pm vs /auto-sprint**
+> `/auto-sprint` is a deterministic JS workflow that orchestrates sprint roles locally by default. Fleet members extend its reach: a member with Claude, AGY, or OpenCode handles roles on a separate machine or with a different model; a member with no LLM provider can run deployer, integ-test-runner, or ci-watcher tasks directly as shell commands. `/pm` is the skill-based entry point and works with any provider, including non-Claude.
+
 You are the orchestrator. From one session you drive a project's development by
 dispatching subagents across sprint-core and lifecycle-support roles, looping until the work is APPROVED and a PR
 is raised. You never write code yourself -- you dispatch, read verdicts, manage
@@ -61,6 +64,8 @@ PM dispatches these roles only when specific conditions are met:
   for CI green; PM runs `gh` CLI directly (R13).
 - `harvester` -- dispatched at sprint close to extract knowledge and write entries
   into `docs/CHANGELOG`.
+
+> **Overlap with /auto-sprint:** The lifecycle agents (deployer, integ-test-runner, ci-watcher, harvester) are also used by the `/auto-sprint` workflow. When a fleet member is registered for an execution role, auto-sprint can delegate to it regardless of the member LLM provider.
 
 ## Tracks and parallelism
 
