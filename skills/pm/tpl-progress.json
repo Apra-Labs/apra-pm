@@ -5,7 +5,7 @@
   "base": "<base-branch>",
   "worktree": "<absolute worktree path>",
   "transport": "remote | local",
-  "epic": "<beads epic id>",
+  "sprint_root": "<beads sprint root id>",
   "lastDispatchedPhase": null,
   "tasks": [
     {

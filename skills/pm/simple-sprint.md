@@ -16,7 +16,7 @@ out bigger than expected, promote to a full sprint.
 ## Flow
 
 1. Write a concise requirements.md on the branch and commit.
-2. Create a small beads epic + a task per item, each with `--acceptance="..."` and a
+2. Create a small beads sprint root + a task per item, each with `--acceptance="..."` and a
    `--notes="model: <tier>"` tag.
 3. Dispatch the doer (tier sized to the work). The doer claims each task
    (`bd update <id> --claim`), implements, commits, pushes, and closes it
@@ -49,7 +49,7 @@ out bigger than expected, promote to a full sprint.
 
 Recovery relies on beads and git history.
 
-1. `bd list --tree <epic-id>` (and `bd ready`) -- what is open, in progress, closed.
+1. `bd list --tree <sprint-id>` (and `bd ready`) -- what is open, in progress, closed.
 2. Per worktree: `git log --oneline -5` -- any commits since last known state?
 3. `git status` -- uncommitted changes?
 

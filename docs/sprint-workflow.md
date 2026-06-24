@@ -13,7 +13,7 @@ The workflow drives specialised agents through a repeating loop:
 
 ```
 while (open issues above goal threshold > 0):
-  Plan     -- decompose open epics into a verified feature+task DAG
+  Plan     -- decompose open sprint goals into a verified feature+task DAG
   Develop  -- implement tasks in model streaks, reviewed after each iteration
   Test     -- deploy build, run integration tests, file bugs for failures
   Check    -- has the goal been met? any progress since last cycle?
@@ -29,10 +29,10 @@ is deterministic JavaScript -- no agent decides whether to continue.
 
 ## Key concepts
 
-**Epic** -- a business requirement to implement. Epics come from the backlog.
-One sprint may target several related epics.
+**Sprint goal** -- a business requirement to implement this sprint. Sprint goals come from the backlog.
+One sprint may target several related sprint goals.
 
-**Feature** -- a concrete deliverable the planner derives from an epic. Each
+**Feature** -- a concrete deliverable the planner derives from a sprint goal. Each
 feature is verifiable: integration tests either pass or fail against it.
 
 **Task** -- the smallest unit of work. A task belongs to exactly one feature
@@ -56,16 +56,16 @@ if integration testing finds defects that require further development.
 
 ### 1. A beads backlog
 
-Beads (`bd`) is the task database. All epics, features, tasks, bugs, and
-enhancements live there. Before triggering a sprint, the target epics must
+Beads (`bd`) is the task database. All sprint goals, features, tasks, bugs, and
+enhancements live there. Before triggering a sprint, the target sprint goals must
 exist in beads with enough description for the planner to decompose them.
 
-Minimum per epic:
+Minimum per sprint goal:
 - A clear title
 - A description: what it does, who uses it, what done looks like
 - A priority (P0-P4)
 
-The planner creates features and tasks from the epic descriptions. If a
+The planner creates features and tasks from the sprint goal descriptions. If a
 description is too thin, the plan-reviewer will send the planner back to refine.
 
 ### 2. deploy.md
@@ -199,7 +199,7 @@ From a Claude Code session in the project repository:
 | Argument | Required | Default | Description |
 |---|---|---|---|
 | `branch` | yes | -- | Sprint branch. Created if it does not exist. |
-| `issues` | yes | -- | Beads epic IDs to implement this sprint. |
+| `issues` | yes | -- | Beads sprint goal IDs to implement this sprint. |
 | `goal` | no | `P1/P2` | Exit criterion: `P1`, `P1/P2`, or `P1/P2/P3`. |
 | `max_cycles` | no | `5` | Hard ceiling on cycles. |
 | `requirementsFile` | no | none | Additional context file for the planner. |
@@ -211,9 +211,9 @@ From a Claude Code session in the project repository:
 
 ### Plan
 
-The planner inspects the sprint epics and builds a feature+task DAG in beads:
+The planner inspects the sprint goals and builds a feature+task DAG in beads:
 
-- One or more **features** per epic (concrete deliverables)
+- One or more **features** per sprint goal (concrete deliverables)
 - **Implementation tasks** and **`[test]` tasks** per feature
 - Dependencies wired so test tasks are blocked until implementation is complete
 - Each task assigned an exact model based on complexity (see Model assignment)
@@ -223,7 +223,7 @@ features rather than tasks are unblocked, dependencies are wired backwards and
 the planner must fix them before continuing.
 
 The plan-reviewer then inspects the full DAG:
-- Does `bd ready` return only tasks (not features or epics)?
+- Does `bd ready` return only tasks (not features or sprint goals)?
 - Does every feature have both an impl task and a `[test]` task?
 - Does every task have clear acceptance criteria?
 - Is every task sized to 1-3 file changes?
@@ -282,7 +282,7 @@ Defects filed during testing flow into the next cycle's plan phase.
 ### Exit check
 
 After each cycle, the workflow counts all open issues within the sprint's scope
-(the epics and their full subtrees, plus any bugs filed during testing) at or
+(the sprint goals and their full subtrees, plus any bugs filed during testing) at or
 above the goal priority. If the count is zero, the sprint succeeds. If the
 identical set of issues remains open from the previous cycle, the sprint aborts --
 something structural needs human attention.
@@ -409,12 +409,12 @@ If the sprint exits via `max_cycles` without meeting the goal:
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| Plan loop does not converge | Epic descriptions too thin | Add detail to the beads issue descriptions before re-triggering |
-| `bd ready` shows features, not tasks | Dependencies wired backwards | The plan-reviewer should catch this; if it recurs, inspect `bd graph --compact <epic-id>` -- tasks should be at layer 0 |
+| Plan loop does not converge | Sprint goal descriptions too thin | Add detail to the beads issue descriptions before re-triggering |
+| `bd ready` shows features, not tasks | Dependencies wired backwards | The plan-reviewer should catch this; if it recurs, inspect `bd graph --compact <sprint-id>` -- tasks should be at layer 0 |
 | Smoke test fails every cycle | Deploy steps broken | Fix `deploy.md` and test manually before re-triggering |
-| Same issues open across two cycles | Defects deeper than tasks can fix | Review the open issues; consider re-scoping the epic |
+| Same issues open across two cycles | Defects deeper than tasks can fix | Review the open issues; consider re-scoping the sprint goal |
 | CI always red | CI config broken | Address the CI beads task first; it blocks harvest |
-| `max_cycles` reached | Sprint is too large | Split the epics into smaller targeted sprints |
+| `max_cycles` reached | Sprint is too large | Split the sprint goals into smaller targeted sprints |
 
 ---
 

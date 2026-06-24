@@ -56,7 +56,7 @@ Repro: <minimal steps to reproduce>" \
 
 Priority rules:
 - **P0**: system will not start or core path is completely broken
-- **P1**: requirement from the epic is explicitly not met
+- **P1**: requirement from the sprint goal is explicitly not met
 - **P2**: requirement partially met; degraded or inconsistent behaviour
 - **P3**: quality, performance, or UX issue that does not block the core function
 

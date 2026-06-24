@@ -20,7 +20,7 @@ const {
 
 // ---- meta record shape (source-introspection) --------------------------------
 
-test('meta record source contains required fields: type meta, transcriptDir, branch, epics, goal, ts', () => {
+test('meta record source contains required fields: type meta, transcriptDir, branch, roots, goal, ts', () => {
   // Assert the inline meta record construction includes all required keys.
   // This mirrors how shell-dispatch.test.mjs validates source invariants.
   const metaBlock = src.slice(src.indexOf('SPRINT META RECORD'));
@@ -30,18 +30,18 @@ test('meta record source contains required fields: type meta, transcriptDir, bra
   assert.match(region, /type:\s*['"]meta['"]/, "meta record must have type='meta'");
   assert.match(region, /transcriptDir/, 'meta record must include transcriptDir');
   assert.match(region, /branch/, 'meta record must include branch');
-  assert.match(region, /epics/, 'meta record must include epics');
+  assert.match(region, /roots/, 'meta record must include roots');
   assert.match(region, /goal/, 'meta record must include goal');
   assert.match(region, /startedAt|ts/, 'meta record must include a sprint timestamp field');
 });
 
-test('meta record is written before the epic loop (genuine first JSONL entry)', () => {
-  // The meta dispatch should appear before the EPIC LOOP section.
+test('meta record is written before the sprint loop (genuine first JSONL entry)', () => {
+  // The meta dispatch should appear before the SPRINT LOOP section.
   const metaIdx = src.indexOf('SPRINT META RECORD');
-  const epicLoopIdx = src.indexOf('EPIC LOOP');
+  const sprintLoopIdx = src.indexOf('SPRINT LOOP');
   assert.ok(metaIdx > 0, 'SPRINT META RECORD marker must exist');
-  assert.ok(epicLoopIdx > 0, 'EPIC LOOP marker must exist');
-  assert.ok(metaIdx < epicLoopIdx, 'meta record dispatch must appear before EPIC LOOP');
+  assert.ok(sprintLoopIdx > 0, 'SPRINT LOOP marker must exist');
+  assert.ok(metaIdx < sprintLoopIdx, 'meta record dispatch must appear before SPRINT LOOP');
 });
 
 // ---- computeSprintAnalysis ignores meta entries -------------------------------
@@ -54,7 +54,7 @@ const SAMPLE_QUOTE = computeSprintQuote(
 test('computeSprintAnalysis: type=meta entry with no label is excluded from byRole', () => {
   const logEntries = [
     // meta entry -- no label field
-    { ts: '20260620_100000', type: 'meta', branch: 'feat/x', epics: ['BD-0'], goal: 'ship it',
+    { ts: '20260620_100000', type: 'meta', branch: 'feat/x', roots: ['BD-0'], goal: 'ship it',
       transcriptDir: '/home/user/.claude/projects/C--repo' },
     // real entries
     { label: 'doer-c1-i0',  outTokens: 1200, costUsd: 0.018 },
@@ -70,7 +70,7 @@ test('computeSprintAnalysis: type=meta entry with no label is excluded from byRo
 
 test('computeSprintAnalysis: meta entry does not inflate token or cost totals', () => {
   const withMeta = [
-    { ts: '20260620_100000', type: 'meta', branch: 'feat/x', epics: ['BD-0'], goal: 'g',
+    { ts: '20260620_100000', type: 'meta', branch: 'feat/x', roots: ['BD-0'], goal: 'g',
       transcriptDir: '' },
     { label: 'doer-c1-i0', outTokens: 1000, costUsd: 0.015 },
   ];
@@ -100,7 +100,7 @@ test('computeSprintAnalysis: meta entry with empty label does not create phantom
 test('computeSprintAnalysis: analysisText is unaffected by presence of meta entry', () => {
   const base = [{ label: 'doer-c1-i0', outTokens: 1200, costUsd: 0.018 }];
   const withMeta = [
-    { ts: '20260620', type: 'meta', branch: 'b', epics: [], goal: 'g', transcriptDir: '' },
+    { ts: '20260620', type: 'meta', branch: 'b', roots: [], goal: 'g', transcriptDir: '' },
     ...base,
   ];
   const r1 = computeSprintAnalysis(SAMPLE_QUOTE, base,     DEFAULT_CALIBRATION, 1);

@@ -10,7 +10,7 @@ history, and the requirements/design narrative; **beads holds all task state.**
 ## One project, one DB
 
 An orchestrator manages one project, so there is one beads DB for that project and
-one **epic per sprint**. The DB is a local `.beads/` at the **base checkout** (the
+one **sprint root** per sprint. The DB is a local `.beads/` at the **base checkout** (the
 orchestrator's repo root) -- not inside any track worktree. The orchestrator runs
 every `bd` command from there. Doers run `bd ready` / `bd update --claim` /
 `bd close` against that same DB; reviewers run `bd show` only -- they never write to
@@ -27,20 +27,20 @@ or label.
 `bd` is called at these points. The planner, doer, and reviewer run their own `bd`
 commands; the orchestrator runs setup, completion, and recovery queries.
 
-**Sprint setup** (orchestrator) -- create the epic, reusing an existing one if present:
+**Sprint setup** (orchestrator) -- create the sprint root, reusing an existing one if present:
 ```
 bd search "sprint: <name>" --status all   # reuse the id if found
-bd create "sprint: <name>" -p 1            # else create -> <epic-id>
+bd create "sprint: <name>" -p 1            # else create -> <sprint-id>
 ```
 
 **Plan phase** (planner) -- one task per plan item, each carrying its acceptance
 criteria, assigned model tier, priority, and track; dependencies wired. The planner
 writes these directly into beads -- there is no PLAN.md:
 ```
-bd create "T1.1: <title>" -p 1 --parent <epic-id> --assignee <track> \
+bd create "T1.1: <title>" -p 1 --parent <sprint-id> --assignee <track> \
   --acceptance="<what must be true for this task to be done>" \
   --notes="model: standard-tier"                                   # -> task-id
-bd create "T1.2: <title>" -p 2 --parent <epic-id> --assignee <track> \
+bd create "T1.2: <title>" -p 2 --parent <sprint-id> --assignee <track> \
   --acceptance="..." --notes="model: cheap-tier"
 bd dep add <T1.2-id> <T1.1-id>             # T1.2 blocked until T1.1 done
 ```
@@ -66,20 +66,20 @@ parses those lines and runs:
 bd update <task-id> --status=open --notes="review: <finding from notes section>"
 
 # for each entry in newTasks:
-bd create "<title>" -p <priority> --parent <epic-id> --assignee <track> --acceptance="<notes>"
+bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --acceptance="<notes>"
 ```
 Reopened tasks return to `bd ready` as work for the next iteration. On APPROVED
 neither command is needed -- tasks stay closed.
 
-**At completion** -- close the epic, close the delivered source issues, persist the
+**At completion** -- close the sprint root, close the delivered source issues, persist the
 state, link the PR:
 ```
-bd close <epic-id> <source-issue-id> [<source-issue-id> ...]
+bd close <sprint-id> <source-issue-id> [<source-issue-id> ...]
 bd export -o <track-worktree>/.beads/issues.jsonl   # refresh the tracked file from the db
-bd note <epic-id> "PR: <url>"
+bd note <sprint-id> "PR: <url>"
 ```
 The source issues are the ready backlog items the sprint's requirement was drawn
-from. Closing the epic alone leaves them open, so the backlog never reflects the
+from. Closing the sprint root alone leaves them open, so the backlog never reflects the
 delivered work -- close them here too. With a db backend (dolt) `bd close` does NOT
 update `issues.jsonl`; `bd export -o <file>` rewrites it (a bare `bd export` prints to
 stdout). Commit the refreshed `.beads/issues.jsonl` on the branch so the closures are
@@ -96,10 +96,10 @@ backlog -- it is never dropped silently.
 
 ## Backlog
 
-Deferred work lives as low-priority tasks under the epic, with enough detail to act
+Deferred work lives as low-priority tasks under the sprint root, with enough detail to act
 on later without re-investigation:
 ```
-bd create "<headline>" -p 3 --parent <epic-id> --description "Impact / Source / Detail / Cost of not doing it"
+bd create "<headline>" -p 3 --parent <sprint-id> --description "Impact / Source / Detail / Cost of not doing it"
 ```
 Manage it:
 ```
@@ -117,7 +117,7 @@ position at any time:
 bd list --status=open                  # work still to do
 bd list --status=in_progress           # tasks claimed by an interrupted dispatch
 bd ready                               # everything unblocked right now, across tracks
-bd list --tree <epic-id>               # full sprint tree: tasks, status, assignee
+bd list --tree <sprint-id>               # full sprint tree: tasks, status, assignee
 bd show <task-id>                      # full context: description, acceptance, model tier, notes
 ```
 beads reflects claim/close actions, not on-disk completion -- always confirm against
@@ -127,7 +127,7 @@ reset it with `bd update <id> --status=open`. See `sprint.md` Recovery.
 
 ## Rules
 
-- **Check before create** (epic and task) -- `bd search ... --status all`; reuse if
+- **Check before create** (sprint root and task) -- `bd search ... --status all`; reuse if
   found, never duplicate.
 - **Check before claim** -- dispatch only if the task is `open`.
 - `bd close` is idempotent and safe to re-run.

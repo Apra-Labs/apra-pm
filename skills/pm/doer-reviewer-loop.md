@@ -39,7 +39,7 @@ covers the wrong diff.
 Plan APPROVED, beads tasks created (each with acceptance criteria + model tier in
 notes). goal priority = the sprint's exit threshold.
   loop:
-    1. Find ready tasks: bd ready (tasks with no open blockers, in the epic subtree).
+    1. Find ready tasks: bd ready (tasks with no open blockers, in the sprint-root subtree).
        If none AND bd list --status=open at the goal priority is empty AND the last
        reviewer verdict was APPROVED -> Develop phase done; exit to Test (or Harvest
        on the final cycle).
@@ -137,13 +137,13 @@ local-only => "This is a local-only worktree -- commit every turn and skip pushi
 You are planning a track. Your worktree is <abs worktree path> on branch <branch>
 (base <base>). cd there first; use absolute paths. Read requirements.md (and
 design.md if present). Follow your planner instructions: explore, draft, front-load
-foundations, self-critique, refine. Then write the plan into beads under epic
-<epic-id> -- do NOT write PLAN.md. For each task: bd create "<title>" -p <priority>
---parent <epic-id> --assignee <track> --acceptance="<what must be true to be done>"
+foundations, self-critique, refine. Then write the plan into beads under sprint root
+<sprint-id> -- do NOT write PLAN.md. For each task: bd create "<title>" -p <priority>
+--parent <sprint-id> --assignee <track> --acceptance="<what must be true to be done>"
 --notes="model: <tier>", where <tier> is cheap-tier for mechanical work, standard-tier
 for standard implementation, premium-tier for hard design (pick from the tiers available
 in this environment). Wire dependencies with bd dep add <task> <blocker>. Verify
-with bd ready that leaf tasks (not features/epics) are unblocked. <transport line>.
+with bd ready that leaf tasks (not features/sprint roots) are unblocked. <transport line>.
 The worktree and branch already exist -- do not create or switch branches.
 ```
 
@@ -152,7 +152,7 @@ The worktree and branch already exist -- do not create or switch branches.
 ```
 You are reviewing a plan. Your worktree is <abs worktree path> on branch <branch>.
 cd there; use absolute paths. Read requirements.md and design.md (if present), then
-inspect the beads DAG under epic <epic-id>: bd graph --compact <epic-id>, bd ready,
+inspect the beads DAG under sprint root <sprint-id>: bd graph --compact <sprint-id>, bd ready,
 and bd show <id> on each task to read its acceptance criteria and model-tier note.
 Follow your plan-reviewer instructions: check coverage, task size, acceptance
 criteria, dependency direction, and model-tier assignment. Classify each task with a
@@ -236,7 +236,7 @@ updates itself -- the reviewer is a pure reader of beads:
      For each id: `bd update <id> --status=open --notes="<relevant finding from notes section>"`.
      Reopened tasks return to `bd ready` next iteration.
    - Find the last line starting with `newTasks:`, parse the JSON array value.
-     For each entry: `bd create "<title>" -p <priority> --parent <epic-id> --assignee <track> --acceptance="<notes>"`.
+     For each entry: `bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --acceptance="<notes>"`.
      Empty array `[]` means no new tasks to create.
 3. On APPROVED: no beads action needed.
 

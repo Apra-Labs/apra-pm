@@ -64,7 +64,7 @@ test('invalid JSON treated as bare string', () => {
 test('defaults applied when nothing set', () => {
   const r = resolveSprintOpts(null);
   assert.equal(r.branch, '');
-  assert.deepEqual(r.epicIds, []);
+  assert.deepEqual(r.rootIds, []);
   assert.equal(r.goal, 'P1/P2');
   assert.equal(r.maxCycles, 5);
   assert.equal(r.requirementsFile, '');
@@ -73,19 +73,19 @@ test('defaults applied when nothing set', () => {
 
 test('bare issue ID resolves correctly', () => {
   const r = resolveSprintOpts('BD-1');
-  assert.deepEqual(r.epicIds, ['BD-1']);
+  assert.deepEqual(r.rootIds, ['BD-1']);
   assert.equal(r.branch, '');
   assert.equal(r.goal, 'P1/P2');
 });
 
-test('two bare IDs resolve to epicIds array', () => {
+test('two bare IDs resolve to rootIds array', () => {
   const r = resolveSprintOpts('BD-1 BD-2');
-  assert.deepEqual(r.epicIds, ['BD-1', 'BD-2']);
+  assert.deepEqual(r.rootIds, ['BD-1', 'BD-2']);
 });
 
-test('JSON array resolves to epicIds', () => {
+test('JSON array resolves to rootIds', () => {
   const r = resolveSprintOpts('["BD-1","BD-2"]');
-  assert.deepEqual(r.epicIds, ['BD-1', 'BD-2']);
+  assert.deepEqual(r.rootIds, ['BD-1', 'BD-2']);
 });
 
 test('JSON object branch/goal/max_cycles respected', () => {
@@ -93,10 +93,10 @@ test('JSON object branch/goal/max_cycles respected', () => {
   assert.equal(r.branch, 'feat/x');
   assert.equal(r.goal, 'P1');
   assert.equal(r.maxCycles, 3);
-  assert.deepEqual(r.epicIds, ['BD-1']);
+  assert.deepEqual(r.rootIds, ['BD-1']);
 });
 
 test('scalar issues string wrapped in array', () => {
   const r = resolveSprintOpts('{"issues":"BD-1"}');
-  assert.deepEqual(r.epicIds, ['BD-1']);
+  assert.deepEqual(r.rootIds, ['BD-1']);
 });

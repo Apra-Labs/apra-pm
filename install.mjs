@@ -179,7 +179,7 @@ What it installs:
   ~/.claude/workflows/auto-sprint.js  native /auto-sprint workflow (claude only)
 
 Agents:
-  planner            reads open epics, creates feature+task DAG in beads
+  planner            reads open sprint goals, creates feature+task DAG in beads
   plan-reviewer      validates beads DAG: coverage, size, acceptance criteria
   doer               works bd-ready tasks, commits after each, stops at VERIFY
   reviewer           reviews diff vs beads acceptance criteria, can reopen tasks
@@ -327,7 +327,7 @@ function main() {
   console.log('');
   if (args.llm === 'claude') {
     console.log('  Claude Code: /auto-sprint BD-1              (uses current branch)');
-    console.log('               /auto-sprint BD-1 BD-2         (multiple epics)');
+    console.log('               /auto-sprint BD-1 BD-2         (multiple sprint goals)');
     console.log('               /auto-sprint {"issues":["BD-1"],"branch":"feat/x","goal":"P1"}');
     console.log('  Other sessions: /pm  (provider-agnostic skill)');
   } else {

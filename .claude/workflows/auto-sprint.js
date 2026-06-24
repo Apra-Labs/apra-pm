@@ -3,7 +3,7 @@ export const meta = {
   description: `Multi-cycle sprint workflow: plan -> develop -> test -> harvest.
 
 args must be a JSON object (not a string) with these fields:
-  issues       REQUIRED. Array of beads epic IDs, e.g. ["BD-1","BD-2"].
+  issues       REQUIRED. Array of beads issue IDs (sprint roots), e.g. ["BD-1","BD-2"].
   branch       REQUIRED. Sprint branch name, e.g. "feat/auth". Created if it does not exist.
   goal         Optional. Exit when no open issues at or above this priority. "P1" | "P1/P2" | "P1/P2/P3". Default: "P1/P2".
   max_cycles   Optional. Hard cycle ceiling. Default: 5.
@@ -23,7 +23,7 @@ Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`
 // priority-based quality goal is met or the cycle ceiling is reached.
 //
 // Agent roster:
-//   planner           -- reads open beads epics/features/bugs, creates feature+task DAG
+//   planner           -- reads open beads sprint goals/features/bugs, creates feature+task DAG
 //   plan-reviewer     -- validates DAG: coverage, task size, acceptance criteria
 //   doer              -- works bd-ready tasks (impl and test-dev), VERIFY checkpoint
 //   reviewer          -- reviews doer output, can reopen tasks
@@ -37,7 +37,7 @@ Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`
 //
 // args (JSON object serialised to string by the Workflow runtime):
 //   branch           -- sprint branch (required); asserted/created at startup
-//   issues           -- beads epic IDs to implement, e.g. ["BD-1","BD-2"] (required)
+//   issues           -- beads issue IDs to implement (sprint roots), e.g. ["BD-1","BD-2"] (required)
 //   goal             -- exit criterion: "P1" | "P1/P2" | "P1/P2/P3"  (default: "P1/P2")
 //   max_cycles       -- hard ceiling on sprint cycles                  (default: 5)
 //   requirementsFile -- optional context file for the planner          (default: none)
@@ -72,19 +72,19 @@ if (args) {
 
 let branch             = opts.branch           || '';   // empty = auto-detect in setup; reassigned after setup resolves
 const rawIssues        = opts.issues            || [];
-const epicIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
+const rootIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
 const goal             = opts.goal             || 'P1/P2';
 const maxCycles        = Number(opts.max_cycles) || 5;
 const requirementsFile = opts.requirementsFile  || '';
 const base_branch      = opts.base_branch       || 'main';
 
-if (epicIds.length === 0) {
+if (rootIds.length === 0) {
   log('ERROR: at least one beads issue ID is required (pass as arg: /auto-sprint BD-1)');
   return { error: 'missing issues' };
 }
 
 // Goal -> numeric priority threshold.
-// Exit when open issues in epic subtree at priority <= threshold reaches zero.
+// Exit when open issues in sprint-goal subtree at priority <= threshold reaches zero.
 const GOAL_THRESHOLD = { 'P1': 1, 'P1/P2': 2, 'P1/P2/P3': 3 };
 const threshold = GOAL_THRESHOLD[goal] || 2;
 
@@ -219,7 +219,7 @@ const INTEG_RUN_SCHEMA = {
 };
 
 // Returned by the resume-check agent at the top of every cycle.
-// planDone   -- true if the epic already has features AND every feature has at
+// planDone   -- true if the sprint goal already has children AND every feature has at
 //               least one task with non-empty acceptance criteria; skip plan loop.
 // inProgressIds -- tasks currently in_progress; reset to open before the develop
 //                  loop so a crashed doer never orphans work forever.
@@ -561,29 +561,29 @@ function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignm
 // parse path -- the dispatch wrappers never loop or branch on parse failure, they
 // just feed outputs here and accept whatever this returns.
 //
-// `outputs` is the agent-returned array of strings (one per command). `epicCount`
+// `outputs` is the agent-returned array of strings (one per command). `rootCount`
 // is the number of leading `bd graph` ID-list commands; the final element is the
 // JSON list command. All functions degrade safely on missing/garbage input.
 
-// collectSubtreeIds: union the IDs from the leading epicCount whitespace-joined
-// ID-list outputs into a Set.
-function collectSubtreeIds(outputs, epicCount) {
+// collectSubtreeIds: union the IDs from the leading rootCount whitespace-joined
+// ID-list outputs (one per sprint goal) into a Set.
+function collectSubtreeIds(outputs, rootCount) {
   const ids = new Set();
-  for (let i = 0; i < epicCount; i++) {
+  for (let i = 0; i < rootCount; i++) {
     String(outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => ids.add(id));
   }
   return ids;
 }
 
 // parseBlockers: contract {count, ids} of open issues with priority<=thr inside
-// the epic subtree. Missing/short outputs => sentinel {count: 999, ids: []} so the
+// the sprint-goal subtree. Missing/short outputs => sentinel {count: 999, ids: []} so the
 // caller treats blockers as present (fail-safe, never exits the sprint early).
-function parseBlockers(outputs, epicCount, thr) {
-  if (!Array.isArray(outputs) || outputs.length < epicCount + 1) return { count: 999, ids: [] };
-  const subtree = collectSubtreeIds(outputs, epicCount);
+function parseBlockers(outputs, rootCount, thr) {
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { count: 999, ids: [] };
+  const subtree = collectSubtreeIds(outputs, rootCount);
   let ids = [];
   try {
-    const open = JSON.parse(outputs[epicCount]);
+    const open = JSON.parse(outputs[rootCount]);
     ids = Array.isArray(open)
       ? open.filter(x => subtree.has(x.id) && x.p <= thr).map(x => x.id)
       : [];
@@ -593,12 +593,12 @@ function parseBlockers(outputs, epicCount, thr) {
 
 // parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks in the
 // subtree by model, ordered by min priority.
-function parseReadyStreaks(outputs, epicCount, defaultModel) {
-  if (!Array.isArray(outputs) || outputs.length < epicCount + 1) return { totalCount: 0, streaks: [] };
-  const subtree = collectSubtreeIds(outputs, epicCount);
+function parseReadyStreaks(outputs, rootCount, defaultModel) {
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { totalCount: 0, streaks: [] };
+  const subtree = collectSubtreeIds(outputs, rootCount);
   let readyTasks = [];
   try {
-    const all = JSON.parse(outputs[epicCount]);
+    const all = JSON.parse(outputs[rootCount]);
     readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
   } catch { readyTasks = []; }
 
@@ -636,14 +636,14 @@ function parseReadyStreaks(outputs, epicCount, defaultModel) {
   return { totalCount: readyTasks.length, streaks };
 }
 
-// parseCycleState: contract {planDone, inProgressIds}. planDone is true for an
-// epic when it has >=1 feature and either all features closed or every task has a
+// parseCycleState: contract {planDone, inProgressIds}. planDone is true for a
+// sprint goal when it has >=1 feature and either all features closed or every task has a
 // description. Missing/short outputs => {planDone: false, ...} (fail-safe: never
 // declares planning complete on bad input).
-function parseCycleState(outputs, epicCount) {
-  if (!Array.isArray(outputs) || outputs.length < epicCount + 1) return { planDone: false, inProgressIds: [] };
-  const inProgressIds = String(outputs[epicCount] || '').trim().split(/\s+/).filter(Boolean);
-  const planDone = Array.from({ length: epicCount }).every((_, i) => {
+function parseCycleState(outputs, rootCount) {
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { planDone: false, inProgressIds: [] };
+  const inProgressIds = String(outputs[rootCount] || '').trim().split(/\s+/).filter(Boolean);
+  const planDone = Array.from({ length: rootCount }).every((_, i) => {
     try {
       const issues = JSON.parse(outputs[i]);
       if (!Array.isArray(issues)) return false;
@@ -666,18 +666,18 @@ function parseCycleState(outputs, epicCount) {
 //   analysis      -- result of computeSprintAnalysis (analysisText, byRole, actualCycles, totActUsd...)
 //   sprintQuote   -- result of computeSprintQuote or null
 //   calibration   -- current calibration object
-//   opts          -- { branch, goal, epicDone, cycleCount, tasksCompleted, tasksOpen, startedAt }
+//   opts          -- { branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt }
 //
 // Returns: { summaryText }  -- markdown string suitable for writing to .analysis.md
 function buildSprintSummary(analysis, sprintQuote, calibration, opts) {
-  const { branch = '', goal = '', epicDone = false, cycleCount = 0,
+  const { branch = '', goal = '', goalMet = false, cycleCount = 0,
           tasksCompleted = 0, tasksOpen = 0, startedAt = '' } = opts || {};
   const thr  = (calibration && calibration.outlier_thresholds) || { outlier_pct: 200, calibration_failure_pct: 500 };
   const cycles = (calibration && calibration.cycle_assumptions) || {};
   const estCycles = cycles.expected || 1;
 
   // ---- goal / cycle section
-  const goalLine    = `**Goal:** ${goal || '(unset)'}  ->  ${epicDone ? 'MET' : 'NOT MET'}`;
+  const goalLine    = `**Goal:** ${goal || '(unset)'}  ->  ${goalMet ? 'MET' : 'NOT MET'}`;
   const cyclesLine  = `**Cycles:** estimated ${estCycles}, actual ${cycleCount}`;
   const tasksLine   = `**Tasks:** ${tasksCompleted} completed, ${tasksOpen} open/carried-forward`;
 
@@ -788,7 +788,7 @@ async function dispatch(prompt, opts) {
 // ------------------------------------------------------------ shell dispatch
 //
 // All three exit-check helpers below run a tiny, fixed set of read-only commands
-// (`bd graph --json <epic> | node-extract` plus one `bd list ... | node-extract`)
+// (`bd graph --json <goal-id> | node-extract` plus one `bd list ... | node-extract`)
 // via a single Haiku dispatch and parse the result with a pure parser above.
 //
 // Latency-hardening (gh-7: check-blockers once took 12.5 min):
@@ -831,28 +831,28 @@ async function dispatchShell(cmds, opts) {
   });
 }
 
-async function countBeadsBlockers(thr, epics) {
+async function countBeadsBlockers(thr, roots) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
   const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
   const cmds = [
-    ...epics.map(id => `bd graph --json ${id} | ${idExtract}`),
+    ...roots.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --status=open --json | ${openExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop' });
-  return parseBlockers(r?.outputs, epics.length, thr);
+  return parseBlockers(r?.outputs, roots.length, thr);
 }
 
-async function getReadyStreaks(epicIds) {
+async function getReadyStreaks(rootIds) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
   const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
   const cmds = [
-    ...epicIds.map(id => `bd graph --json ${id} | ${idExtract}`),
+    ...rootIds.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --ready --type=task --json | ${taskExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop' });
-  return parseReadyStreaks(r?.outputs, epicIds.length, TIER_STANDARD);
+  return parseReadyStreaks(r?.outputs, rootIds.length, TIER_STANDARD);
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
@@ -868,22 +868,22 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
   );
 }
 
-async function checkCycleState(epicIds) {
+async function checkCycleState(rootIds) {
   // Extract only the fields needed for planDone check to keep output small.
   const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(d).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
   const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
   const cmds = [
-    ...epicIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
+    ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
     `bd list --status=in_progress --type=task --json | ${ipExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan' });
-  return parseCycleState(r?.outputs, epicIds.length);
+  return parseCycleState(r?.outputs, rootIds.length);
 }
 
 // ------------------------------------------------------------------ STATE
 
 let cycleCount   = 0;
-let epicDone     = false;
+let goalMet     = false;
 let prevOpenIds  = [];
 let headSha      = '';
 let abortReason  = '';
@@ -1026,8 +1026,8 @@ if (!setup.deployMdExists) log('WARNING: deploy.md not found -- integration test
 if (!setup.playbookExists) log('WARNING: integ-test-playbook.md not found -- integration test phase will be skipped');
 if (!integTestEnabled) log('Integration testing disabled for this sprint. Harvest will run after Develop.');
 
-const epicSummary = epicIds.join(', ');
-log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
+const rootSummary = rootIds.join(', ');
+log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
 
 // ------------------------------------------------------------------ SPRINT META RECORD
 // Write the first JSONL entry (type=meta) capturing sprint metadata and transcript dir.
@@ -1036,7 +1036,7 @@ log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${max
   const metaLine = JSON.stringify({
     ts: sprintTs, type: 'meta',
     branch, startedAt: setup.startedAt,
-    epics: epicIds, goal,
+    roots: rootIds, goal,
     transcriptDir: setup.transcriptDir || '',
   });
   await dispatch(
@@ -1055,7 +1055,7 @@ log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${max
   );
 }
 
-// ------------------------------------------------------------------ EPIC LOOP
+// ------------------------------------------------------------------ SPRINT LOOP
 
 while (cycleCount < maxCycles) {
   cycleCount++;
@@ -1066,7 +1066,7 @@ while (cycleCount < maxCycles) {
 
   phase('Plan');
 
-  const cycleState = await checkCycleState(epicIds);
+  const cycleState = await checkCycleState(rootIds);
   log(`Cycle state: planDone=${cycleState.planDone} inProgress=[${cycleState.inProgressIds.join(', ')}]`);
 
   // Reset any tasks orphaned in_progress from a previous crashed run.
@@ -1095,14 +1095,14 @@ while (cycleCount < maxCycles) {
 
     const plannerResult = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-      `Sprint epics: ${epicSummary}\n` +
+      `Sprint goals: ${rootSummary}\n` +
       (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
       `\n` +
       (planFeedback
         ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
         : '') +
       `Inspect existing state first:\n` +
-      `  ${epicIds.map(id => `bd show ${id} && bd graph --compact ${id}`).join('\n  ')}\n` +
+      `  ${rootIds.map(id => `bd show ${id} && bd graph --compact ${id}`).join('\n  ')}\n` +
       `Run: bd show <id> on any existing features/tasks to read their current descriptions.\n` +
       `Then build or complete the feature+task DAG -- create only what is missing:\n` +
       `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
@@ -1111,9 +1111,9 @@ while (cycleCount < maxCycles) {
       `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
       `The correct wiring direction is: parents depend on children (children unblock first).\n` +
       `\n` +
-      `  Step 1 -- wire epic -> feature (epic waits for features):\n` +
-      `    bd dep add <epic-id> <feature-id>\n` +
-      `    After this: "bd ready" will NOT show the epic (it's waiting). Features show as ready.\n` +
+      `  Step 1 -- wire sprint goal -> child (goal waits for children):\n` +
+      `    bd dep add <goal-id> <child-id>\n` +
+      `    After this: "bd ready" will NOT show the sprint goal (it's waiting). Children show as ready.\n` +
       `\n` +
       `  Step 2 -- wire feature -> tasks (feature waits for tasks):\n` +
       `    bd dep add <feature-id> <impl-task-id>\n` +
@@ -1124,12 +1124,12 @@ while (cycleCount < maxCycles) {
       `    bd dep add <test-task-id> <impl-task-id>\n` +
       `    After this: "bd ready" shows only impl-task. test-task unblocks once impl-task closes.\n` +
       `\n` +
-      `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT features or epics.\n` +
-      `  If features appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
+      `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT sprint goals or blocked parents.\n` +
+      `  If sprint goals appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
       `\n` +
       `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
       `\n` +
-      `  Create type=feature issues as children of each epic (use bd dep add epic feature per above).\n` +
+      `  Break each sprint goal into child issues: bd create --parent <goal-id> (use type=feature for sub-goals, type=task for leaf work).\n` +
       `  Create type=task issues for each feature: implementation tasks AND integration\n` +
       `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
       `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
@@ -1147,12 +1147,12 @@ while (cycleCount < maxCycles) {
       `    possible -- this minimises tier-switching overhead during execution\n` +
       (cycleCount > 1
         ? `This is cycle ${cycleCount}. Focus on open issues only.\n` +
-          `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
+          `Do NOT add new scope beyond the original sprint goals and open bugs/enhancements.\n` +
           `Do NOT re-create tasks that are already closed.\n`
         : '') +
       `Confirm with any text when done.`,
       { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner',
-        context: `planning epics ${epicSummary}` }
+        context: `planning sprint goals ${rootSummary}` }
     );
 
     if (!plannerResult) {
@@ -1162,14 +1162,14 @@ while (cycleCount < maxCycles) {
 
     const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
     const planReview = await dispatch(
-      `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nSprint goals: ${rootSummary}\n` +
       `Calibration file: ${repo}/sprint-logs/calibration.json (read this first if it exists)\n\n` +
-      `Review the beads DAG for these epics ONLY: ${epicSummary}\n` +
-      `Run: ${epicIds.map(id => `bd show ${id}`).join(' && ')} to inspect each epic.\n` +
-      `Run: ${epicIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
+      `Review the beads DAG for these sprint goals ONLY: ${rootSummary}\n` +
+      `Run: ${rootIds.map(id => `bd show ${id}`).join(' && ')} to inspect each sprint goal.\n` +
+      `Run: ${rootIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
       `Run: bd show <id> to inspect individual issues in depth.\n` +
       `Run: bd ready -- this is your FIRST correctness check.\n` +
-      `Do NOT review or comment on issues outside these epics.\n\n` +
+      `Do NOT review or comment on issues outside these sprint goals.\n\n` +
       `Follow your runbook (plan-reviewer.md) step by step:\n` +
       `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
       `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
@@ -1179,7 +1179,7 @@ while (cycleCount < maxCycles) {
       `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
       `any dependency direction problems.`,
       { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: PLAN_REVIEW_SCHEMA, agentType: 'plan-reviewer',
-        context: `reviewing plan for epics ${epicSummary}` }
+        context: `reviewing plan for sprint goals ${rootSummary}` }
     );
 
     if (approved(planReview)) {
@@ -1232,7 +1232,7 @@ while (cycleCount < maxCycles) {
   let devFeedback = '';
 
   while (devIter < MAX_DEV_ITER) {
-    const streakResult = await getReadyStreaks(epicIds);
+    const streakResult = await getReadyStreaks(rootIds);
     if (streakResult.totalCount === 0) {
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
       break;
@@ -1293,7 +1293,7 @@ while (cycleCount < maxCycles) {
     const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
     const review = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-      `Sprint epics: ${epicSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
+      `Sprint goals: ${rootSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
       `Review ONLY the work done for the tasks listed above.\n` +
       `Run: bd show <id> for each task to read its acceptance criteria.\n` +
       `Run: git -C "${repo}" diff ${base_branch}...${branch} to see the changes.\n` +
@@ -1373,7 +1373,7 @@ while (cycleCount < maxCycles) {
 
       const integResult = await dispatch(
         `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
-        `Sprint epics: ${epicSummary}\n\n` +
+        `Sprint goals: ${rootSummary}\n\n` +
         `Run: bd list --type=feature --status=open\n` +
         `For each open feature, execute its integration tests.\n\n` +
         `For each feature:\n` +
@@ -1384,7 +1384,7 @@ while (cycleCount < maxCycles) {
         `  Keep feature open on failure or if inconclusive.\n\n` +
         `Priority rules:\n` +
         `  P0: system won't start or core path completely broken\n` +
-        `  P1: requirement from epic explicitly not met\n` +
+        `  P1: requirement from sprint goal explicitly not met\n` +
         `  P2: requirement partially met, degraded behaviour\n` +
         `  P3: quality, performance, or UX issue not blocking core function\n\n` +
         `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
@@ -1409,7 +1409,7 @@ while (cycleCount < maxCycles) {
 
   // ---------------------------------------------------------------- EXIT CHECK
 
-  const blockers = await countBeadsBlockers(threshold, epicIds);
+  const blockers = await countBeadsBlockers(threshold, rootIds);
   const currentOpenIds = (blockers.ids || []).slice().sort();
   log(`Exit check: ${blockers.count} open issues at P<=${threshold} -- IDs: [${currentOpenIds.join(', ')}]`);
 
@@ -1432,7 +1432,7 @@ while (cycleCount < maxCycles) {
   }
 
   if (blockers.count === 0) {
-    epicDone = true;
+    goalMet = true;
     log(`Goal met after ${cycleCount} cycle(s)`);
     break;
   }
@@ -1483,11 +1483,11 @@ if (headSha) {
 const finalReviewLabel = 'final-reviewer';
 const finalReview = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-  `Sprint epics: ${epicSummary}\nGoal: ${goal}\n` +
+  `Sprint goals: ${rootSummary}\nGoal: ${goal}\n` +
   (abortReason ? `Sprint ended early: ${abortReason}. Review what was completed.\n` : '') +
-  (epicDone ? `Goal was met: all P<=${threshold} issues resolved.\n` : `Goal not yet met.\n`) +
+  (goalMet ? `Goal was met: all P<=${threshold} issues resolved.\n` : `Goal not yet met.\n`) +
   `\nReview the overall output of this sprint:\n` +
-  `  - Does the work address the original epics?\n` +
+  `  - Does the work address the original sprint goals?\n` +
   `  - Are there obvious gaps or regressions?\n` +
   `  - Is the codebase in a releasable state for what was completed?\n` +
   `APPROVED means the work is ready to harvest and raise as a PR.\n` +
@@ -1499,7 +1499,7 @@ log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);
 if (!approved(finalReview)) {
   const notes = (finalReview && finalReview.notes) || '';
   log(`Final review not approved -- aborting before harvest. Notes: ${notes.slice(0, 300)}`);
-  return { cycles: cycleCount, epicDone, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
+  return { cycles: cycleCount, goalMet, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
 }
 
 // ------------------------------------------------------------------ HARVEST
@@ -1511,12 +1511,12 @@ const sprintAnalysis = computeSprintAnalysis(sprintQuote, logEntries, calibratio
 log('Sprint cost analysis computed (JS):\n' + sprintAnalysis.analysisText);
 
 // Build structured summary and write sprint-logs/<branch>-<ts>.analysis.md artefact.
-const tasksCompleted = epicDone
+const tasksCompleted = goalMet
   ? (sprintQuote ? sprintQuote.tasks.length : 0)
   : Math.max(0, (sprintQuote ? sprintQuote.tasks.length : 0) - prevOpenIds.length);
-const tasksOpen = epicDone ? 0 : prevOpenIds.length;
+const tasksOpen = goalMet ? 0 : prevOpenIds.length;
 const sprintSummary = buildSprintSummary(sprintAnalysis, sprintQuote, calibration, {
-  branch, goal, epicDone, cycleCount, tasksCompleted, tasksOpen, startedAt: setup.startedAt,
+  branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt: setup.startedAt,
 });
 log('Sprint summary:\n' + sprintSummary.summaryText);
 const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.analysis.md`;
@@ -1537,7 +1537,7 @@ await dispatch(
 const harvestLabel = 'harvester';
 const harvestResult = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-  `Sprint epics: ${epicSummary}\nCycles completed: ${cycleCount}\nGoal met: ${epicDone}\n` +
+  `Sprint goals: ${rootSummary}\nCycles completed: ${cycleCount}\nGoal met: ${goalMet}\n` +
   `sprintLogFile: ${sprintLogFile}\n\n` +
   `The sprint is complete. Harvest the sprint artefacts.\n` +
   `Follow your runbook (agents/harvester.md).\n\n` +
@@ -1551,7 +1551,7 @@ const harvestResult = await dispatch(
 
 if (!harvestResult || harvestResult.status !== 'OK') {
   log(`Harvest failed: ${(harvestResult && harvestResult.notes) || 'null'} -- skipping PR`);
-  return { cycles: cycleCount, epicDone, goal, harvest: 'failed' };
+  return { cycles: cycleCount, goalMet, goal, harvest: 'failed' };
 }
 
 // ------------------------------------------------------------------ CALIBRATION UPDATE
@@ -1580,8 +1580,8 @@ await dispatch(
   `Command: gh pr create --base ${base_branch} --head ${branch}\n` +
   `Title: summarise what was implemented across ${cycleCount} cycle(s).\n` +
   `Body:\n` +
-  `  - What was built (per epic)\n` +
-  `  - Sprint goal: ${goal} -- ${epicDone ? 'MET' : 'NOT MET (partial delivery)'}\n` +
+  `  - What was built (per sprint goal)\n` +
+  `  - Sprint goal: ${goal} -- ${goalMet ? 'MET' : 'NOT MET (partial delivery)'}\n` +
   `  - Cycles run: ${cycleCount}\n` +
   `  - Open items carried forward (if any): bd list --status=open and summarise\n` +
   `  - Final review notes: ${(finalReview && finalReview.notes) || '(none)'}\n` +
@@ -1616,4 +1616,4 @@ log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
 log(`  (input token cost not included -- see ${sprintLogFile} for per-dispatch detail)`);
 log('================================================\n');
 
-return { cycles: cycleCount, epicDone, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
+return { cycles: cycleCount, goalMet, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };

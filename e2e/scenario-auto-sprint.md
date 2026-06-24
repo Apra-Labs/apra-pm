@@ -15,13 +15,13 @@ Run this bash command:
 
 ---
 
-Step 2 - Read open epic IDs
+Step 2 - Read open P1 issue IDs
 
 Run this bash command:
 
-  cd {{REPO}} && bd list --status=open --type=epic
+  cd {{REPO}} && bd list --status=open --priority=1
 
-Capture the beads IDs (e.g. BD-1, BD-2) from the output. These are the epics
+Capture the beads IDs from the output. These are the P1 sprint goals
 the sprint will implement.
 
 ---

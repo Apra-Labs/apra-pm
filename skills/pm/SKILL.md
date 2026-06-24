@@ -20,7 +20,7 @@ worktree (see Tracks and parallelism).
 All sprint state is held in:
 
 - **beads (`bd`), the task DB -- the single source of truth and the message bus:**
-  epic, tasks, dependencies, assignees, acceptance criteria, model-tier assignment,
+  sprint root, tasks, dependencies, assignees, acceptance criteria, model-tier assignment,
   review findings, backlog, PR link. The planner writes tasks here; the doer reads
   `bd ready` and claims/closes them; the reviewer reads acceptance criteria with
   `bd show` and reopens tasks on rework. There is no PLAN.md and no progress.json --
@@ -40,7 +40,7 @@ order; a fourth phase runs once at sprint close.
 
 - **Plan** -- dispatch `planner` to write the task DAG into beads (titles,
   acceptance criteria, model-tier notes, priorities, dependencies), loop
-  `plan-reviewer` to APPROVED. Skip the loop if planning is already complete (epic
+  `plan-reviewer` to APPROVED. Skip the loop if planning is already complete (sprint root
   has features and every open feature's tasks carry acceptance criteria); just reset
   any task orphaned `in_progress` from a crashed dispatch back to open.
 - **Develop** -- run the doer-review loop. Read `bd ready`, dispatch `doer` per ready
@@ -57,7 +57,7 @@ order; a fourth phase runs once at sprint close.
   extracts durable knowledge into `docs/` and `CHANGELOG`, and raise the PR.
 
 At the end of each cycle, check the **goal**: the sprint is done when no open
-beads issue in the epic subtree sits at or above the goal priority (default
+beads issue in the sprint-root subtree sits at or above the goal priority (default
 P1/P2). If the goal is met, exit the cycle loop and run Harvest. Otherwise start
 the next cycle, capped by a cycle ceiling (default 5). Abort early if a cycle
 resolves none of the previous cycle's open issues -- two cycles with no progress
@@ -210,8 +210,8 @@ than it saves.
 | `/pm resume` / `/pm recover` | Reconstruct state from beads + git and continue | `sprint.md` Recovery |
 | `/pm deploy` | Run the project's deploy.md runbook | `sprint.md` Test |
 | `/pm backlog` / `/pm tasks` | Manage deferred items and view the task tree via beads | `beads.md` |
-| `/pm cleanup` | Close epic, drop scaffolding, raise PR, remove worktrees | `sprint.md` Completion |
-| `/pm init <project>` | Set up project folder, beads epic, worktree | `sprint.md` Setup |
+| `/pm cleanup` | Close sprint root, drop scaffolding, raise PR, remove worktrees | `sprint.md` Completion |
+| `/pm init <project>` | Set up project folder, beads sprint root, worktree | `sprint.md` Setup |
 | `/pm pair <doer> <reviewer>` | Assign doer-reviewer pair (fleet mode) | `fleet-addendum.md` |
 
 ## Core rules
@@ -307,7 +307,7 @@ The orchestrator performs these operations. Each reads and writes state through 
 and git.
 
 - **plan** `<requirement>` -- write `requirements.md` (+ `design.md` when warranted),
-  dispatch `planner` to create the epic's tasks in beads (acceptance criteria, model
+  dispatch `planner` to create tasks in beads under the sprint root (acceptance criteria, model
   tier, priorities, dependencies), loop `plan-reviewer` to APPROVED. See `sprint.md`.
 - **start** -- run the doer-review loop for the next pending phase. See
   `doer-reviewer-loop.md`.
@@ -319,7 +319,7 @@ and git.
   See `sprint.md` Test.
 - **backlog** / **tasks** -- manage deferred items and view the task tree via beads.
   See `beads.md`.
-- **cleanup** -- close the beads epic and the delivered source issues, drop the
+- **cleanup** -- close the beads sprint root and the delivered source issues, drop the
   sprint scaffolding files (so the PR's net diff is product only), raise the PR, and
   remove the track worktrees. See `sprint.md` Completion.
 
@@ -333,7 +333,7 @@ and git.
 - `doer-reviewer-loop.md` -- the dispatch loop: per-role prompt templates,
   inline dispatch, continuity between dispatches, and safeguards.
 - `worktrees.md` -- worktree topology, parallel-track layout, lifecycle, transport.
-- `beads.md` -- the task-DB backbone and single source of truth: epic/task
+- `beads.md` -- the task-DB backbone and single source of truth: sprint-root/task
   lifecycle, acceptance criteria, model tiers, findings-as-tasks, backlog, recovery,
   PR linking.
 - `fleet-addendum.md` -- fleet-only execution: permissions, compose_permissions,

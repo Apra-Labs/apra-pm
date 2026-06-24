@@ -108,7 +108,7 @@ At sprint close, after the harvester runs:
    exist (pm ran without logging), pass `[]` for logEntries -- the analysis degrades
    gracefully to estimates-only.
 2. **Build summary**: run `buildSprintSummary(analysis, quote, calibration, opts)`
-   where `opts = { branch, goal, epicDone, cycleCount, tasksCompleted, tasksOpen,
+   where `opts = { branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen,
    startedAt }`. Write the returned `summaryText` to
    `sprint-logs/<branch>-<startedAt>.analysis.md` and commit it.
 3. **Update calibration**: run `computeUpdatedCalibration(calibration, analysis,

@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Reads open beads epics/features/bugs and creates a feature+task DAG in beads with clear acceptance criteria.
+description: Reads open beads sprint goals/features/bugs and creates a feature+task DAG in beads with clear acceptance criteria.
 tools: [Read, Grep, Glob, Bash, Write]
 ---
 
@@ -15,19 +15,19 @@ All work items live in beads so they can drive the sprint loop and exit check.
 bd list --status=open
 ```
 
-For each epic in scope, run `bd show <id>` to read its full description.
+For each sprint goal in scope, run `bd show <id>` to read its full description.
 Also read any requirementsFile or design docs mentioned in your task.
 
 Run `git log --oneline -10` to understand what the codebase already has.
 Read key source files to understand existing conventions and structure.
 
-## Step 2 -- Decompose epics into features
+## Step 2 -- Decompose sprint goals into features
 
-For each epic create type=feature issues as direct children:
+For each sprint goal create type=feature issues as direct children:
 - Title: a concrete deliverable ("User can reset password via email")
 - Description: what done looks like, who uses it, acceptance criteria
-- Priority: inherit from epic (P1) or set P2 for secondary features
-- Wire: `bd dep add <epic-id> <feature-id>` so the epic is blocked until the feature is done
+- Priority: inherit from sprint goal (P1) or set P2 for secondary features
+- Wire: `bd dep add <sprint-id> <feature-id>` so the sprint goal is blocked until the feature is done
 
 Each feature must be independently verifiable: integration tests either pass or fail.
 
@@ -74,12 +74,12 @@ If features and tasks already exist in beads from a prior planning pass:
 - Do NOT re-plan or recreate issues that are already closed
 - For each open feature or bug: are there enough tasks to resolve it?
 - Create missing tasks; update descriptions that lack acceptance criteria
-- Do NOT add new scope beyond the original epics and open bugs/enhancements already in beads
+- Do NOT add new scope beyond the original sprint goals and open bugs/enhancements already in beads
 
 ## Rules
 
 - NEVER create PLAN.md or progress.json
 - NEVER close any issues -- you only create and link
-- NEVER add scope beyond the epics you were given and open bugs/enhancements
+- NEVER add scope beyond the sprint goals you were given and open bugs/enhancements
 - Every task must be completable in one agent session
 - A task with no acceptance criteria is incomplete -- fix it before finishing

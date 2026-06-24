@@ -20,7 +20,7 @@ const {
 
 // ---- collectSubtreeIds -------------------------------------------------------
 
-test('collectSubtreeIds: unions whitespace-joined ID lists across epics', () => {
+test('collectSubtreeIds: unions whitespace-joined ID lists across sprint roots', () => {
   const ids = collectSubtreeIds(['BD-1 BD-2', 'BD-2  BD-3', '[]'], 2);
   assert.deepEqual([...ids].sort(), ['BD-1', 'BD-2', 'BD-3']);
 });
@@ -33,7 +33,7 @@ test('collectSubtreeIds: tolerates empty / missing entries', () => {
 
 test('parseBlockers: returns {count, ids} of open issues in subtree at/under threshold', () => {
   const outputs = [
-    'BD-1 BD-2 BD-3',                                                    // epic graph IDs
+    'BD-1 BD-2 BD-3',                                                    // sprint root graph IDs
     JSON.stringify([
       { id: 'BD-1', p: 1 },   // in subtree, p<=2  -> blocker
       { id: 'BD-2', p: 3 },   // in subtree, p>2   -> ignored
@@ -46,7 +46,7 @@ test('parseBlockers: returns {count, ids} of open issues in subtree at/under thr
   assert.deepEqual(r.ids.sort(), ['BD-1', 'BD-3']);
 });
 
-test('parseBlockers: unions IDs across multiple epic graphs', () => {
+test('parseBlockers: unions IDs across multiple sprint root graphs', () => {
   const outputs = [
     'BD-1',
     'BD-2',
@@ -141,7 +141,7 @@ test('parseCycleState: planDone false with no features', () => {
   assert.equal(parseCycleState([JSON.stringify([{ id: 'T1', t: 'task', s: 'open', d: true }]), ''], 1).planDone, false);
 });
 
-test('parseCycleState: every epic must satisfy planDone', () => {
+test('parseCycleState: every sprint root must satisfy planDone', () => {
   const ok = JSON.stringify([{ id: 'F1', t: 'feature', s: 'closed', d: true }]);
   const bad = JSON.stringify([{ id: 'F2', t: 'feature', s: 'open', d: true }, { id: 'T2', t: 'task', s: 'open', d: false }]);
   assert.equal(parseCycleState([ok, bad, ''], 2).planDone, false);

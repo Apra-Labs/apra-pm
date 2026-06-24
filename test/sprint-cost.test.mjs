@@ -418,7 +418,7 @@ const BSS_QUOTE = computeSprintQuote(
 test('buildSprintSummary: returns summaryText string', () => {
   const analysis = computeSprintAnalysis(BSS_QUOTE, [], DEFAULT_CALIBRATION, 1);
   const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
-    branch: 'feat/test', goal: 'ship it', epicDone: true, cycleCount: 2,
+    branch: 'feat/test', goal: 'ship it', goalMet: true, cycleCount: 2,
     tasksCompleted: 3, tasksOpen: 0, startedAt: '20260620_100000',
   });
   assert.ok(typeof summaryText === 'string', 'summaryText must be a string');
@@ -453,14 +453,14 @@ test('buildSprintSummary: reviewer outlier produces a suggestion (non-doer role 
     totActUsd: 0.096,
   };
   const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
-    branch: 'feat/test', goal: 'g', epicDone: false, cycleCount: 2,
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 2,
     tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
   });
   assert.ok(summaryText.includes('reviewer'), 'reviewer outlier suggestion must mention reviewer');
   assert.ok(summaryText.includes('over'), 'suggestion must say over estimate');
   assert.match(summaryText, /Suggested calibration adjustments/, 'must have suggestions section');
-  // AC criterion 4: epicDone=false must render NOT MET
-  assert.ok(summaryText.includes('NOT MET'), 'epicDone=false must render NOT MET');
+  // AC criterion 4: goalMet=false must render NOT MET
+  assert.ok(summaryText.includes('NOT MET'), 'goalMet=false must render NOT MET');
 });
 
 test('buildSprintSummary: doer-only outlier produces suggestion but reviewer (within range) does not', () => {
@@ -477,7 +477,7 @@ test('buildSprintSummary: doer-only outlier produces suggestion but reviewer (wi
     totActUsd: 0.132,
   };
   const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
-    branch: 'feat/test', goal: 'g', epicDone: false, cycleCount: 2,
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 2,
     tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
   });
   assert.ok(summaryText.includes('doer'), 'doer outlier suggestion must mention doer');
@@ -503,7 +503,7 @@ test('buildSprintSummary: overhead role outlier produces suggestion', () => {
     totActUsd: 0.254,
   };
   const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
-    branch: 'feat/test', goal: 'g', epicDone: false, cycleCount: 1,
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 1,
     tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
   });
   const suggestStart = summaryText.indexOf('### Suggested calibration adjustments');
@@ -525,7 +525,7 @@ test('buildSprintSummary: no outliers => no-outliers message', () => {
     totActUsd: 0.029,
   };
   const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
-    branch: 'feat/test', goal: 'g', epicDone: true, cycleCount: 1,
+    branch: 'feat/test', goal: 'g', goalMet: true, cycleCount: 1,
     tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
   });
   assert.match(summaryText, /No outliers detected/, 'should show no-outliers message when all within range');
@@ -533,7 +533,7 @@ test('buildSprintSummary: no outliers => no-outliers message', () => {
 
 test('buildSprintSummary: null analysis returns graceful summary', () => {
   const { summaryText } = buildSprintSummary(null, null, DEFAULT_CALIBRATION, {
-    branch: 'feat/test', goal: 'g', epicDone: false, cycleCount: 0,
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 0,
     tasksCompleted: 0, tasksOpen: 0, startedAt: '',
   });
   assert.ok(typeof summaryText === 'string', 'summaryText must be a string even with null inputs');

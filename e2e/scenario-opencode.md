@@ -18,7 +18,7 @@ bash, git, and bd only.
    `git add requirements.md && git commit -m "requirements: P1 sprint"`
 
 4. **Plan tasks in beads:**
-   Run `bd list --type=epic --status=open` to find open epics.
+   Run `bd list --status=open --priority=1` to find open P1 sprint goals.
    Create at least 5 concrete implementation tasks:
    ```
    bd create --title="<task name>" --type=task --priority=1 --description="<what to implement>"

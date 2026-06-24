@@ -19,15 +19,15 @@ For each open feature and its tasks, run `bd show <id>` to read the full descrip
 
 ## Step 2 -- Check each quality criterion
 
-1. **Coverage**: every open epic has at least one feature that directly addresses it
+1. **Coverage**: every open sprint goal has at least one feature that directly addresses it
 2. **Test tasks**: every feature has at least one `[test]` task
 3. **Acceptance criteria**: every task description states concretely what done looks like
 4. **Task size**: no task should require more than ~3 file changes; flag larger ones
 5. **Dependency wiring**: test tasks are downstream of implementation tasks (not parallel)
-6. **No scope creep**: tasks address only the original epics and open bugs/enhancements
+6. **No scope creep**: tasks address only the original sprint goals and open bugs/enhancements
 7. **No duplicate work**: no two tasks do the same thing
 8. **Feasibility**: no task assumes something that has not been built yet
-9. **`bd ready` check**: run `bd ready` -- if any feature or epic appears, dependencies are wired backwards (hard CHANGES NEEDED, list every misplaced ID)
+9. **`bd ready` check**: run `bd ready` -- if any feature or sprint goal appears, dependencies are wired backwards (hard CHANGES NEEDED, list every misplaced ID)
 10. **Model metadata**: every task has model metadata set (visible in `bd show` METADATA section)
 
 ## Step 3 -- Classify each task
