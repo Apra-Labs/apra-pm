@@ -12,3 +12,7 @@
 {"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":456,"costUsd":0.0023}
 {"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"doer-c1-i1-4","model":"claude-sonnet-4-6","context":"tasks apra-pm-pme","outTokens":2360,"costUsd":0.0354}
 {"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"reviewer-c1-i2","model":"claude-sonnet-4-6","context":"reviewing tasks apra-pm-pme","outTokens":2256,"costUsd":0.0338}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i2","model":"claude-haiku-4-5","context":"4 new entries","outTokens":1762,"costUsd":0.0088}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":751,"costUsd":0.0038}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"doer-c1-i2-4","model":"claude-sonnet-4-6","context":"tasks apra-pm-n4x","outTokens":3046,"costUsd":0.0457}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"reviewer-c1-i3","model":"claude-sonnet-4-6","context":"reviewing tasks apra-pm-n4x","outTokens":1552,"costUsd":0.0233}
