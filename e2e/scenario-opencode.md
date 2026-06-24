@@ -25,13 +25,13 @@ bash, git, and bd only.
    ```
    Record the task IDs for use in step 5.
 
-5. **Implement (10+ commits):**
+5. **Implement (5+ commits):**
    For each task: implement the code, commit it, then close the task:
    ```
    git add <files> && git commit -m "feat: <task description>"
    bd close <task-id>
    ```
-   One commit per task minimum. Target 10+ total commits.
+   One commit per task minimum. Target 5+ source-file commits.
 
 6. **Export beads state:**
    ```
@@ -49,7 +49,13 @@ bash, git, and bd only.
    git commit -m "chore: remove sprint scaffolding"
    ```
 
-9. **Push and PR:**
+9. **Update changelog:**
+   Append a brief entry to `CHANGELOG.md` describing what was implemented in this sprint.
+   ```
+   git add CHANGELOG.md && git commit -m "docs: update CHANGELOG for sprint"
+   ```
+
+10. **Push and PR:**
    ```
    git push -u origin {{BRANCH}}
    gh pr create -B main -t "Sprint: P1 CLI features" -b "Implements open P1 issues"
@@ -59,6 +65,7 @@ bash, git, and bd only.
 
 - Do NOT use fleet dispatch tools (execute_prompt, send_files, etc.) -- they are not available.
 - Work directly in the repo with bash tools.
-- All 10+ implementation commits must be on `{{BRANCH}}` and pushed before creating the PR.
+- All 5+ implementation commits must be on `{{BRANCH}}` and pushed before creating the PR.
 - requirements.md and feedback.md must appear in intermediate commits AND be removed before the PR push (step 8 does this).
+- CHANGELOG.md must be updated and committed (step 9 does this).
 - .beads/issues.jsonl must be committed with closed issue status (step 6 does this).
