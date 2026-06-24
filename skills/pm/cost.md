@@ -8,36 +8,22 @@ everything else runs normally).
 
 ## Source of the functions
 
-The pure functions live in `~/.apra-pm/auto-sprint.js` (the canonical
-provider-neutral location installed by `install.mjs`). On Claude Code, the
-installer also copies the same file to `~/.claude/workflows/auto-sprint.js` so
-the `/auto-sprint` workflow works natively. The functions are between the markers:
+`install.mjs` extracts the pure functions from `auto-sprint.js` at install time
+and writes them as a self-contained CommonJS module to `~/.apra-pm/cost.js`
+(all providers). On Claude Code, the full `auto-sprint.js` is additionally copied
+to `~/.claude/workflows/auto-sprint.js` so the `/auto-sprint` workflow works
+natively. Re-run `node install.mjs --force` after upgrading to refresh `cost.js`.
 
-```
-// PURE_FUNCTIONS_BEGIN
-// PURE_FUNCTIONS_END
-```
-
-The orchestrator extracts and runs them via Node.js `vm` -- no copy, no duplication:
+The orchestrator loads the functions with a plain `require()` -- no vm, no
+string-slicing:
 
 ```bash
 node -e "
-const fs  = require('fs');
-const src  = fs.readFileSync(require('os').homedir() + '/.apra-pm/auto-sprint.js', 'utf8');
-const block = src.slice(
-  src.indexOf('// PURE_FUNCTIONS_BEGIN'),
-  src.indexOf('// PURE_FUNCTIONS_END')
-);
-const vm = require('vm');
-const ctx = {};
-vm.createContext(ctx);
-vm.runInContext(block, ctx);
-// ctx now has: computeSprintQuote, computeSprintAnalysis, buildSprintSummary,
-//              computeUpdatedCalibration, DEFAULT_CALIBRATION (via const in scope)
-// call the function you need and print JSON:
+const { computeSprintQuote } = require(require('os').homedir() + '/.apra-pm/cost.js');
+const fs    = require('fs');
 const calib = JSON.parse(fs.readFileSync('sprint-logs/calibration.json', 'utf8'));
 const ta    = JSON.parse(process.env.TASK_ASSIGNMENTS);
-process.stdout.write(JSON.stringify(ctx.computeSprintQuote(ta, calib)));
+process.stdout.write(JSON.stringify(computeSprintQuote(ta, calib)));
 "
 ```
 
@@ -58,15 +44,13 @@ tier name to actual model ID lives exclusively in `TIER_TO_MODEL` inside
 `calibration.json` provider-agnostic and reusable across Claude, AGY, OpenCode, etc.
 
 - **On first run** (file absent): the setup step bootstraps it from `DEFAULT_CALIBRATION`
-  inside auto-sprint.js (same object the workflow uses). Write it with:
+  inside `~/.apra-pm/cost.js` (same object the workflow uses). Write it with:
   ```bash
   node -e "
-  const fs  = require('fs');
-  const src  = fs.readFileSync(require('os').homedir() + '/.apra-pm/auto-sprint.js', 'utf8');
-  const block = src.slice(src.indexOf('// PURE_FUNCTIONS_BEGIN'), src.indexOf('// PURE_FUNCTIONS_END'));
-  const vm = require('vm'); const ctx = {}; vm.createContext(ctx); vm.runInContext(block, ctx);
+  const { DEFAULT_CALIBRATION } = require(require('os').homedir() + '/.apra-pm/cost.js');
+  const fs = require('fs');
   fs.mkdirSync('sprint-logs', { recursive: true });
-  fs.writeFileSync('sprint-logs/calibration.json', JSON.stringify(ctx.DEFAULT_CALIBRATION, null, 2));
+  fs.writeFileSync('sprint-logs/calibration.json', JSON.stringify(DEFAULT_CALIBRATION, null, 2));
   "
   ```
 - **On subsequent runs**: read it, deep-merge with `DEFAULT_CALIBRATION` (so new
