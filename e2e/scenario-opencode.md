@@ -1,71 +1,10 @@
-# pm e2e -- sprint on the toy (opencode, solo mode)
+# pm e2e -- sprint on the toy (opencode)
 
-You are a solo engineer implementing P1 issues directly. No fleet dispatch -- work with
-bash, git, and bd only.
+Use the **pm** skill to run one sprint. Inputs the skill needs:
 
-- **Repo:** `{{REPO}}` (cloned, git user configured, remote origin ready)
-- **Branch:** `{{BRANCH}}`
+- **Repo:** already cloned at `{{REPO}}` (base `main`, remote `origin` -> the toy).
+- **Branch:** `{{BRANCH}}`.
+- **Requirement:** the top 3 ready P1 issues from `bd list --status=open --priority=1` in `{{REPO}}`.
 
-## Steps (follow in order, complete all steps)
-
-1. `cd {{REPO}} && git checkout -b {{BRANCH}}`
-
-2. **Pick issues:** `bd ready` -- take ALL open P1 issues shown (there may be 1-3).
-   Use `bd show <id>` on each to read the requirements.
-
-3. **Requirements commit:**
-   Write `requirements.md` summarising the P1 issues and their acceptance criteria.
-   `git add requirements.md && git commit -m "requirements: P1 sprint"`
-
-4. **Plan tasks in beads:**
-   Run `bd list --status=open --priority=1` to find open P1 sprint goals.
-   Create at least 5 concrete implementation tasks:
-   ```
-   bd create --title="<task name>" --type=task --priority=1 --description="<what to implement>"
-   ```
-   Record the task IDs for use in step 5.
-
-5. **Implement (5+ commits):**
-   For each task: implement the code, commit it, then close the task:
-   ```
-   git add <files> && git commit -m "feat: <task description>"
-   bd close <task-id>
-   ```
-   One commit per task minimum. Target 5+ source-file commits.
-
-6. **Export beads state:**
-   ```
-   bd export -o {{REPO}}/.beads/issues.jsonl
-   git add .beads/issues.jsonl && git commit -m "chore: update beads sprint state"
-   ```
-
-7. **Review commit:**
-   Write `feedback.md` with verdict APPROVED covering each implemented task.
-   `git add feedback.md && git commit -m "review: APPROVED"`
-
-8. **Clean up scaffolding:**
-   ```
-   git rm requirements.md feedback.md
-   git commit -m "chore: remove sprint scaffolding"
-   ```
-
-9. **Update changelog:**
-   Append a brief entry to `CHANGELOG.md` describing what was implemented in this sprint.
-   ```
-   git add CHANGELOG.md && git commit -m "docs: update CHANGELOG for sprint"
-   ```
-
-10. **Push and PR:**
-   ```
-   git push -u origin {{BRANCH}}
-   gh pr create -B main -t "Sprint: P1 CLI features" -b "Implements open P1 issues"
-   ```
-
-## Rules
-
-- Do NOT use fleet dispatch tools (execute_prompt, send_files, etc.) -- they are not available.
-- Work directly in the repo with bash tools.
-- All 5+ implementation commits must be on `{{BRANCH}}` and pushed before creating the PR.
-- requirements.md and feedback.md must appear in intermediate commits AND be removed before the PR push (step 8 does this).
-- CHANGELOG.md must be updated and committed (step 9 does this).
-- .beads/issues.jsonl must be committed with closed issue status (step 6 does this).
+Then run the pm commands in order: **plan** (with those P1 issues as the
+requirement), **start**, **cleanup**.
