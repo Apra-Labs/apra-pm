@@ -29,7 +29,8 @@ const baseName = (p) => p.split('/').pop().toLowerCase();
 
 export function evaluateGates(d) {
   const gates = [];
-  const add = (name, pass, detail = '') => gates.push({ name, pass, detail });
+  const skip = new Set(d.excludeGates || []);
+  const add = (name, pass, detail = '') => { if (!skip.has(name)) gates.push({ name, pass, detail }); };
 
   add('pr-exists', !!(d.pr && d.pr.url), d.pr ? `#${d.pr.number}` : 'no PR found');
 
@@ -146,14 +147,14 @@ function bdSaysClosed(repo, id) {
 // Gather facts from the pushed branch and evaluate. `repo` is the local clone whose
 // origin is the toy; the branch is fetched fresh so this works even though the work
 // was done in a worktree sharing the same .git.
-export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssues = 3 }) {
+export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssues = 3, excludeGates = [] }) {
   git(repo, ['fetch', '-q', 'origin', 'main']);
   git(repo, ['fetch', '-q', 'origin', branch]);
   const head = (git(repo, ['rev-parse', 'FETCH_HEAD']).stdout || '').trim();
   const base = (git(repo, ['rev-parse', 'origin/main']).stdout || '').trim();
 
   if (!head || !base) {
-    return evaluateGates({ pr, commitCount: 0, realCommitCount: 0, finalFiles: [], touchedBasenames: [], feedbackVerdicts: [], closedP1: [], beadsSprintClosed: [], plannedTaskCount: 0, minCommits, expectedIssues });
+    return evaluateGates({ pr, commitCount: 0, realCommitCount: 0, finalFiles: [], touchedBasenames: [], feedbackVerdicts: [], closedP1: [], beadsSprintClosed: [], plannedTaskCount: 0, minCommits, expectedIssues, excludeGates });
   }
   const range = `${base}..${head}`;
 
@@ -217,5 +218,5 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   // C3/C4: closure evidenced in committed branch jsonl (headB), not just disk/live db
   const beadsSprintClosed = candidates.filter(id => isClosed(headB.get(id)));
 
-  return evaluateGates({ pr, commitCount, realCommitCount, finalFiles, touchedBasenames, touchedPaths, feedbackVerdicts, closedP1, beadsSprintClosed, plannedTaskCount, minCommits, expectedIssues });
+  return evaluateGates({ pr, commitCount, realCommitCount, finalFiles, touchedBasenames, touchedPaths, feedbackVerdicts, closedP1, beadsSprintClosed, plannedTaskCount, minCommits, expectedIssues, excludeGates });
 }

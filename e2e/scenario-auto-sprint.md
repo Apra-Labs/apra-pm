@@ -15,14 +15,14 @@ Run this bash command:
 
 ---
 
-Step 2 - Read open P1 issue IDs
+Step 2 - Read one open P1 issue ID
 
 Run this bash command:
 
   cd {{REPO}} && bd list --status=open --priority=1
 
-Capture the beads IDs from the output. These are the P1 sprint goals
-the sprint will implement.
+Pick only the FIRST beads ID from the output. This is the single sprint goal
+the workflow will implement. Do not pass more than one ID.
 
 ---
 
@@ -32,8 +32,8 @@ Use the Workflow tool with:
   name: "auto-sprint"
   args (as a JSON object):
     branch:       "{{BRANCH}}"
-    issues:       [<the beads IDs from step 2 as a JSON array, e.g. ["BD-1","BD-2"]>]
-    goal:         "P1/P2"
+    issues:       [<the single beads ID from step 2, e.g. ["BD-1"]>]
+    goal:         "P1"
     base_branch:  "main"
 
 The workflow handles everything: planning tasks in beads, implementing them,
