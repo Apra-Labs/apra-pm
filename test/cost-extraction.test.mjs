@@ -65,80 +65,67 @@ test('PURE_FUNCTIONS_BEGIN appears before PURE_FUNCTIONS_END', () => {
 });
 
 // -- extraction produces valid JS ----------------------------------------------
+// Load costMod at module level so failures show the real error, not a cascade of
+// "cost.js not loaded" from downstream tests that depend on it.
 
-let costMod;  // loaded once and reused by the tests below
+const _costSrc = readFileSync(AUTO_SPRINT, 'utf-8');
+const _costJs  = extractCostJs(_costSrc);
+if (!_costJs) throw new Error('extractCostJs returned null -- PURE_FUNCTIONS markers missing in auto-sprint.js');
+const _costDir  = join(tmpdir(), 'apra-pm-test-cost-extraction');
+mkdirSync(_costDir, { recursive: true });
+const _costPath = join(_costDir, 'cost.js');
+writeFileSync(_costPath, _costJs);
+const _req = createRequire(import.meta.url);
+const costMod = _req(_costPath);
 
 test('extractCostJs produces a non-empty string', () => {
-  const src = readFileSync(AUTO_SPRINT, 'utf-8');
-  const result = extractCostJs(src);
-  assert.ok(typeof result === 'string' && result.length > 0,
+  assert.ok(typeof _costJs === 'string' && _costJs.length > 0,
     'extractCostJs must return a non-empty string');
 });
 
 test('extracted cost.js is a valid CommonJS module (require succeeds)', () => {
-  const src = readFileSync(AUTO_SPRINT, 'utf-8');
-  const costJs = extractCostJs(src);
-  assert.ok(costJs, 'extractCostJs returned null -- markers missing');
-
-  // Write to a temp file and require() it.
-  const dir = join(tmpdir(), 'apra-pm-test-cost-extraction');
-  mkdirSync(dir, { recursive: true });
-  const tmpPath = join(dir, 'cost.js');
-  writeFileSync(tmpPath, costJs);
-
-  const req = createRequire(import.meta.url);
-  costMod = req(tmpPath);
   assert.ok(costMod, 'require() of extracted cost.js must not throw');
 });
 
 // -- expected exports are present ----------------------------------------------
 
 test('cost.js exports DEFAULT_CALIBRATION as an object', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(typeof costMod.DEFAULT_CALIBRATION, 'object');
   assert.ok(costMod.DEFAULT_CALIBRATION !== null);
 });
 
 test('cost.js DEFAULT_CALIBRATION has schema_version field', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.ok('schema_version' in costMod.DEFAULT_CALIBRATION,
     'DEFAULT_CALIBRATION must have schema_version');
 });
 
 test('cost.js exports computeSprintQuote as a function', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(typeof costMod.computeSprintQuote, 'function');
 });
 
 test('cost.js exports computeSprintAnalysis as a function', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(typeof costMod.computeSprintAnalysis, 'function');
 });
 
 test('cost.js exports computeUpdatedCalibration as a function', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(typeof costMod.computeUpdatedCalibration, 'function');
 });
 
 test('cost.js exports buildSprintSummary as a function', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(typeof costMod.buildSprintSummary, 'function');
 });
 
 test('cost.js exports accumulateBucketTokens as a function', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(typeof costMod.accumulateBucketTokens, 'function');
 });
 
 test('cost.js exports reviewerModelFor as a function', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(typeof costMod.reviewerModelFor, 'function');
 });
 
 // -- smoke tests: functions produce correct output when called via require() ---
 
 test('computeSprintQuote via require() returns a valid quote object', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   const { computeSprintQuote, DEFAULT_CALIBRATION } = costMod;
   const q = computeSprintQuote(
     [{ id: 'BD-1', bucket: 'M', model: 'standard' }],
@@ -152,7 +139,6 @@ test('computeSprintQuote via require() returns a valid quote object', () => {
 });
 
 test('computeSprintQuote via require() total = outputOnly * inputMultiplier', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   const { computeSprintQuote, DEFAULT_CALIBRATION } = costMod;
   const q = computeSprintQuote(
     [{ id: 'BD-1', bucket: 'M', model: 'standard' }],
@@ -165,17 +151,14 @@ test('computeSprintQuote via require() total = outputOnly * inputMultiplier', ()
 });
 
 test('reviewerModelFor via require(): premium stays premium', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(costMod.reviewerModelFor('premium'), 'premium');
 });
 
 test('reviewerModelFor via require(): cheap escalates to standard', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   assert.equal(costMod.reviewerModelFor('cheap'), 'standard');
 });
 
 test('DEFAULT_CALIBRATION via require() has tier-name price keys', () => {
-  assert.ok(costMod, 'cost.js not loaded');
   const prices = costMod.DEFAULT_CALIBRATION.model_prices_per_1m_output_tokens;
   assert.ok('cheap'    in prices, 'prices must have cheap key');
   assert.ok('standard' in prices, 'prices must have standard key');

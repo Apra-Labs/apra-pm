@@ -602,22 +602,26 @@ function parseReadyStreaks(outputs, epicCount, defaultModel) {
     readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
   } catch { readyTasks = []; }
 
+  // Hoist the known-tiers set and reverse map outside the loop (constant across tasks).
+  const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
+  const MODEL_TO_TIER = Object.fromEntries(Object.entries(TIER_TO_MODEL).map(([t, id]) => [id, t]));
+
   const byModel = {};
   for (const t of readyTasks) {
     const rawModel = t.m || defaultModel;
-    // Normalise: if the stored value is a provider-specific model ID (contains '-' and digits)
-    // rather than a tier name, resolve it back to a tier name so dispatch() works correctly.
-    // This handles beads tasks created before the cheap/standard/premium tier rename.
-    const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
+    // Normalise: if the stored value is a provider-specific model ID rather than a tier
+    // name, resolve it back to a tier so dispatch() works correctly. This handles tasks
+    // created before the cheap/standard/premium tier rename. Uses console.warn (not log)
+    // so it is safe when this block is extracted into a vm/require context for testing.
     let model = rawModel;
     if (!KNOWN_TIERS.has(rawModel)) {
-      const resolved = Object.entries(TIER_TO_MODEL).find(([, id]) => id === rawModel);
-      if (resolved) {
-        model = resolved[0];
-        log(`[warn] Task ${t.id} has pre-migration model metadata '${rawModel}'; normalised to tier '${model}'`);
+      const tier = MODEL_TO_TIER[rawModel];
+      if (tier) {
+        model = tier;
+        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: pre-migration model '${rawModel}' normalised to tier '${model}'`);
       } else {
-        log(`[warn] Task ${t.id} has unrecognised model metadata '${rawModel}'; defaulting to '${defaultModel}'`);
         model = defaultModel;
+        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: unrecognised model '${rawModel}', defaulting to '${defaultModel}'`);
       }
     }
     if (!byModel[model]) byModel[model] = [];
@@ -848,7 +852,7 @@ async function getReadyStreaks(epicIds) {
     `bd list --ready --type=task --json | ${taskExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop' });
-  return parseReadyStreaks(r?.outputs, epicIds.length, MODEL_SONNET);
+  return parseReadyStreaks(r?.outputs, epicIds.length, TIER_STANDARD);
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {

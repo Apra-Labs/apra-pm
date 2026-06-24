@@ -266,9 +266,10 @@ function main() {
   const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
   if (fs.existsSync(workflowSrc)) {
     const fullSrc = fs.readFileSync(workflowSrc, 'utf-8');
-    const blockStart = fullSrc.indexOf('// PURE_FUNCTIONS_BEGIN');
-    const blockEnd   = fullSrc.indexOf('// PURE_FUNCTIONS_END') + '// PURE_FUNCTIONS_END'.length;
-    if (blockStart < 0 || blockEnd < blockStart) {
+    const blockStart  = fullSrc.indexOf('// PURE_FUNCTIONS_BEGIN');
+    const blockEndIdx = fullSrc.indexOf('// PURE_FUNCTIONS_END');
+    const blockEnd    = blockEndIdx >= 0 ? blockEndIdx + '// PURE_FUNCTIONS_END'.length : -1;
+    if (blockStart < 0 || blockEnd < 0 || blockEnd <= blockStart) {
       console.error('  [!] PURE_FUNCTIONS_BEGIN/END markers not found in auto-sprint.js -- cost.js not written');
     } else {
       const block = fullSrc.slice(blockStart, blockEnd);

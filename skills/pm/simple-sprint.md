@@ -29,9 +29,9 @@ out bigger than expected, promote to a full sprint.
    restore any the repo already shipped, then verify the net diff is product only),
    commit as pm, raise the PR (or report the diff for local-only), remove the
    worktree.
-6. On CHANGES NEEDED: the orchestrator reads `reopenIds` from feedback.md and runs
-   `bd update <id> --status=open` for each; re-dispatch the doer, repeat from
-   step 3.
+6. On CHANGES NEEDED: the orchestrator reads `reopenIds` and `newTasks` from
+   feedback.md; runs `bd update <id> --status=open` for each reopen ID and
+   `bd create` for each new task; then re-dispatches the doer from step 3.
 7. Create low-priority beads tasks for any unresolved findings or deferred items.
 8. STOP: do not merge. Surface the PR URL and CI status to the user and await
    explicit instruction.

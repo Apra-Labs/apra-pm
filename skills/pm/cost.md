@@ -28,9 +28,17 @@ process.stdout.write(JSON.stringify(computeSprintQuote(ta, calib)));
 "
 ```
 
-Replace `__SKILL_DIR__` with the actual absolute path (e.g. `~/.claude/skills/pm`
-for Claude Code). Pass inputs via `process.env` (for JSON blobs) or inline
-literals. Capture stdout and parse as JSON.
+Replace `__SKILL_DIR__` with the absolute path for your provider:
+
+| Provider | `__SKILL_DIR__` |
+|----------|----------------|
+| Claude   | `~/.claude/skills/pm` |
+| Gemini   | `~/.gemini/skills/pm` |
+| AGY      | `~/.gemini/antigravity-cli/skills/pm` |
+| OpenCode | `~/.config/opencode/skills/pm` |
+
+Pass inputs via `process.env` (for JSON blobs) or inline literals. Capture stdout
+and parse as JSON.
 
 ## Calibration file
 
@@ -115,7 +123,7 @@ so `computeSprintAnalysis` can compare estimates to actuals. Each record:
 
 ```json
 { "ts": "<ISO timestamp>", "cycle": 1, "phase": "Develop", "label": "doer-c1-i1",
-  "model": "<model-id>", "context": "tasks BD-10, BD-11",
+  "model": "<tier: cheap|standard|premium>", "context": "tasks BD-10, BD-11",
   "outTokens": 1234, "costUsd": 0.0185 }
 ```
 

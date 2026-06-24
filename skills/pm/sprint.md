@@ -111,7 +111,8 @@ their model tiers, and their dependency order. There is no PLAN.md to commit and
 progress.json to generate; the doer loop reads `bd ready` directly.
 
 **After APPROVED (if Node.js is available):** compute and log the sprint cost quote
-using `computeSprintQuote` from `~/.claude/workflows/auto-sprint.js`, then write per-task cost estimates
+using `computeSprintQuote` from `<skillDir>/cost.js` (installed alongside this
+skill; see `cost.md` for the path per provider), then write per-task cost estimates
 back to beads notes. See `cost.md` Phase 3.
 
 ## Phase 4 -- Develop

@@ -164,7 +164,7 @@ Overwrite feedback.md with:
   - Notes section: specific findings with issue IDs and exact bd commands to fix any
     dependency direction problems
   - taskAssignments section: one line per task in JSON array form:
-    [{"id":"<beads-id>","bucket":"S|M|L","model":"<exact model id>"},...]
+    [{"id":"<beads-id>","bucket":"S|M|L","model":"<tier: cheap|standard|premium>"},...]
 
 Commit feedback.md as identity pm-plan-reviewer (git -c user.name='pm-plan-reviewer'
 -c user.email='plan-reviewer@pm.local' commit). <transport line>.
@@ -172,7 +172,7 @@ Commit feedback.md as identity pm-plan-reviewer (git -c user.name='pm-plan-revie
 
 The orchestrator reads `taskAssignments` from `feedback.md` after APPROVED to run
 `computeSprintQuote` (see `cost.md`). The array shape must match exactly:
-`[{ "id": "<beads task id>", "bucket": "S|M|L", "model": "<exact model id>" }]`.
+`[{ "id": "<beads task id>", "bucket": "S|M|L", "model": "<tier: cheap|standard|premium>" }]`.
 
 ### doer
 

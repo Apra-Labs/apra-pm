@@ -16,8 +16,6 @@ every `bd` command from there. Doers run `bd ready` / `bd update --claim` /
 `bd close` against that same DB; reviewers run `bd show` only -- they never write to
 beads. On CHANGES NEEDED the reviewer writes `reopenIds` and `newTasks` to
 `feedback.md`; the orchestrator reads that and runs the beads updates.
-Tasks reference their track via assignee or label.
-
 The DB persists on disk across sessions, so it survives without being committed.
 Committing it is optional and only shares issue history across machines; if you do,
 commit it on the base or integration branch -- keeping it off the track feature
