@@ -90,9 +90,24 @@ const threshold = GOAL_THRESHOLD[goal] || 2;
 
 // PURE_FUNCTIONS_BEGIN -- extracted by test/sprint-cost.test.mjs via vm; keep this block self-contained
 
-const MODEL_OPUS   = 'claude-opus-4-8';
-const MODEL_SONNET = 'claude-sonnet-4-6';
-const MODEL_HAIKU  = 'claude-haiku-4-5';
+// Provider-agnostic tier names. These are the only strings that appear in
+// calibration.json and in dispatch calls. Provider-specific model IDs live
+// exclusively in TIER_TO_MODEL below -- the single place to update when models change.
+const TIER_CHEAP    = 'cheap';
+const TIER_STANDARD = 'standard';
+const TIER_PREMIUM  = 'premium';
+
+// Claude model IDs -- change here only, nowhere else in this file.
+const TIER_TO_MODEL = {
+  [TIER_CHEAP]:    'claude-haiku-4-5',
+  [TIER_STANDARD]: 'claude-sonnet-4-6',
+  [TIER_PREMIUM]:  'claude-opus-4-8',
+};
+
+// Legacy aliases kept so existing dispatch call-sites (model: MODEL_OPUS etc.) are unchanged.
+const MODEL_OPUS   = TIER_PREMIUM;
+const MODEL_SONNET = TIER_STANDARD;
+const MODEL_HAIKU  = TIER_CHEAP;
 
 // ------------------------------------------------------------------ schemas
 
@@ -218,11 +233,12 @@ function approved(review) {
 // Live pricing for dispatch cost tracking. Initialized from DEFAULT_CALIBRATION;
 // synced to calibration.json values after setup() returns.
 // Prices are output tokens only in USD per 1M. Source: Anthropic pricing 2026-06-04.
+// Keys are tier names (cheap/standard/premium), not model IDs.
 // See also: sprint-logs/calibration.json model_prices_per_1m_output_tokens.
 let OUTPUT_PRICE_PER_M = {
-  [MODEL_HAIKU]:   5.00,
-  [MODEL_SONNET]: 15.00,
-  [MODEL_OPUS]:   25.00,
+  [TIER_CHEAP]:    5.00,
+  [TIER_STANDARD]: 15.00,
+  [TIER_PREMIUM]:  25.00,
 };
 
 // ------------------------------------------------------------------ CALIBRATION DEFAULTS
@@ -233,31 +249,31 @@ const DEFAULT_CALIBRATION = {
   _doc: 'Sprint cost calibration. All estimation constants live here -- nothing is hardcoded in agents. Fields named _doc are documentation strings; skip them when reading values. The historical section is written automatically by the harvester after each sprint; do not edit it manually.',
   schema_version: 1,
   model_prices_per_1m_output_tokens: {
-    _doc: 'USD per 1M output tokens. Source: Anthropic published pricing 2026-06-04. Update when pricing changes. This file is the single source of truth -- DEFAULT_CALIBRATION in auto-sprint.js is only used to bootstrap this file on first run.',
-    [MODEL_HAIKU]:   5.00,
-    [MODEL_SONNET]: 15.00,
-    [MODEL_OPUS]:   25.00,
+    _doc: 'USD per 1M output tokens, keyed by tier name (cheap/standard/premium). Source: Anthropic published pricing 2026-06-04. Update when pricing changes. Provider-specific model IDs are resolved from tier names in auto-sprint.js TIER_TO_MODEL -- they never appear in this file.',
+    [TIER_CHEAP]:    5.00,
+    [TIER_STANDARD]: 15.00,
+    [TIER_PREMIUM]:  25.00,
   },
   role_models: {
-    _doc: "Fixed model per workflow role. 'doer' and 'reviewer' are NOT here -- the planner sets model per task in beads metadata; reviewer escalates to max(task_model, sonnet). Change an entry here to reroute a role to a different model tier.",
-    'setup':             MODEL_HAIKU,
-    'planner':           MODEL_OPUS,
-    'plan-reviewer':     MODEL_SONNET,
-    'deployer':          MODEL_SONNET,
-    'integ-test-runner': MODEL_SONNET,
-    'ci-watcher':        MODEL_HAIKU,
-    'harvester':         MODEL_SONNET,
-    'log-flush':         MODEL_HAIKU,
-    'check-blockers':    MODEL_HAIKU,
-    'ready-streaks':     MODEL_HAIKU,
+    _doc: "Tier name per workflow role. 'doer' and 'reviewer' are NOT here -- the planner sets tier per task in beads metadata; reviewer escalates to max(task_tier, standard). Change an entry here to reroute a role to a different tier.",
+    'setup':             TIER_CHEAP,
+    'planner':           TIER_PREMIUM,
+    'plan-reviewer':     TIER_STANDARD,
+    'deployer':          TIER_STANDARD,
+    'integ-test-runner': TIER_STANDARD,
+    'ci-watcher':        TIER_CHEAP,
+    'harvester':         TIER_STANDARD,
+    'log-flush':         TIER_CHEAP,
+    'check-blockers':    TIER_CHEAP,
+    'ready-streaks':     TIER_CHEAP,
   },
   doer_model_fallback: {
-    _doc: 'Model assumed for doer cost estimation when a task has no model metadata in beads. In practice the planner always sets model metadata -- this is a safety net only.',
-    model: MODEL_SONNET,
+    _doc: 'Tier assumed for doer cost estimation when a task has no tier metadata in beads. In practice the planner always sets tier metadata -- this is a safety net only.',
+    model: TIER_STANDARD,
   },
   reviewer_model_rule: {
-    _doc: 'Reviewer model is max(doer_task_model, minimum). If the doer used opus, reviewer uses opus; otherwise reviewer uses sonnet. This mirrors the reviewerModel selection in auto-sprint.js.',
-    minimum: MODEL_SONNET,
+    _doc: 'Reviewer tier is max(doer_task_tier, minimum). If the doer used premium, reviewer uses premium; otherwise reviewer uses standard. This mirrors the reviewerModel selection in auto-sprint.js.',
+    minimum: TIER_STANDARD,
   },
   complexity_buckets: {
     _doc: 'Estimated doer output tokens per task by complexity bucket S/M/L. Plan-reviewer assigns a bucket to each task by reading its description. historical.bucket_avg_tokens overrides these defaults once enough sprint data has been collected.',
@@ -307,9 +323,9 @@ const DEFAULT_CALIBRATION = {
 // ------------------------------------------------------------------ COST ARITHMETIC
 // All sprint cost computations are pure JavaScript -- no agent touches a number.
 
-// Reviewer model mirrors auto-sprint dispatch logic: max(taskModel, sonnet).
+// Reviewer tier mirrors auto-sprint dispatch logic: max(taskTier, standard).
 function reviewerModelFor(taskModel) {
-  return taskModel === MODEL_OPUS ? MODEL_OPUS : MODEL_SONNET;
+  return taskModel === TIER_PREMIUM ? TIER_PREMIUM : TIER_STANDARD;
 }
 
 function computeSprintQuote(taskAssignments, calibration) {
@@ -709,28 +725,37 @@ function buildSprintSummary(analysis, sprintQuote, calibration, opts) {
 
 // PURE_FUNCTIONS_END
 
-function outputCostUsd(model, tokens) {
-  const rate = OUTPUT_PRICE_PER_M[model] || OUTPUT_PRICE_PER_M[MODEL_SONNET];
+function outputCostUsd(tier, tokens) {
+  const rate = OUTPUT_PRICE_PER_M[tier] || OUTPUT_PRICE_PER_M[TIER_STANDARD];
   return (tokens / 1_000_000) * rate;
+}
+
+// Resolve a tier name to the provider-specific model ID for agent() dispatch.
+// Falls back to standard tier if the tier is unrecognised.
+function resolveModel(tier) {
+  return TIER_TO_MODEL[tier] || TIER_TO_MODEL[TIER_STANDARD];
 }
 
 // Real output-token cost via differential budget.spent() snapshots.
 // budget.spent() is the only actual usage the harness exposes (output tokens only).
+// opts.model is a tier name (cheap/standard/premium); resolved to a model ID for agent().
 // opts.context -- short human string describing what was worked (e.g. "tasks BD-5,BD-6")
 let cycleCostUsd = 0;
 const dispatchLedger = [];  // accumulates across all cycles; flushed to sprint-logs/<branch>.jsonl per cycle
 
 async function dispatch(prompt, opts) {
+  const tier = opts.model || TIER_STANDARD;
+  const modelId = resolveModel(tier);
   const before = budget.spent();
-  const result = await agent(prompt, opts);
+  const result = await agent(prompt, { ...opts, model: modelId });
   const outTokens = budget.spent() - before;
-  const cost = outputCostUsd(opts.model || MODEL_SONNET, outTokens);
+  const cost = outputCostUsd(tier, outTokens);
   cycleCostUsd += cost;
   const entry = {
     cycle:   cycleCount === 0 ? 'setup' : cycleCount,
     phase:   opts.phase  || '?',
     label:   opts.label  || '?',
-    model:   opts.model  || MODEL_SONNET,
+    model:   tier,
     context: opts.context || '',
     outTokens,
     costUsd: parseFloat(cost.toFixed(4)),
@@ -954,12 +979,17 @@ let flushedCount = 0;  // how many dispatchLedger entries have been appended to 
 async function appendNewEntries(label, phase) {
   const newEntries = dispatchLedger.slice(flushedCount);
   if (newEntries.length === 0) return;
-  const lines = newEntries.map(e => JSON.stringify({ ts: sprintTs, ...e })).join('\n');
+  // ts placeholder is replaced by the agent with the real wall-clock time at flush,
+  // not the fixed sprint-start timestamp, so each flush batch gets its own timestamp.
+  const lines = newEntries.map(e => JSON.stringify({ ts: '__FLUSH_TS__', ...e })).join('\n');
   flushedCount = dispatchLedger.length;  // update before dispatch so log-append entry goes in next batch
   await dispatch(
-    `Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+    `Step 1: Run: date +%Y-%m-%dT%H:%M:%S%z\n` +
+    `Save the output as FLUSH_TS (e.g. "2026-06-22T22:15:30+0530").\n\n` +
+    `Step 2: Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
     `If the file does not exist, create it. If the sprint-logs/ directory does not exist, create it first:\n` +
     `  mkdir -p "${repo}/sprint-logs"\n\n` +
+    `In the lines below, replace every occurrence of "__FLUSH_TS__" with the FLUSH_TS value from Step 1.\n` +
     `Lines to append (one JSON object per line):\n${lines}\n\n` +
     `Then commit and push:\n` +
     `  git -C "${repo}" add sprint-logs/\n` +
@@ -1086,16 +1116,16 @@ while (cycleCount < maxCycles) {
       `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
       `  Each task must be completable in one agent session (1-3 file changes max)\n` +
       `  Every task needs clear acceptance criteria in its description\n` +
-      `  - Assign each task a model AND complexity bucket based on complexity -- after creating or updating each\n` +
-      `    task, run: bd update <id> --set-metadata model=<model-id>\n` +
-      `    Available models and when to use them:\n` +
-      `      ${MODEL_HAIKU}  -- mechanical work: rename, config tweak, move file, simple wiring\n` +
-      `      ${MODEL_SONNET} -- standard work: new function, test suite, API endpoint, refactor\n` +
-      `      ${MODEL_OPUS}   -- hard work: architecture, multi-file design, ambiguous requirements\n` +
+      `  - Assign each task a tier AND complexity bucket based on complexity -- after creating or updating each\n` +
+      `    task, run: bd update <id> --set-metadata model=<tier>\n` +
+      `    Available tiers and when to use them:\n` +
+      `      ${TIER_CHEAP}    -- mechanical work: rename, config tweak, move file, simple wiring\n` +
+      `      ${TIER_STANDARD} -- standard work: new function, test suite, API endpoint, refactor\n` +
+      `      ${TIER_PREMIUM}  -- hard work: architecture, multi-file design, ambiguous requirements\n` +
       `    Complexity buckets (S/M/L) are assigned by the plan-reviewer based on task scope.\n` +
       `    Every task MUST receive a bucket assignment -- tasks without a bucket cannot be cost-estimated.\n` +
-      `  - Group tasks so consecutive tasks in dependency order share a model where\n` +
-      `    possible -- this minimises model-switching overhead during execution\n` +
+      `  - Group tasks so consecutive tasks in dependency order share a tier where\n` +
+      `    possible -- this minimises tier-switching overhead during execution\n` +
       (cycleCount > 1
         ? `This is cycle ${cycleCount}. Focus on open issues only.\n` +
           `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
@@ -1235,10 +1265,10 @@ while (cycleCount < maxCycles) {
     devIter++;
     if (streakAbort) break;
 
-    // Reviewer model matches the highest-tier model used across all streaks:
-    // any opus streak -> opus; otherwise sonnet (haiku work reviewed by sonnet minimum).
+    // Reviewer tier matches the highest tier used across all streaks:
+    // any premium streak -> premium; otherwise standard (cheap work reviewed at standard minimum).
     const usedModels = streakResult.streaks.map(s => s.model);
-    const reviewerModel = usedModels.includes(MODEL_OPUS) ? MODEL_OPUS : MODEL_SONNET;
+    const reviewerModel = usedModels.includes(TIER_PREMIUM) ? TIER_PREMIUM : TIER_STANDARD;
 
     // One reviewer pass covering all streaks worked this iteration.
     const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;

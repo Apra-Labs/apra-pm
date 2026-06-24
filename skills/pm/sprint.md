@@ -2,14 +2,53 @@
 
 Full lifecycle for a pm sprint on a single project, driven from one session.
 
+A sprint is one or more **cycles**. Each cycle runs three phases -- **Plan**,
+**Develop**, **Test** -- then checks the goal; a fourth phase, **Harvest**, runs
+once at sprint close. Setup, requirements, and design happen once before the first
+cycle.
+
 ```
-requirements -> design -> plan (loop) -> execute (doer-review loop)
-             -> deploy (if applicable) -> complete -> PR
+setup -> requirements -> design ->
+  repeat cycle (until goal met or cycle ceiling):
+    Plan    (planner writes tasks to beads -> plan-reviewer loop to APPROVED)
+    Develop (doer-review loop: bd ready -> claim -> close, to a clean APPROVED)
+    Test    (deploy + integration tests, if deploy.md + playbook present)
+    goal check -> exit | next cycle
+Harvest (CI watch -> final review -> docs/CHANGELOG -> complete -> PR)
 ```
 
-State lives in git (on each track's branch) and in beads. See `beads.md` for the
-task-DB backbone and `worktrees.md` for
+State lives in **beads** (all task state -- the plan, what is open/in-progress/closed,
+acceptance criteria, model tier, review findings) and **git** (the code, the branch
+history, and the requirements/design narrative). There is no PLAN.md and no
+progress.json. See `beads.md` for the task-DB backbone and `worktrees.md` for
 worktree mechanics.
+
+## The cycle loop
+
+Run cycles until the **goal** is met or the **cycle ceiling** is reached.
+
+- **Goal** -- a priority threshold (default P1/P2; also P1 or P1/P2/P3). The sprint
+  is done when no open beads issue in the epic subtree sits at or above it.
+- **Cycle ceiling** -- a hard cap on cycles (default 5) so a sprint can never loop
+  unbounded.
+
+Each cycle:
+
+1. **Plan** (Phase 3). If planning is already complete -- the epic has features and
+   every open feature's tasks carry acceptance criteria (`bd show <id>`) -- skip the
+   plan loop. First reset any task left `in_progress` by a crashed prior dispatch
+   back to `open` (`bd update <id> --status=open`) so no work is orphaned.
+2. **Develop** (Phase 4). Run the doer-review loop until `bd ready` is empty, no open
+   task remains at the goal priority, and the last reviewer verdict was APPROVED (see
+   `doer-reviewer-loop.md`).
+3. **Test** (Phase 5). Deploy and run integration tests, only if both `deploy.md`
+   and `integ-test-playbook.md` are present; otherwise skip.
+4. **Goal check.** Count open issues at or above the goal priority in the epic
+   subtree. Zero -> goal met, exit the loop and go to Harvest. Otherwise: if this
+   cycle resolved none of the previous cycle's open issues, abort and flag the user
+   (no-progress); else start the next cycle.
+
+After the loop exits, run **Harvest** once (see Completion).
 
 ## Sprint selection
 
@@ -28,9 +67,13 @@ than it saves.
 
 1. Detect transport: `git -C <repo> remote` (empty => local-only). This decides the
    `<transport line>` in every dispatch prompt (see `worktrees.md`).
-2. Create the beads epic for the sprint and record its id:
+2. **Check Node.js** (required for cost quoting): `node --version 2>/dev/null || echo MISSING`.
+   If `MISSING`: warn the user that cost quoting is unavailable and skip all cost
+   steps for this sprint; everything else runs normally. If present: load or bootstrap
+   `sprint-logs/calibration.json` (see `cost.md` Setup check).
+3. Create the beads epic for the sprint and record its id:
    `bd create "sprint: <name>" -p 1` -> `<epic-id>` (see `beads.md`).
-3. Create the track worktree(s) off the base branch (one per track):
+4. Create the track worktree(s) off the base branch (one per track):
    `git -C <repo> worktree add -b <branch> <repo>-wt/<track> <base-ref>`.
 
 ## Phase 1 -- Requirements
@@ -49,48 +92,98 @@ skip design and note in `requirements.md` that none was needed.
 
 ## Phase 3 -- Plan (loop)
 
-1. Dispatch `planner` (inline, strongest model). It explores, drafts,
-   self-critiques, writes `PLAN.md` with an exact `model` assigned to every work
-   task, and commits.
-2. Loop: dispatch `plan-reviewer` (inline, strongest model). Read the
-   `feedback.md` verdict. `CHANGES NEEDED` -> dispatch `planner` to revise ->
-   re-review. `APPROVED` -> continue.
-3. Push the plan into beads: one task per `PLAN.md` item under the epic, with
-   dependencies wired (see `beads.md`). Generate `progress.json` from `PLAN.md`
-   using `tpl-progress.json` -- copy each task's assigned `model` and its beads id
-   into the task entry. Commit `progress.json`. This is the living execution state.
+1. Dispatch `planner` (inline, premium-tier). It explores, drafts, self-critiques, then
+   writes the plan **directly into beads** -- one task per plan item under the epic,
+   each with `--acceptance="..."` (the reviewer's contract), `--notes="model:
+   <tier>"` (cheap-tier for mechanical work, standard-tier for standard implementation,
+   premium-tier for hard design), a priority matching the epic's goal, and dependencies
+   wired with `bd dep add` (see `beads.md`). It does NOT write PLAN.md.
+2. Loop, capped at three rounds: dispatch `plan-reviewer` (inline, standard-tier). It
+   inspects the beads DAG (`bd graph --compact <epic-id>`, `bd ready`, `bd show <id>`)
+   for coverage, task size, acceptance criteria, dependency direction, and model-tier
+   assignment, classifying each task's complexity bucket (S/M/L). Read the
+   `feedback.md` verdict. `CHANGES NEEDED` -> dispatch `planner` to revise the beads
+   tasks -> re-review. `APPROVED` -> continue. If three rounds leave the plan
+   unapproved, abort and flag the user.
 
-## Phase 4 -- Execute
+Beads now holds the full execution state -- the tasks, their acceptance criteria,
+their model tiers, and their dependency order. There is no PLAN.md to commit and no
+progress.json to generate; the doer loop reads `bd ready` directly.
 
-Run the doer-review loop in `doer-reviewer-loop.md` for each phase. For each doer
-dispatch, read the next pending task's `model` from `progress.json` and dispatch
-with it. Claim tasks in beads on dispatch and close them at VERIFY; turn reviewer
-HIGH findings into beads tasks (see `beads.md`). Record `lastDispatchedPhase` in
-`progress.json`.
+**After APPROVED (if Node.js is available):** compute and log the sprint cost quote
+using `computeSprintQuote` from `~/.claude/workflows/auto-sprint.js`, then write per-task cost estimates
+back to beads notes. See `cost.md` Phase 3.
 
-## Phase 5 -- Deploy
+## Phase 4 -- Develop
 
-If the project ships (not just merges), run its deployment runbook. Look for
-`deploy.md` in the worktree (or repo root / `docs/`). If absent and the project
-deploys, write one capturing the exact execute / verify / rollback steps and commit
-it. Run each step, then the verify section. On failure, run the rollback steps and
-flag the user. Deployment that needs remote machines, credentials, or shell access
-beyond the local environment is out of scope for pm itself -- note it as a
-manual or external step in `deploy.md`.
+Run the doer-review loop in `doer-reviewer-loop.md`. Each iteration: read the ready
+tasks (`bd ready`), group them into model streaks (consecutive tasks sharing a model
+tier, read from each task's notes via `bd show <id>`), dispatch one `doer` per streak
+on that tier, then one `reviewer` over all worked tasks. The doer claims each task
+(`bd update <id> --claim`), implements, commits, and closes it (`bd close <id>`); the
+orchestrator does not touch beads between doer and reviewer. The reviewer runs
+standard-tier, escalating to premium-tier if any streak this iteration ran premium-tier; on
+CHANGES NEEDED it writes `reopenIds` and `newTasks` to feedback.md and the
+orchestrator runs `bd update <id> --status=open` for each, returning them to
+`bd ready` next iteration (see `beads.md` and `doer-reviewer-loop.md`).
 
-## Completion
+The Develop phase exits when `bd ready` returns nothing, `bd list --status=open` at
+the goal priority is empty, **and** the last reviewer verdict was APPROVED -- a
+single APPROVED suffices because beads tracks discrete tasks. A CHANGES NEEDED
+reopens tasks; the doer fixes and the loop continues. Do not advance to Test (or
+Harvest) while open tasks remain at the goal priority.
 
-When every phase (of every track) is APPROVED:
+## Phase 5 -- Test
 
-1. **Documentation harvest** -- dispatch a doer to extract long-term knowledge
-   from requirements.md, design.md, and PLAN.md into `docs/`. Structure inside
-   `docs/` is content-driven (e.g. `docs/architecture.md`, `docs/features/<name>.md`).
-   Extract: architecture decisions, feature design, key trade-offs, API contracts.
-   Do NOT extract: task lists, code-line references, debug notes, implementation
-   steps. The doer commits the docs/ output to the branch. Then dispatch a reviewer
-   to verify the harvest captures durable knowledge and nothing transient slipped
-   in. Iterate to APPROVED.
-2. **Close the epic and the delivered issues** -- `bd close <epic-id>`; also close
+Run only when both `deploy.md` and `integ-test-playbook.md` are present in the
+worktree (or repo root / `docs/`); otherwise skip the phase and proceed to the goal
+check. The phase has three steps:
+
+1. **Deploy** -- dispatch `deployer` (standard-tier). On the first cycle it runs the
+   playbook's Setup section to bring up the environment; on later cycles it runs the
+   Reset section to restore pristine state. It then follows `deploy.md` to deploy the
+   build and runs the smoke test. On smoke-test failure, it tears down, and PM skips
+   integration tests this cycle and continues.
+2. **Integration tests** -- dispatch `integ-test-runner` (standard-tier). It executes
+   each open feature's tests, closes passing features in beads, and files a
+   priority-ranked bug for each failure (see `beads.md`).
+3. **Teardown** -- dispatch `deployer` to run the playbook's Teardown section and
+   fully clean up.
+
+If the project ships but has no runbook yet, write `deploy.md` capturing the exact
+execute / verify / rollback steps and `integ-test-playbook.md` capturing Setup /
+Reset / Teardown, and commit them. Deployment that needs remote machines,
+credentials, or shell access beyond the local environment is out of scope for pm
+itself -- note it as a manual or external step in `deploy.md`.
+
+## Completion (Harvest)
+
+The cycle loop has exited (goal met or cycle ceiling reached) and every track's
+Develop phase ended on an APPROVED review with no open tasks at the goal priority.
+Run the Harvest phase once:
+
+1. **CI watch** -- dispatch `ci-watcher` (cheap-tier) to poll CI for the sprint HEAD
+   SHA: green / red / not configured / pending. If CI is not configured, file a
+   beads task to add it and flag the user. Carry red/not-configured into the PR body
+   rather than blocking the harvest.
+2. **Final review** -- dispatch `reviewer` (premium-tier) over the whole sprint output:
+   does it address the original epics, are there gaps or regressions, is it in a
+   releasable state for what was completed? `CHANGES NEEDED` -> stop before harvest
+   and flag the user. `APPROVED` -> continue.
+3. **Documentation harvest** -- dispatch `harvester` to extract long-term knowledge
+   from requirements.md, design.md, and the beads task tree (`bd list --tree
+   <epic-id>`, `bd show <id>`) into `docs/` and update `CHANGELOG`.
+   Structure inside `docs/` is content-driven (e.g. `docs/architecture.md`,
+   `docs/features/<name>.md`). Extract: architecture decisions, feature design, key
+   trade-offs, API contracts. Do NOT extract: task lists, code-line references, debug
+   notes, implementation steps. The harvester commits the `docs/` and `CHANGELOG`
+   output to the branch.
+4. **Cost analysis and calibration update** (if Node.js available) -- run
+   `computeSprintAnalysis`, `buildSprintSummary`, and `computeUpdatedCalibration`
+   from auto-sprint.js to produce `sprint-logs/<branch>-<startedAt>.analysis.md` and
+   update `sprint-logs/calibration.json` with actual token data from this sprint.
+   Commit both. See `cost.md` Harvest.
+5. **Close the epic and the delivered issues** -- `bd close <epic-id>`; also close
    any source beads issues this sprint implemented -- the ready backlog items the
    requirement was drawn from -- with `bd close <issue-id> ...`. Closing the epic
    alone leaves those open. Record the PR link on the epic once raised (see
@@ -100,13 +193,11 @@ When every phase (of every track) is APPROVED:
    `bd export -o <track-worktree>/.beads/issues.jsonl` (a bare `bd export` only prints
    to stdout; you MUST pass `-o`), then commit that file in the worktree as `pm`.
    This carries the closed state into the PR regardless of backend.
-3. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
-   only. The tracking files (`requirements.md`, `design.md`, `PLAN.md`,
-   `progress.json`, `feedback.md` -- and any case variant such as `plan.md`/
-   `progress.md` the repo itself may already ship) are the inter-agent message bus,
-   not product; beads holds the durable record, and they stay visible in the branch
-   history as proof the loop ran. For each such file, decide by whether it existed on
-   the base branch:
+6. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
+   only. The tracking files (`requirements.md`, `design.md`, `feedback.md`) are
+   sprint narrative and the reviewer message bus, not product; beads holds the
+   durable task record, and these stay visible in the branch history as proof the
+   loop ran. For each such file, decide by whether it existed on the base branch:
    - **Sprint created it** (absent on base): `git rm` it.
    - **The repo already had it** (present on base, the sprint only touched it):
      restore it to base content -- `git checkout <base> -- <file>` -- so the diff
@@ -116,12 +207,12 @@ When every phase (of every track) is APPROVED:
    `git diff --name-only <base>...<branch>` must list no tracking-file name in any
    case. If one remains, repeat until the net diff is product only. (Same drop the
    parallel-track flow does before integrating.)
-4. **Raise the PR** -- run the PR command directly: open a PR from the (integration)
+7. **Raise the PR** -- run the PR command directly: open a PR from the (integration)
    branch to the base, then watch checks until CI is green. For a local-only sprint
    there is no PR -- report the branch and its `git diff <base>...<branch>` instead.
-5. **Do NOT merge.** Surface the PR URL and CI status; await explicit user
+8. **Do NOT merge.** Surface the PR URL and CI status; await explicit user
    instruction to merge.
-6. **Remove worktrees** -- `git -C <repo> worktree remove <repo>-wt/<track>` for
+9. **Remove worktrees** -- `git -C <repo> worktree remove <repo>-wt/<track>` for
    each track once the PR is raised (or the branch is merged).
 
 ## Parallel tracks
@@ -143,12 +234,12 @@ track runs its OWN full pipeline (`planner` -> `plan-reviewer` -> `doer` ->
    track owns what.
 3. **Integrate.** When a track is APPROVED, merge its branch into the integration
    base branch (never the trunk): `git -C <repo> merge <track-branch>`. Merge code
-   only -- the per-track tracking files (`PLAN.md`, `progress.json`, `feedback.md`,
-   `requirements.md`, `design.md`) are sprint scaffolding for that one track and stay
-   on its branch. Drop them before the merge (e.g. `git rm` on the track branch, or
-   resolve the merge in favour of removing them) so two tracks never collide on a
-   same-named tracking file. beads holds the cross-track record, so nothing durable
-   is lost. Notify dependent tracks to rebase on the updated base.
+   only -- the per-track narrative files (`feedback.md`, `requirements.md`,
+   `design.md`) are sprint scaffolding for that one track and stay on its branch.
+   Drop them before the merge (e.g. `git rm` on the track branch, or resolve the
+   merge in favour of removing them) so two tracks never collide on a same-named
+   file. beads holds the cross-track task record, so nothing durable is lost. Notify
+   dependent tracks to rebase on the updated base.
 4. **Finish.** When all tracks are merged: raise one PR from the integration branch,
    confirm CI, remove all worktrees.
 
@@ -159,37 +250,39 @@ For 1-3 tasks completable in one sitting, skip the full harness:
 1. Write a concise `requirements.md` on the branch and commit.
 2. Create a small beads epic + a task per item.
 3. Dispatch the `doer` (model sized to the work) for the task(s); it commits.
-4. Dispatch the `reviewer` (strongest model); read the verdict. `CHANGES NEEDED` ->
+4. Dispatch the `reviewer` (premium-tier); read the verdict. `CHANGES NEEDED` ->
    doer fixes -> re-review. `APPROVED` -> close the beads tasks and the delivered
    source issues, clean the sprint scaffolding from the PR (see Completion step 3 --
    `git rm` sprint-created tracking files, restore any the repo already shipped, then
    verify the net diff is product only) and commit as `pm`, raise the PR (or
    report the diff for local-only), remove the worktree.
 
-No `PLAN.md`/`progress.json` harness; beads + git carry the state. Promote to a full
-sprint if the work turns out larger than expected.
+No harness files; beads + git carry the state. Promote to a full sprint if the work
+turns out larger than expected.
 
 ## Recovery after an orchestrator restart
 
-State is in git and beads -- no status file, no memory. To re-orient:
+State is in beads and git -- no status file, no memory, no progress.json. To
+re-orient:
 
-1. `bd list --tree <epic-id>` (or `bd ready`) -- what is open, in progress, blocked.
-   Beads reflects orchestrator actions (claim/close), not on-disk completion, so
-   confirm against git next.
+1. `bd list --status=open` + `bd list --status=in_progress` + `bd ready` (or
+   `bd list --tree <epic-id>`) -- what is open, claimed, and unblocked. Beads
+   reflects claim/close actions, not on-disk completion, so confirm against git next.
 2. Per track worktree: `git -C <repo> log --oneline <base>..<branch>` (what is
-   committed) and `cat <worktree>/progress.json` (tasks completed / pending /
-   blocked, `lastDispatchedPhase`). On a track mid-review, also
-   `git -C <repo> log --oneline -- feedback.md` for reviewer progress.
+   committed). On a track mid-review, also `git -C <repo> log --oneline --
+   feedback.md` for reviewer progress.
 3. `git -C <repo> -C <worktree> status` -- uncommitted changes?
 
 Then act:
 
+- **Task `in_progress` with no matching commits** -> orphaned claim from a crashed
+  dispatch; reset it (`bd update <id> --status=open`) and re-dispatch the doer.
 - **VERIFY reached, no review yet** -> dispatch the reviewer now.
-- **Mid-phase with commits, clear next task** -> dispatch the doer for the next
-  pending task (its assigned model).
-- **Idle, no progress** -> re-dispatch from the last known task.
-- **Uncommitted work of unknown origin, or beads/progress.json disagree with git**
-  -> STOP and flag the user; do not guess.
+- **Ready tasks remain, working tree clean** -> dispatch the doer for the next ready
+  task (its model tier from `bd show <id>`).
+- **Idle, no progress** -> re-dispatch from the next ready task.
+- **Uncommitted work of unknown origin, or beads and git disagree** -> STOP and flag
+  the user; do not guess.
 
-Each dispatch reads its context from files, so recovery is just "read git + beads,
-dispatch the right next role." Every dispatch starts fresh from that state.
+Each dispatch reads its context from beads + git, so recovery is just "read beads +
+git, dispatch the right next role." Every dispatch starts fresh from that state.

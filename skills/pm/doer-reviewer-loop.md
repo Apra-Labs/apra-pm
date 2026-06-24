@@ -1,10 +1,14 @@
 # Doer-Reviewer Loop
 
 The execute-phase loop for one track. Every dispatch is an inline subagent call (its
-result returns in the same turn);
-every handoff is a file committed on the track's branch; every task transition is
-recorded in beads. (The plan loop that precedes this -- planner / plan-reviewer --
-is in `sprint.md`.)
+result returns in the same turn). Beads is the task store; `feedback.md` is the
+reviewer's output channel. The doer finds work with `bd ready`, claims it with
+`bd update --claim`, and closes it with `bd close`. The reviewer reads acceptance
+criteria with `bd show` and writes its verdict to `feedback.md` -- it never touches
+beads. On CHANGES NEEDED the orchestrator reads `feedback.md` and runs the beads
+updates itself. There is no PLAN.md and no progress.json -- code is committed to the
+branch; all task state lives in beads. (The plan loop that precedes this -- planner /
+plan-reviewer -- is in `sprint.md`.)
 
 ## Pre-flight checks
 
@@ -29,40 +33,66 @@ Verify the reviewer sees the same state the doer pushed:
 Never dispatch a reviewer against stale code -- SHA mismatch means the review
 covers the wrong diff.
 
-## The loop (per track, per phase)
+## The loop (the Develop phase of one cycle)
 
 ```
-PLAN approved, beads tasks created, progress.json written
-  for each phase in PLAN.md:
-    1. Claim the phase's first pending task in beads (status in_progress).
-       Dispatch the doer (inline) with the task's assigned model -> doer executes
-       the phase's pending tasks in order, commits each, STOPS at the VERIFY checkpoint.
-    2. On doer completion: read progress.json. If a task is blocked -> handle the
-       blocker. Assert the worktree is clean (`git status --porcelain` empty); a dirty
-       tree means the doer left uncommitted work -- send it back to commit before any
-       review. Otherwise close the phase's completed tasks in beads and dispatch the
-       reviewer (inline, strongest model).
-    3. On reviewer completion: read the feedback.md verdict.
-         APPROVED       -> advance to the next phase (or Completion if last).
-         CHANGES NEEDED -> create one beads task per HIGH finding (assigned to the
-                           track), dispatch the doer to fix (inline) -> back to
-                           step 2. Close each finding task when the reviewer clears it.
-  All phases APPROVED -> Completion (see sprint.md).
+Plan APPROVED, beads tasks created (each with acceptance criteria + model tier in
+notes). goal priority = the sprint's exit threshold.
+  loop:
+    1. Find ready tasks: bd ready (tasks with no open blockers, in the epic subtree).
+       If none AND bd list --status=open at the goal priority is empty AND the last
+       reviewer verdict was APPROVED -> Develop phase done; exit to Test (or Harvest
+       on the final cycle).
+    2. Group ready tasks into model streaks (consecutive tasks sharing a model tier,
+       in priority/dependency order). For each streak the doer, on dispatch:
+         - reads each task with `bd show <id>` (description, acceptance, model tier),
+         - claims it with `bd update <id> --claim`,
+         - implements the work and commits,
+         - closes it with `bd close <id>`.
+       The doer works its streak in order and STOPS at the VERIFY checkpoint.
+    3. On doer completion: assert the worktree is clean (`git status --porcelain`
+       empty); a dirty tree means the doer left uncommitted work -- send it back to
+       commit before any review. If a task is blocked, the doer leaves it open with a
+       blocker note -- handle the blocker (see Safeguards). The doer has already
+       closed the tasks it finished; the orchestrator does not touch beads here.
+    4. Dispatch ONE reviewer (inline) over all tasks worked this iteration. It reads
+       each task's acceptance criteria with `bd show <id>` and the diff. The reviewer
+       runs standard-tier, escalated to premium-tier if any streak this iteration ran
+       premium-tier. It writes its verdict to feedback.md (see reviewer template) and
+       commits. Read feedback.md:
+         APPROVED       -> tasks stay closed. `reopenIds` and `newTasks` absent or
+                           empty -- no beads action needed.
+         CHANGES NEEDED -> the orchestrator parses `reopenIds` and `newTasks` from
+                           feedback.md (see "Orchestrator reads feedback.md" below)
+                           and runs the beads updates. Dispatch the doer to fix.
+    -> back to step 1.
 ```
 
-The orchestrator does nothing between a doer finishing and a reviewer starting
-except read `progress.json`, update beads, and dispatch. Never pause for the user
-mid-loop.
+**Exit condition.** The Develop phase exits when `bd ready` returns nothing, no open
+task at the goal priority remains, **and** the last reviewer verdict was APPROVED --
+a single APPROVED is sufficient because beads tracks discrete tasks, not a
+convergence streak. Any CHANGES NEEDED reopens tasks, so the loop continues until
+they are cleared and a clean APPROVED lands on an empty ready queue. Never advance to
+Test or Harvest with open tasks at the goal priority.
+
+The orchestrator does nothing between a doer finishing and a reviewer starting except
+read state from beads + git and dispatch. Never pause for the user mid-loop.
 
 ## Model per task
 
-The planner assigned each task an exact `model` in `PLAN.md`, copied into
-`progress.json`. Read the next pending task's `model` and dispatch the doer with it
-verbatim. A phase may span models across its tasks; run one doer dispatch per model
-streak (a run of consecutive tasks sharing a model), in dependency order. A phase
-with three model groups becomes up to three doer dispatches, each on its own model.
-The dispatch whose streak reaches the VERIFY task carries through it. The reviewer is
-always dispatched on the strongest model available.
+The planner assigned each task a model **tier** -- cheap-tier for mechanical tasks,
+standard-tier for standard implementation, premium-tier for hard design -- and wrote it
+into the task's beads notes (`--notes="model: <tier>"`). Read it with `bd show <id>`
+at dispatch time and dispatch the doer on that tier. An iteration may span tiers
+across its ready tasks; run one doer dispatch per model streak (a run of consecutive
+tasks sharing a tier), in priority/dependency order. An iteration with three tier
+groups becomes up to three doer dispatches, each on its own tier. The dispatch whose
+streak reaches the VERIFY task carries through it.
+
+The reviewer runs standard-tier, escalated to premium-tier whenever any streak in the
+iteration ran premium-tier -- review must never be weaker than the work it judges. Cheap
+bounded state checks (`bd ready` queries, feedback commits, log appends) run
+cheap-tier.
 
 ## Dispatch and wait inline
 
@@ -74,29 +104,10 @@ parks the sprint. With multiple tracks, dispatch one per active track and poll t
 to completion within the turn -- track A's reviewer can run while track B's doer
 works -- but keep the turn alive until you have collected their results.
 
-After each agent returns, the orchestrator's FIRST action is to read state from git
-and beads (`progress.json`, `feedback.md`, `git log <base>..<branch>`, `bd show`);
-those are the source of truth for what was dispatched and where it landed.
-
-## Telemetry -- token cost per dispatch
-
-A dispatch is the metering unit: one `Agent` call runs one subagent and returns one
-usage figure for everything it did (a single task or a same-model streak). When the
-harness reports usage on completion, append one record to the `dispatches` ledger in
-`progress.json` (see `tpl-progress.json`):
-
-```
-{ "seq": N, "role": "doer", "model": "<model>", "phase": P,
-  "tasks": ["T2","T3"], "tokens": <subagent tokens>, "toolUses": <n>, "ms": <n> }
-```
-
-Cost is attributed to the dispatch (the streak), not to individual tasks -- so no
-per-task dispatch overhead is needed. The three cost buckets fall out by grouping
-the ledger by role: **doer** dispatches (implementation), **plan-reviewer +
-reviewer** dispatches (review), and the orchestrator's own main-loop usage
-(orchestration), which is not a subagent and so is tracked at the session level, not
-in this ledger. If the harness does not report per-subagent usage, record what it
-provides and leave the rest null.
+After each agent returns, the orchestrator's FIRST action is to read state from beads
+and git (`bd ready`, `bd list --status=open`, `bd show <id>`, `feedback.md`,
+`git log <base>..<branch>`); those are the source of truth for what was dispatched
+and where it landed.
 
 ## Commit identity
 
@@ -110,8 +121,8 @@ git -c user.name='pm-<role>' -c user.email='<role>@pm.local' commit -m "<msg>"
 
 Identities: `pm-planner`, `pm-plan-reviewer`, `pm-doer`,
 `pm-reviewer`. The orchestrator's own git plumbing (requirements.md, design.md,
-progress.json sync, and the completion scaffolding drop) commits as `pm`. Each
-template below restates its identity so the dispatched agent uses it.
+and the completion scaffolding drop) commits as `pm`. Each template below restates
+its identity so the dispatched agent uses it.
 
 ## Per-role prompt templates
 
@@ -126,57 +137,108 @@ local-only => "This is a local-only worktree -- commit every turn and skip pushi
 You are planning a track. Your worktree is <abs worktree path> on branch <branch>
 (base <base>). cd there first; use absolute paths. Read requirements.md (and
 design.md if present). Follow your planner instructions: explore, draft, front-load
-foundations, self-critique, refine. Assign every work task the exact model to run
-it on (a weaker/faster model for mechanical tasks, the strongest for hard design),
-chosen from the models available in this environment, and write it as the task's
-Model in PLAN.md. Commit PLAN.md to <branch> as identity pm-planner
-(git -c user.name='pm-planner' -c user.email='planner@pm.local' commit).
-<transport line>. The worktree and branch already exist -- do not create or switch
-branches.
+foundations, self-critique, refine. Then write the plan into beads under epic
+<epic-id> -- do NOT write PLAN.md. For each task: bd create "<title>" -p <priority>
+--parent <epic-id> --assignee <track> --acceptance="<what must be true to be done>"
+--notes="model: <tier>", where <tier> is cheap-tier for mechanical work, standard-tier
+for standard implementation, premium-tier for hard design (pick from the tiers available
+in this environment). Wire dependencies with bd dep add <task> <blocker>. Verify
+with bd ready that leaf tasks (not features/epics) are unblocked. <transport line>.
+The worktree and branch already exist -- do not create or switch branches.
 ```
 
 ### plan-reviewer
 
 ```
 You are reviewing a plan. Your worktree is <abs worktree path> on branch <branch>.
-cd there; use absolute paths. Read requirements.md, design.md (if present), and
-PLAN.md. Follow your plan-reviewer instructions. Overwrite feedback.md with your
-verdict (APPROVED or CHANGES NEEDED) and commit it as identity pm-plan-reviewer
-(git -c user.name='pm-plan-reviewer' -c user.email='plan-reviewer@pm.local'
-commit). <transport line>.
+cd there; use absolute paths. Read requirements.md and design.md (if present), then
+inspect the beads DAG under epic <epic-id>: bd graph --compact <epic-id>, bd ready,
+and bd show <id> on each task to read its acceptance criteria and model-tier note.
+Follow your plan-reviewer instructions: check coverage, task size, acceptance
+criteria, dependency direction, and model-tier assignment. Classify each task with a
+complexity bucket (S = 1 file/narrow scope, M = 2-3 files/moderate logic,
+L = 3+ files/non-trivial design) and read its assigned model tier from its notes.
+
+Overwrite feedback.md with:
+  - First line: APPROVED or CHANGES NEEDED
+  - Notes section: specific findings with issue IDs and exact bd commands to fix any
+    dependency direction problems
+  - taskAssignments section: one line per task in JSON array form:
+    [{"id":"<beads-id>","bucket":"S|M|L","model":"<exact model id>"},...]
+
+Commit feedback.md as identity pm-plan-reviewer (git -c user.name='pm-plan-reviewer'
+-c user.email='plan-reviewer@pm.local' commit). <transport line>.
 ```
+
+The orchestrator reads `taskAssignments` from `feedback.md` after APPROVED to run
+`computeSprintQuote` (see `cost.md`). The array shape must match exactly:
+`[{ "id": "<beads task id>", "bucket": "S|M|L", "model": "<exact model id>" }]`.
 
 ### doer
 
 ```
-You are executing a plan. Your worktree is <abs worktree path> on branch <branch>
-(base <base>). cd there; use absolute paths. Read progress.json and PLAN.md.
-Execute ONLY task(s) <task scope> in phase <N>, one at a time: implement, run fast
-tests after each, commit, update progress.json. Make every commit as identity
-pm-doer (git -c user.name='pm-doer' -c user.email='doer@pm.local'
-commit). If your scope reaches the phase <N>
-VERIFY checkpoint, run it -- build, linter, and full test suite -- record results in
-progress.json, then stop. Otherwise stop after the last task in <task scope>.
-<transport line>. Do not start anything beyond <task scope>. The worktree and branch
-already exist -- do not create branches.
-[If fixing review findings:] feedback.md says CHANGES NEEDED. Address every HIGH
-finding, annotate each fixed section in feedback.md with "Doer: fixed in commit
-<sha> -- <what>", commit, then stop for re-review.
+You are executing tasks. Your worktree is <abs worktree path> on branch <branch>
+(base <base>). cd there; use absolute paths. Work ONLY task(s) <task scope>, in
+order. For each task: bd show <id> to read its description and acceptance criteria;
+bd update <id> --claim to claim it; implement the work; run fast tests; commit as
+identity pm-doer (git -c user.name='pm-doer' -c user.email='doer@pm.local' commit);
+then bd close <id>. Never close a type=feature or type=bug issue -- only type=task.
+If your scope reaches the VERIFY checkpoint, run it -- build, linter, and full test
+suite -- then stop. Otherwise stop after the last task in <task scope>. If a task is
+blocked, leave it open, add a blocker note (bd update <id> --notes="blocked: ..."),
+and stop. <transport line>. Do not start anything beyond <task scope>. The worktree
+and branch already exist -- do not create branches.
+[If fixing review findings:] the reopened task(s) carry review notes (bd show <id>).
+Address every finding, commit, bd close <id> again, then stop for re-review.
 ```
 
 ### reviewer
 
 ```
 You are reviewing code. Your worktree is <abs worktree path> on branch <branch>
-(base <base>). cd there; use absolute paths. Review all phases up to and including
-phase <N> -- read PLAN.md, progress.json, requirements.md, design.md (if present),
-and git diff <base>...<branch>. Run the build, linter, and full test suite. Read
-the prior feedback.md history (git log -- feedback.md) so you account for how
-earlier findings were addressed. Overwrite feedback.md with your verdict (APPROVED
-or CHANGES NEEDED) and commit it as identity pm-reviewer
+(base <base>). cd there; use absolute paths. Review ONLY the tasks worked this
+iteration: <task ids>. Run bd show <id> on each to read its acceptance criteria, and
+git diff <base>...<branch> to see the changes. Read requirements.md and design.md (if
+present). Run the build, linter, and full test suite. Read the prior feedback.md
+history (git log -- feedback.md) so you account for how earlier findings were
+addressed. Judge each task against its acceptance criteria.
+
+Do NOT run any bd commands. Write your verdict to feedback.md in this exact format:
+
+  APPROVED
+  <or>
+  CHANGES NEEDED
+
+  <human-readable notes: one finding per task, referencing the task ID and what
+  acceptance criterion was not met>
+
+  reopenIds: ["<id1>", "<id2>"]
+  newTasks: [{"title": "fix: <finding>", "notes": "<detail>", "priority": 0}]
+
+On APPROVED: omit reopenIds and newTasks (or write empty arrays).
+On CHANGES NEEDED: reopenIds lists every task that failed its acceptance criteria;
+newTasks lists out-of-scope findings that need a new tracked task (may be []).
+Both lines must be present and contain valid JSON arrays when verdict is CHANGES NEEDED.
+
+Overwrite feedback.md with this content and commit as identity pm-reviewer
 (git -c user.name='pm-reviewer' -c user.email='reviewer@pm.local' commit).
 <transport line>.
 ```
+
+### Orchestrator reads feedback.md
+
+After the reviewer commits, the orchestrator reads feedback.md and runs all beads
+updates itself -- the reviewer is a pure reader of beads:
+
+1. Parse the verdict from the first non-empty line (`APPROVED` or `CHANGES NEEDED`).
+2. On CHANGES NEEDED:
+   - Find the last line starting with `reopenIds:`, parse the JSON array value.
+     For each id: `bd update <id> --status=open --notes="<relevant finding from notes section>"`.
+     Reopened tasks return to `bd ready` next iteration.
+   - Find the last line starting with `newTasks:`, parse the JSON array value.
+     For each entry: `bd create "<title>" -p <priority> --parent <epic-id> --assignee <track> --acceptance="<notes>"`.
+     Empty array `[]` means no new tasks to create.
+3. On APPROVED: no beads action needed.
 
 ## Continuity between dispatches
 
@@ -184,9 +246,9 @@ Each dispatch is a fresh subagent run; continuity comes from the files it reads.
 Two ways to continue:
 
 - **Default: fresh dispatch.** Dispatch a new agent of the right role; it
-  reconstructs context from `progress.json`, `PLAN.md`, `feedback.md`, and
+  reconstructs context from beads (`bd ready`, `bd show <id>`), `feedback.md`, and
   `git log`. This is robust and the right choice across phase boundaries and role
-  switches -- the agents begin with a context-recovery `git log`.
+  switches -- the agents begin with a context-recovery `git log` and `bd` query.
 - **Tight iteration: continue the same agent.** For a quick same-worktree, same-role
   turn -- e.g. the doer addressing review findings it just produced context for --
   continue the SAME agent instance, which keeps its context. Use this within one
@@ -194,16 +256,17 @@ Two ways to continue:
 
 ## Resume rules
 
-Resume is data-driven from `progress.json` phase numbers (`lastDispatchedPhase`),
-not manually reasoned.
+Resume is data-driven from beads task state, not manually reasoned. A fresh dispatch
+re-derives everything from `bd ready` / `bd show <id>` and `git log`; resume keeps an
+agent's in-session context for a tight follow-up turn.
 
 ### Doer dispatches
 
 | Condition | resume |
 |-----------|--------|
-| `nextTask.phase === lastDispatchedPhase` | `true` (continue session) |
-| `nextTask.phase !== lastDispatchedPhase` (new phase) | `false` (fresh) |
-| After reviewer CHANGES NEEDED -> doer fix | `true` |
+| Next ready task is the same kind of work the agent just finished | `true` (continue session) |
+| Next ready task is a context switch (different feature/area) | `false` (fresh) |
+| After reviewer CHANGES NEEDED -> same doer fixes the reopened task it just built | `true` |
 | Role switch (doer -> reviewer) | `false` |
 
 ### All dispatches
@@ -226,9 +289,9 @@ prompt). Never resume across a role switch.
 | Safeguard            | Trigger                          | Orchestrator action                                              | Limit            |
 |----------------------|----------------------------------|------------------------------------------------------------------|------------------|
 | Dispatch retry       | Agent errors or returns nothing  | Re-dispatch the same role fresh; after 3 fails, pause + flag user | 3 per dispatch   |
-| Doer-reviewer cycle  | Reviewer returns CHANGES NEEDED  | Doer fixes, re-review; if 3 cycles leave HIGH items, pause + flag | 3 cycles/phase   |
+| Doer-reviewer cycle  | Reviewer lists task in `reopenIds`; orchestrator reopens it | Doer fixes, re-review; if 3 cycles leave it open, pause + flag | 3 cycles/task    |
 | Zero progress        | Two fresh dispatches, no commits | Escalate to a stronger model; still stuck after the strongest => flag | 2 per model  |
-| Blocked task         | progress.json task = "blocked"   | Read the blocker note; resolve if mechanical, else flag user      | --               |
+| Blocked task         | Doer left a task open with a `blocked:` note | Read the blocker note (bd show <id>); resolve if mechanical, else flag user | --        |
 
 Escalate to the user only after a safeguard limit trips, on a genuine requirements
 ambiguity, or on a risky/irreversible action. Otherwise keep the loop running.

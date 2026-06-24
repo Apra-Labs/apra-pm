@@ -67,29 +67,16 @@ test('SKILL.md includes a dispatch condition for each lifecycle-support role', (
     'SKILL.md must state harvester dispatch condition (sprint close / CHANGELOG)');
 });
 
-// 4. /pm vs /auto-sprint routing callout exists
-test('SKILL.md contains a /pm vs /auto-sprint routing callout', () => {
-  assert.match(skillMd, /\/pm/,
-    'SKILL.md must reference /pm');
-  assert.match(skillMd, /\/auto-sprint/,
-    'SKILL.md must reference /auto-sprint');
-
-  // Both must appear in a routing/decision context (same paragraph or section)
-  const pmIdx = skillMd.indexOf('/pm');
-  const autoSprintIdx = skillMd.indexOf('/auto-sprint');
-  // They must both exist and be within 500 characters of each other (same callout block)
-  assert.ok(pmIdx >= 0, '/pm must appear in SKILL.md');
-  assert.ok(autoSprintIdx >= 0, '/auto-sprint must appear in SKILL.md');
-  assert.ok(
-    Math.abs(pmIdx - autoSprintIdx) <= 500,
-    '/pm and /auto-sprint must appear close together in a routing context'
-  );
+// 4. SKILL.md must not reference /auto-sprint (no cross-skill coupling)
+test('SKILL.md must not reference /auto-sprint', () => {
+  assert.doesNotMatch(skillMd, /\/auto-sprint/,
+    'SKILL.md must not reference /auto-sprint');
 });
 
-// 5. Overlap note: lifecycle agents also used by /auto-sprint
-test('SKILL.md states that lifecycle agents are also used by /auto-sprint', () => {
-  assert.match(skillMd, /also used by.*\/auto-sprint|\/auto-sprint.*also used/is,
-    'SKILL.md must state that lifecycle agents are also used by /auto-sprint');
+// 5. Lifecycle-support roles must not mention /auto-sprint
+test('SKILL.md lifecycle-support roles must not mention /auto-sprint', () => {
+  assert.doesNotMatch(skillMd, /also used by.*\/auto-sprint|\/auto-sprint.*also used/is,
+    'SKILL.md must not state that lifecycle agents are also used by /auto-sprint');
 });
 
 // 6. No auto-sprint internals leaked
