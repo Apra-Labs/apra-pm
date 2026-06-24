@@ -95,10 +95,10 @@ per task -- see `doer-reviewer-loop.md` plan-reviewer template), the orchestrato
    Dispatch a single cheap-tier agent to run all `bd update` commands in one pass.
 
 The `taskAssignments` array shape (matches auto-sprint's `PLAN_REVIEW_SCHEMA`).
-The `model` field is the provider-specific model ID the planner recorded in the task's
-beads notes -- it is never hardcoded here:
+The `model` field is the **tier name** (`cheap`/`standard`/`premium`) the planner
+recorded in the task's beads notes -- never a provider-specific model ID:
 ```json
-[{ "id": "BD-10", "bucket": "M", "model": "<model id assigned by planner>" }, ...]
+[{ "id": "BD-10", "bucket": "M", "model": "standard" }, ...]
 ```
 
 ## Harvest -- analysis and calibration update

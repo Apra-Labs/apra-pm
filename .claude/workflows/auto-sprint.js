@@ -604,7 +604,22 @@ function parseReadyStreaks(outputs, epicCount, defaultModel) {
 
   const byModel = {};
   for (const t of readyTasks) {
-    const model = t.m || defaultModel;
+    const rawModel = t.m || defaultModel;
+    // Normalise: if the stored value is a provider-specific model ID (contains '-' and digits)
+    // rather than a tier name, resolve it back to a tier name so dispatch() works correctly.
+    // This handles beads tasks created before the cheap/standard/premium tier rename.
+    const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
+    let model = rawModel;
+    if (!KNOWN_TIERS.has(rawModel)) {
+      const resolved = Object.entries(TIER_TO_MODEL).find(([, id]) => id === rawModel);
+      if (resolved) {
+        model = resolved[0];
+        log(`[warn] Task ${t.id} has pre-migration model metadata '${rawModel}'; normalised to tier '${model}'`);
+      } else {
+        log(`[warn] Task ${t.id} has unrecognised model metadata '${rawModel}'; defaulting to '${defaultModel}'`);
+        model = defaultModel;
+      }
+    }
     if (!byModel[model]) byModel[model] = [];
     byModel[model].push({ id: t.id, priority: t.p });
   }
@@ -653,7 +668,7 @@ function parseCycleState(outputs, epicCount) {
 function buildSprintSummary(analysis, sprintQuote, calibration, opts) {
   const { branch = '', goal = '', epicDone = false, cycleCount = 0,
           tasksCompleted = 0, tasksOpen = 0, startedAt = '' } = opts || {};
-  const thr  = (calibration && calibration.outlier_thresholds) || { outlier_pct: 50, calibration_failure_pct: 100 };
+  const thr  = (calibration && calibration.outlier_thresholds) || { outlier_pct: 200, calibration_failure_pct: 500 };
   const cycles = (calibration && calibration.cycle_assumptions) || {};
   const estCycles = cycles.expected || 1;
 
@@ -1225,7 +1240,7 @@ while (cycleCount < maxCycles) {
     let streakAbort = false;
 
     for (const streak of streakResult.streaks) {
-      const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model.split('-').slice(-2, -1)[0] || streak.model}`;
+      const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model}`;
       log(`Streak: model=${streak.model} tasks=${streak.ids.join(', ')}`);
 
       const doerResult = await dispatch(
