@@ -9,17 +9,18 @@ everything else runs normally).
 ## Source of the functions
 
 `install.mjs` extracts the pure functions from `auto-sprint.js` at install time
-and writes them as a self-contained CommonJS module to `~/.apra-pm/cost.js`
-(all providers). On Claude Code, the full `auto-sprint.js` is additionally copied
-to `~/.claude/workflows/auto-sprint.js` so the `/auto-sprint` workflow works
-natively. Re-run `node install.mjs --force` after upgrading to refresh `cost.js`.
+and writes them as a self-contained CommonJS module to `cost.js` in the same
+directory as this file (`<configDir>/skills/pm/cost.js`). It is refreshed
+automatically on every install run -- no `--force` needed. On Claude Code, the
+full `auto-sprint.js` is additionally copied to `~/.claude/workflows/auto-sprint.js`
+so the `/auto-sprint` workflow works natively.
 
-The orchestrator loads the functions with a plain `require()` -- no vm, no
-string-slicing:
+The orchestrator loads the functions with a plain `require()` using `__SKILL_DIR__`
+(the absolute path to the skill directory, available in the orchestrator context):
 
 ```bash
 node -e "
-const { computeSprintQuote } = require(require('os').homedir() + '/.apra-pm/cost.js');
+const { computeSprintQuote } = require('__SKILL_DIR__/cost.js');
 const fs    = require('fs');
 const calib = JSON.parse(fs.readFileSync('sprint-logs/calibration.json', 'utf8'));
 const ta    = JSON.parse(process.env.TASK_ASSIGNMENTS);
@@ -27,8 +28,9 @@ process.stdout.write(JSON.stringify(computeSprintQuote(ta, calib)));
 "
 ```
 
-Pass inputs via `process.env` (for JSON blobs) or inline literals. Capture stdout
-and parse as JSON.
+Replace `__SKILL_DIR__` with the actual absolute path (e.g. `~/.claude/skills/pm`
+for Claude Code). Pass inputs via `process.env` (for JSON blobs) or inline
+literals. Capture stdout and parse as JSON.
 
 ## Calibration file
 
@@ -44,15 +46,16 @@ tier name to actual model ID lives exclusively in `TIER_TO_MODEL` inside
 `calibration.json` provider-agnostic and reusable across Claude, AGY, OpenCode, etc.
 
 - **On first run** (file absent): the setup step bootstraps it from `DEFAULT_CALIBRATION`
-  inside `~/.apra-pm/cost.js` (same object the workflow uses). Write it with:
+  inside `cost.js` (same object the workflow uses). Write it with:
   ```bash
   node -e "
-  const { DEFAULT_CALIBRATION } = require(require('os').homedir() + '/.apra-pm/cost.js');
+  const { DEFAULT_CALIBRATION } = require('__SKILL_DIR__/cost.js');
   const fs = require('fs');
   fs.mkdirSync('sprint-logs', { recursive: true });
   fs.writeFileSync('sprint-logs/calibration.json', JSON.stringify(DEFAULT_CALIBRATION, null, 2));
   "
   ```
+  Replace `__SKILL_DIR__` with the absolute path to the pm skill directory.
 - **On subsequent runs**: read it, deep-merge with `DEFAULT_CALIBRATION` (so new
   fields added to the source always have a default), and use the result.
 
