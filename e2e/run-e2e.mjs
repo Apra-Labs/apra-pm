@@ -18,8 +18,8 @@
 //   node e2e/run-e2e.mjs [--suite s1,s10] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr]
 //
 // Selection: default is all suites. --suite accepts comma-separated IDs (e.g. s1,s10)
-// and may be repeated. Suites run in parallel via worker threads. --provider filters by
-// provider. The skill must be installed first (node install.mjs --llm <provider>).
+// and may be repeated. --provider filters by provider. The skill must be installed
+// first (node install.mjs --llm <provider>).
 //
 // Auth: pushing the branch and opening the PR needs write access to the toy. Provide
 // it via GH_TOKEN / E2E_GH_TOKEN (wired into the push URL and gh), or rely on the
@@ -35,7 +35,6 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { parseTelemetryFile, diagnoseFailure } from './extract-results.mjs';
 import { validateSprint } from './validate-sprint.mjs';
 import { postSummary } from './post-summary.mjs';
@@ -277,24 +276,18 @@ async function main() {
   const suites = selectSuites(a);
   if (!suites.length) { console.error('no suites match the given filters'); process.exit(2); }
 
-  // Run all selected suites in parallel - each gets its own worker thread so the
-  // blocking spawnSync calls don't serialize wall-clock time.
-  const results = await Promise.all(suites.map((s) => new Promise((resolve, reject) => {
-    const w = new Worker(new URL(import.meta.url), { workerData: { suite: s, timeout: a.timeout, keepPr: a.keepPr } });
-    w.on('message', (r) => {
-      console.log(`[${r.id}] ${r.status} -- ${r.notes}`);
-      if (r.pr) console.log(`[${r.id}] commits: ${r.pr.commitsUrl}`);
-      resolve(r);
-    });
-    w.on('error', reject);
-  })));
+  const results = [];
+  for (const s of suites) {
+    const r = runSuite(s, a.timeout, a.keepPr);
+    console.log(`[${r.id}] ${r.status} -- ${r.notes}`);
+    if (r.pr) console.log(`[${r.id}] commits: ${r.pr.commitsUrl}`);
+    results.push(r);
+  }
 
   const outDir = path.join(E2E, '..', 'e2e-results');
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({ results }, null, 2) + '\n');
 
-  // Copy each run's raw CLI log into the artifact dir so a failed run is inspectable
-  // (the tmp work dir is otherwise discarded by the runner).
   for (const r of results) {
     const src = r.work && path.join(r.work, 'cli.log');
     if (src && fs.existsSync(src)) {
@@ -306,10 +299,4 @@ async function main() {
   process.exit(results.some((r) => r.status === 'FAIL') ? 1 : 0);
 }
 
-// Worker entry point: run a single suite and post the result back to the parent.
-if (!isMainThread) {
-  const r = runSuite(workerData.suite, workerData.timeout, workerData.keepPr);
-  parentPort.postMessage(r);
-} else {
-  main();
-}
+main();
