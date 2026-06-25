@@ -224,10 +224,11 @@ function runSuite(suite, timeoutS, keepPr) {
   git(['-C', repo, 'config', 'user.email', 'e2e@pm']);
   git(['-C', repo, 'config', 'user.name', 'pm-e2e']);
 
-  // beads needs issue_prefix set before the model can run bd commands.
-  // The toy repo commits .beads/issues.jsonl but not git config, so initialize
-  // here with the toy's prefix so `bd ready` and `bd list` work out of the box.
-  spawnSync('bd', ['init', '-p', 'gh-toy', '--non-interactive'], { cwd: repo, encoding: 'utf-8' });
+  // The toy repo's .beads/config.yaml already has issue-prefix: gh-toy and no-db: true.
+  // Do NOT run bd init here -- it creates metadata.json with "database":"dolt" which
+  // overrides no-db:true and breaks the Dolt schema on runners with mismatched bd versions.
+  // Just set beads.role so bd commands don't warn; issue-prefix comes from config.yaml.
+  spawnSync('git', ['-C', repo, 'config', 'beads.role', 'maintainer'], { cwd: repo, encoding: 'utf-8' });
 
   // The sprint pushes and raises a PR, so keep origin. If a token is provided, wire
   // it into the push URL (gh reads GH_TOKEN from the environment on its own).
