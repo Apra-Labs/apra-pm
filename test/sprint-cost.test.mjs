@@ -17,8 +17,10 @@ const {
   computeSprintQuote,
   computeSprintAnalysis,
   computeUpdatedCalibration,
+  accumulateBucketTokens,
+  buildSprintSummary,
   // eslint-disable-next-line no-new-func
-} = new Function(`${match[1]}; return { MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU, DEFAULT_CALIBRATION, reviewerModelFor, computeSprintQuote, computeSprintAnalysis, computeUpdatedCalibration };`)();
+} = new Function(`${match[1]}; return { MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU, DEFAULT_CALIBRATION, reviewerModelFor, computeSprintQuote, computeSprintAnalysis, computeUpdatedCalibration, accumulateBucketTokens, buildSprintSummary };`)();
 
 // -- reviewerModelFor ----------------------------------------------------------
 
@@ -279,6 +281,115 @@ test('computeUpdatedCalibration: skips roles where all dispatches had zero token
   assert.equal(u.historical.roles['planner'], undefined);
 });
 
+// -- accumulateBucketTokens ----------------------------------------------------
+
+const BUCKET_ASSIGNMENTS = [
+  { id: 'BD-1', bucket: 'S', model: MODEL_SONNET },
+  { id: 'BD-2', bucket: 'M', model: MODEL_SONNET },
+  { id: 'BD-3', bucket: 'M', model: MODEL_OPUS },
+  { id: 'BD-4', bucket: 'L', model: MODEL_OPUS },
+];
+
+test('accumulateBucketTokens: single doer entry with one task attributes all tokens', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-1', outTokens: 600 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.equal(acc.S.tokens, 600);
+  assert.equal(acc.S.n, 1);
+  assert.equal(acc.M, undefined);
+  assert.equal(acc.L, undefined);
+});
+
+test('accumulateBucketTokens: tokens split evenly across listed task IDs', () => {
+  // BD-1 (S) + BD-2 (M) in one entry -> 1000 tokens split 500/500
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-1, BD-2', outTokens: 1000 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.equal(acc.S.tokens, 500);
+  assert.equal(acc.S.n, 1);
+  assert.equal(acc.M.tokens, 500);
+  assert.equal(acc.M.n, 1);
+});
+
+test('accumulateBucketTokens: two M-bucket IDs in one entry both counted as M', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-2, BD-3', outTokens: 2000 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  // both BD-2 and BD-3 are M -> 1000 each, n=2
+  assert.equal(acc.M.tokens, 2000);
+  assert.equal(acc.M.n, 2);
+});
+
+test('accumulateBucketTokens: ignores non-doer entries', () => {
+  const entries = [
+    { label: 'reviewer-c1-i1', context: 'reviewing tasks BD-1', outTokens: 500 },
+    { label: 'harvester',      context: '',                     outTokens: 800 },
+    { label: 'doer-c1-i1',     context: 'tasks BD-4',           outTokens: 3000 },
+  ];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.deepEqual(Object.keys(acc).sort(), ['L']);
+  assert.equal(acc.L.tokens, 3000);
+});
+
+test('accumulateBucketTokens: skips zero-token (cached) doer entries', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-1', outTokens: 0 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.deepEqual(acc, {});
+});
+
+test('accumulateBucketTokens: unmappable task IDs are skipped', () => {
+  const entries = [{ label: 'doer-c1-i1', context: 'tasks BD-99', outTokens: 600 }];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.deepEqual(acc, {});
+});
+
+test('accumulateBucketTokens: aggregates across multiple doer entries', () => {
+  const entries = [
+    { label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 1200 },
+    { label: 'doer-c2-i1', context: 'tasks BD-3', outTokens: 1600 },
+  ];
+  const acc = accumulateBucketTokens(entries, BUCKET_ASSIGNMENTS);
+  assert.equal(acc.M.tokens, 2800);
+  assert.equal(acc.M.n, 2);
+});
+
+// -- computeUpdatedCalibration bucket_avg_tokens join --------------------------
+
+test('computeUpdatedCalibration: populates bucket_avg_tokens for exercised buckets', () => {
+  const logEntries = [
+    { label: 'doer-c1-i1', context: 'tasks BD-1', outTokens: 600 },  // S
+    { label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 1400 }, // M
+  ];
+  const u = computeUpdatedCalibration(
+    DEFAULT_CALIBRATION, SAMPLE_ANALYSIS, '20260620_130000', BUCKET_ASSIGNMENTS, logEntries);
+  assert.equal(u.historical.bucket_avg_tokens.S, 600);
+  assert.equal(u.historical.bucket_avg_tokens.M, 1400);
+  // L never exercised -> stays absent so computeSprintQuote defaults apply
+  assert.equal(u.historical.bucket_avg_tokens.L, undefined);
+});
+
+test('computeUpdatedCalibration: blends bucket_avg_tokens against prior history', () => {
+  const cal = JSON.parse(JSON.stringify(DEFAULT_CALIBRATION));
+  cal.historical.sprints_sampled = 1;            // prev=1
+  cal.historical.bucket_avg_tokens = { M: 1000 };
+  const logEntries = [{ label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 2000 }]; // M=2000
+  const u = computeUpdatedCalibration(cal, SAMPLE_ANALYSIS, '20260621_090000', BUCKET_ASSIGNMENTS, logEntries);
+  // blend(1000, 2000) with prev=1, n=2 => (1000*1 + 2000)/2 = 1500
+  assert.equal(u.historical.bucket_avg_tokens.M, 1500);
+});
+
+test('computeUpdatedCalibration: bucket join populated value flows into computeSprintQuote', () => {
+  const logEntries = [{ label: 'doer-c1-i1', context: 'tasks BD-2', outTokens: 1800 }]; // M
+  const u = computeUpdatedCalibration(
+    DEFAULT_CALIBRATION, SAMPLE_ANALYSIS, '20260620_130000', BUCKET_ASSIGNMENTS, logEntries);
+  // sprints_sampled now >=1 and M has history -> quote uses 1800, not the 1400 default
+  const q = computeSprintQuote([{ id: 'X', bucket: 'M', model: MODEL_SONNET }], u);
+  assert.equal(q.tasks[0].doerTokens, 1800);
+});
+
+test('computeUpdatedCalibration: no doer log entries leaves bucket_avg_tokens unchanged', () => {
+  const u = computeUpdatedCalibration(
+    DEFAULT_CALIBRATION, SAMPLE_ANALYSIS, '20260620_130000', BUCKET_ASSIGNMENTS, []);
+  assert.deepEqual(u.historical.bucket_avg_tokens, {});
+});
+
 test('computeSprintQuote: _doc strings in calibration.json do not cause NaN', () => {
   const calWithDoc = JSON.parse(JSON.stringify(DEFAULT_CALIBRATION));
   calWithDoc.fixed_overhead_tokens._doc = 'documentation string';
@@ -293,4 +404,138 @@ test('computeSprintAnalysis: _doc strings in calibration.json do not cause NaN',
   const r = computeSprintAnalysis(SAMPLE_QUOTE, SAMPLE_LOG, calWithDoc, 2);
   assert.ok(!isNaN(r.totEstOutputUsd));
   assert.ok(r.analysisText.includes('#### Sprint cost analysis'));
+});
+
+// -- buildSprintSummary --------------------------------------------------------
+
+const BSS_QUOTE = computeSprintQuote(
+  [{ id: 'BD-1', bucket: 'M', model: MODEL_SONNET }],
+  DEFAULT_CALIBRATION
+);
+// BD-1 M bucket -> doerTokens=1400, reviewerTokens=560 (at estCycles=1.5 expected:
+//   doer est = 1400 * 1.5 = 2100  reviewer est = 560 * 1.5 = 840)
+
+test('buildSprintSummary: returns summaryText string', () => {
+  const analysis = computeSprintAnalysis(BSS_QUOTE, [], DEFAULT_CALIBRATION, 1);
+  const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
+    branch: 'feat/test', goal: 'ship it', goalMet: true, cycleCount: 2,
+    tasksCompleted: 3, tasksOpen: 0, startedAt: '20260620_100000',
+  });
+  assert.ok(typeof summaryText === 'string', 'summaryText must be a string');
+  assert.ok(summaryText.includes('# Sprint summary'), 'must include sprint summary header');
+  assert.ok(summaryText.includes('feat/test'), 'must include branch name');
+  assert.ok(summaryText.includes('ship it'), 'must include goal');
+  assert.ok(summaryText.includes('MET'), 'must show goal met/not met');
+  assert.ok(summaryText.includes('Suggested calibration adjustments'), 'must include suggestions section');
+  // AC criterion 1: cycles line
+  assert.ok(summaryText.includes('estimated') && summaryText.includes('actual'),
+    'must include cycles estimated X actual Y');
+  // AC criterion 1: tasks line
+  assert.ok(summaryText.includes('completed') && summaryText.includes('open'),
+    'must include tasks completed C open O');
+  // AC criterion 1: cost table header row
+  assert.ok(summaryText.includes('#### Sprint cost analysis'),
+    'must include cost table header row');
+});
+
+test('buildSprintSummary: reviewer outlier produces a suggestion (non-doer role fix)', () => {
+  // Reviewer actual is far above estimate -> should produce a suggestion.
+  // BSS_QUOTE M-bucket sonnet: reviewerTokens=560 per task, estCycles=1.5 -> 840 est total.
+  // We set actual reviewer tokens to 5000 (>>200% outlier threshold).
+  const analysis = {
+    actualCycles: 2,
+    analysisText: '#### Sprint cost analysis\nstub\n',
+    byRole: {
+      doer:     { tokens: 1400, costUsd: 0.021, dispatches: 1 },
+      reviewer: { tokens: 5000, costUsd: 0.075, dispatches: 1 }, // big outlier
+    },
+    totEstOutputUsd: 0.030,
+    totActUsd: 0.096,
+  };
+  const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 2,
+    tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
+  });
+  assert.ok(summaryText.includes('reviewer'), 'reviewer outlier suggestion must mention reviewer');
+  assert.ok(summaryText.includes('over'), 'suggestion must say over estimate');
+  assert.match(summaryText, /Suggested calibration adjustments/, 'must have suggestions section');
+  // AC criterion 4: goalMet=false must render NOT MET
+  assert.ok(summaryText.includes('NOT MET'), 'goalMet=false must render NOT MET');
+});
+
+test('buildSprintSummary: doer-only outlier produces suggestion but reviewer (within range) does not', () => {
+  // doer: est=2100, actual=8000 -> big outlier
+  // reviewer: est=840, actual=800 -> within range
+  const analysis = {
+    actualCycles: 2,
+    analysisText: '#### Sprint cost analysis\nstub\n',
+    byRole: {
+      doer:     { tokens: 8000, costUsd: 0.12, dispatches: 1 },
+      reviewer: { tokens:  800, costUsd: 0.012, dispatches: 1 },
+    },
+    totEstOutputUsd: 0.030,
+    totActUsd: 0.132,
+  };
+  const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 2,
+    tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
+  });
+  assert.ok(summaryText.includes('doer'), 'doer outlier suggestion must mention doer');
+  // reviewer was NOT an outlier -- verify we did not emit a reviewer suggestion
+  // (we check that the suggestion section doesn't say "reviewer ... over/under")
+  const suggestStart = summaryText.indexOf('### Suggested calibration adjustments');
+  const suggestRegion = summaryText.slice(suggestStart);
+  assert.doesNotMatch(suggestRegion, /`reviewer`/, 'reviewer within range must not produce suggestion');
+});
+
+test('buildSprintSummary: overhead role outlier produces suggestion', () => {
+  // harvester: fixed_overhead_tokens.harvester = 3000 (per DEFAULT_CALIBRATION)
+  // actual = 15000 (5x -> 400% over, exceeds outlier_pct=200)
+  const analysis = {
+    actualCycles: 1,
+    analysisText: '#### Sprint cost analysis\nstub\n',
+    byRole: {
+      doer:      { tokens: 1400, costUsd: 0.021, dispatches: 1 },
+      reviewer:  { tokens:  560, costUsd: 0.008, dispatches: 1 },
+      harvester: { tokens: 15000, costUsd: 0.225, dispatches: 1 },
+    },
+    totEstOutputUsd: 0.05,
+    totActUsd: 0.254,
+  };
+  const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 1,
+    tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
+  });
+  const suggestStart = summaryText.indexOf('### Suggested calibration adjustments');
+  const suggestRegion = summaryText.slice(suggestStart);
+  assert.match(suggestRegion, /harvester/, 'harvester outlier must appear in suggestions');
+  assert.match(suggestRegion, /over/, 'suggestion must say over estimate');
+});
+
+test('buildSprintSummary: no outliers => no-outliers message', () => {
+  // All actuals at exactly the estimate -> no suggestions
+  const analysis = {
+    actualCycles: 1,
+    analysisText: '#### Sprint cost analysis\nstub\n',
+    byRole: {
+      doer:     { tokens: 1400, costUsd: 0.021, dispatches: 1 },
+      reviewer: { tokens:  560, costUsd: 0.008, dispatches: 1 },
+    },
+    totEstOutputUsd: 0.029,
+    totActUsd: 0.029,
+  };
+  const { summaryText } = buildSprintSummary(analysis, BSS_QUOTE, DEFAULT_CALIBRATION, {
+    branch: 'feat/test', goal: 'g', goalMet: true, cycleCount: 1,
+    tasksCompleted: 1, tasksOpen: 0, startedAt: '20260620',
+  });
+  assert.match(summaryText, /No outliers detected/, 'should show no-outliers message when all within range');
+});
+
+test('buildSprintSummary: null analysis returns graceful summary', () => {
+  const { summaryText } = buildSprintSummary(null, null, DEFAULT_CALIBRATION, {
+    branch: 'feat/test', goal: 'g', goalMet: false, cycleCount: 0,
+    tasksCompleted: 0, tasksOpen: 0, startedAt: '',
+  });
+  assert.ok(typeof summaryText === 'string', 'summaryText must be a string even with null inputs');
+  assert.ok(summaryText.includes('# Sprint summary'), 'must include sprint summary header');
 });

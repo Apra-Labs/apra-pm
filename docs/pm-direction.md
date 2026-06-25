@@ -35,7 +35,7 @@ All sprint state lives in two places:
 - **git, on each track's branch:** `requirements.md`, `design.md`, `PLAN.md`,
   `progress.json`, `feedback.md` -- the message bus between agents and the durable
   record of intent, plan, progress, and review.
-- **beads (`bd`):** the task database -- epic, tasks, dependencies, assignees,
+- **beads (`bd`):** the task database -- sprint root, tasks, dependencies, assignees,
   review findings, backlog, PR link.
 
 Recovery after a restart reads from these two sources, so a compaction or crash is
@@ -44,14 +44,14 @@ survivable: position is always re-derivable from git and beads.
 ## Scope -- one project per orchestrator
 
 An orchestrator manages exactly one project. The beads DB is therefore per-project,
-with one epic per sprint. This keeps the model simple: one repo, one task DB, one
+with one sprint root per sprint. This keeps the model simple: one repo, one task DB, one
 sprint at a time (single or multi-track).
 
 ## Beads as the backbone
 
 beads is required, not optional. It owns all tracking:
 
-- One epic per sprint; one task per plan item, with dependencies wired.
+- One sprint root per sprint; one task per plan item, with dependencies wired.
 - Lifecycle: claim on dispatch, close at VERIFY.
 - Reviewer HIGH findings become tracked tasks assigned back to the track, so no
   finding is lost between review and fix.
@@ -88,7 +88,7 @@ requirements -> design -> plan (loop) -> execute (doer-review loop)
 ```
 
 A lightweight path exists for small, low-risk work (1-3 tasks): a concise
-requirements file, a small beads epic, a single doer-review cycle, no full
+requirements file, a small beads sprint root, a single doer-review cycle, no full
 plan/progress harness.
 
 ## Open questions

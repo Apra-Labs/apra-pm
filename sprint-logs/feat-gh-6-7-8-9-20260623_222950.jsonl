@@ -1,0 +1,29 @@
+{"ts":"2026-06-23T22:29:50Z","type":"meta","branch":"feat/gh-6-7-8-9","startedAt":"20260623_222950","epics":["apra-pm-bgo"],"goal":"P1","transcriptDir":"C:\Users\akhil\.claude\projects\C--akhil-git-apra-pm"}
+{"ts":"2026-06-23T22:29:50Z","cycle":"setup","phase":"Plan","label":"setup","model":"claude-haiku-4-5","context":"","outTokens":2793,"costUsd":0.014}
+{"ts":"2026-06-23T22:29:50Z","cycle":"setup","phase":"Plan","label":"sprint-meta","model":"claude-haiku-4-5","context":"","outTokens":521,"costUsd":0.0026}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Plan","label":"cycle-state","model":"claude-haiku-4-5","context":"","outTokens":451,"costUsd":0.0023}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Plan","label":"planner-c1-r0","model":"claude-opus-4-8","context":"planning epics apra-pm-bgo","outTokens":6691,"costUsd":0.1673}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Plan","label":"plan-reviewer-c1-r0","model":"claude-sonnet-4-6","context":"reviewing plan for epics apra-pm-bgo","outTokens":1645,"costUsd":0.0247}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Plan","label":"write-quote-c1","model":"claude-haiku-4-5","context":"","outTokens":561,"costUsd":0.0028}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":486,"costUsd":0.0024}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"doer-c1-i0-4","model":"claude-sonnet-4-6","context":"tasks apra-pm-f98","outTokens":2794,"costUsd":0.0419}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"reviewer-c1-i1","model":"claude-sonnet-4-6","context":"reviewing tasks apra-pm-f98","outTokens":1776,"costUsd":0.0266}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i1","model":"claude-haiku-4-5","context":"9 new entries","outTokens":1156,"costUsd":0.0058}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":456,"costUsd":0.0023}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"doer-c1-i1-4","model":"claude-sonnet-4-6","context":"tasks apra-pm-pme","outTokens":2360,"costUsd":0.0354}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"reviewer-c1-i2","model":"claude-sonnet-4-6","context":"reviewing tasks apra-pm-pme","outTokens":2256,"costUsd":0.0338}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i2","model":"claude-haiku-4-5","context":"4 new entries","outTokens":1762,"costUsd":0.0088}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":751,"costUsd":0.0038}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"doer-c1-i2-4","model":"claude-sonnet-4-6","context":"tasks apra-pm-n4x","outTokens":3046,"costUsd":0.0457}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"reviewer-c1-i3","model":"claude-sonnet-4-6","context":"reviewing tasks apra-pm-n4x","outTokens":1552,"costUsd":0.0233}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i3","model":"claude-haiku-4-5","context":"4 new entries","outTokens":943,"costUsd":0.0047}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":466,"costUsd":0.0023}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"push-c1","model":"claude-haiku-4-5","context":"","outTokens":190,"costUsd":0.001}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"head-sha-c1","model":"claude-haiku-4-5","context":"","outTokens":186,"costUsd":0.0009}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"check-blockers","model":"claude-haiku-4-5","context":"","outTokens":421,"costUsd":0.0021}
+{"ts":"2026-06-23T22:29:50Z","cycle":1,"phase":"Develop","label":"log-append-end-c1","model":"claude-haiku-4-5","context":"5 new entries","outTokens":1122,"costUsd":0.0056}
+{"ts":"2026-06-23T22:29:50Z","cycle":2,"phase":"Plan","label":"cycle-state","model":"claude-haiku-4-5","context":"","outTokens":1085,"costUsd":0.0054}
+{"ts":"2026-06-23T22:29:50Z","cycle":2,"phase":"Develop","label":"ready-streaks","model":"claude-haiku-4-5","context":"","outTokens":597,"costUsd":0.003}
+{"ts":"2026-06-23T22:29:50Z","cycle":2,"phase":"Develop","label":"push-c2","model":"claude-haiku-4-5","context":"","outTokens":426,"costUsd":0.0021}
+{"ts":"2026-06-23T22:29:50Z","cycle":2,"phase":"Develop","label":"head-sha-c2","model":"claude-haiku-4-5","context":"","outTokens":218,"costUsd":0.0011}
+{"ts":"2026-06-23T22:29:50Z","cycle":2,"phase":"Develop","label":"check-blockers","model":"claude-haiku-4-5","context":"","outTokens":440,"costUsd":0.0022}

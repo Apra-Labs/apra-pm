@@ -5,13 +5,16 @@
 // plan -> doer -> review sprint actually took place:
 //
 //   1. pr-exists              a PR was raised for the branch
-//   2. commits>=10            the work landed as 10+ commits (not one dump)
+//   2. commits>=N             the work landed as N+ real commits (beads-only exports excluded)
 //   3. final-changeset-clean  the PR's net diff carries NO process scaffolding
-//                             (requirements.md, PLAN.md, feedback.md, progress.json)
-//   4. process-discipline     yet those scaffolding files DID appear in intermediate
-//                             commits -- proof the planner/reviewer loop was run and
-//                             then cleaned up, not skipped
-//   5. beads-closed           the P1 issues picked for the sprint were closed on the branch
+//                             (requirements.md, feedback.md)
+//   4. process-discipline     those scaffolding files DID appear in intermediate commits
+//                             AND feedback.md contained an APPROVED/CHANGES NEEDED verdict
+//   5. planner-created-tasks  a "plan:" commit exists in the branch history
+//   6. beads-closed           P1 issues were closed (from any durable source)
+//   7. beads-sprint-closed    P1 closures evidenced in committed branch .beads/*.jsonl
+//   8. harvester-ran          a harvest artifact (docs/, CHANGELOG, .analysis.md) is in
+//                             the net diff
 //
 // evaluateGates() is pure (takes gathered facts, returns verdicts) so it is unit
 // testable; validateSprint() gathers those facts from a git clone + the PR object.
@@ -19,19 +22,23 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SCAFFOLD = ['requirements.md', 'plan.md', 'feedback.md', 'progress.json'];
+const SCAFFOLD = ['requirements.md', 'feedback.md'];
 const baseName = (p) => p.split('/').pop().toLowerCase();
 
 // ---- pure verdict logic -------------------------------------------------------
 
 export function evaluateGates(d) {
   const gates = [];
-  const add = (name, pass, detail = '') => gates.push({ name, pass, detail });
+  const skip = new Set(d.excludeGates || []);
+  const add = (name, pass, detail = '') => { if (!skip.has(name)) gates.push({ name, pass, detail }); };
 
   add('pr-exists', !!(d.pr && d.pr.url), d.pr ? `#${d.pr.number}` : 'no PR found');
 
   const minCommits = d.minCommits ?? 10;
-  add(`commits>=${minCommits}`, (d.commitCount || 0) >= minCommits, `${d.commitCount || 0} commits`);
+  const real = d.realCommitCount ?? d.commitCount ?? 0;
+  const total = d.commitCount ?? 0;
+  add(`commits>=${minCommits}`, real >= minCommits,
+    `${real} real commits (${total} total)`);
 
   const finalBases = (d.finalFiles || []).map(baseName);
   const leaked = SCAFFOLD.filter((f) => finalBases.includes(f));
@@ -40,13 +47,39 @@ export function evaluateGates(d) {
 
   const touched = new Set((d.touchedBasenames || []).map((s) => s.toLowerCase()));
   const missing = SCAFFOLD.filter((f) => !touched.has(f));
-  add('process-discipline', missing.length === 0,
-    missing.length ? `never committed (no discipline proof): ${missing.join(', ')}` : 'all process files appeared in intermediate commits');
+  const hasVerdict = (d.feedbackVerdicts || []).length > 0;
+  const disciplineFail = missing.length > 0 || !hasVerdict;
+  add('process-discipline', !disciplineFail,
+    disciplineFail
+      ? [
+          missing.length ? `never committed: ${missing.join(', ')}` : '',
+          !hasVerdict ? 'feedback.md never contained APPROVED/CHANGES NEEDED' : '',
+        ].filter(Boolean).join('; ')
+      : 'scaffold committed and feedback.md contained a verdict');
+
+  const plannerRan = !!(d.plannerRan);
+  add('planner-created-tasks', plannerRan,
+    plannerRan
+      ? 'plan: commit found in branch history'
+      : 'no plan: commit found in branch history -- planner may not have run');
 
   const expected = d.expectedIssues ?? 3;
   const closed = d.closedP1 || [];
   add('beads-closed', closed.length >= expected,
     `${closed.length} of the picked P1 issue(s) closed${closed.length ? ': ' + closed.join(', ') : ''}`);
+
+  const sprintClosed = d.beadsSprintClosed || [];
+  add('beads-sprint-closed', sprintClosed.length >= expected,
+    sprintClosed.length >= expected
+      ? `${sprintClosed.length} P1 issue(s) closed in committed branch jsonl: ${sprintClosed.join(', ')}`
+      : `only ${sprintClosed.length}/${expected} P1 closures found in committed .beads/*.jsonl (sprint must commit beads state via bd export)`);
+
+  const hasHarvestArtifact = (d.finalFiles || []).some(f =>
+    /^docs\//i.test(f) || /changelog/i.test(baseName(f)) || /\.analysis\.md$/i.test(f));
+  add('harvester-ran', hasHarvestArtifact,
+    hasHarvestArtifact
+      ? 'harvest artifact found in net diff (docs/, CHANGELOG, or .analysis.md)'
+      : 'no harvest artifact in net diff -- harvester may not have run');
 
   return { gates, pass: gates.every((g) => g.pass) };
 }
@@ -114,24 +147,50 @@ function bdSaysClosed(repo, id) {
 // Gather facts from the pushed branch and evaluate. `repo` is the local clone whose
 // origin is the toy; the branch is fetched fresh so this works even though the work
 // was done in a worktree sharing the same .git.
-export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssues = 3 }) {
+export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssues = 3, excludeGates = [] }) {
   git(repo, ['fetch', '-q', 'origin', 'main']);
   git(repo, ['fetch', '-q', 'origin', branch]);
   const head = (git(repo, ['rev-parse', 'FETCH_HEAD']).stdout || '').trim();
   const base = (git(repo, ['rev-parse', 'origin/main']).stdout || '').trim();
 
   if (!head || !base) {
-    return evaluateGates({ pr, commitCount: 0, finalFiles: [], touchedBasenames: [], closedP1: [], minCommits, expectedIssues });
+    return evaluateGates({ pr, commitCount: 0, realCommitCount: 0, finalFiles: [], touchedBasenames: [], feedbackVerdicts: [], closedP1: [], beadsSprintClosed: [], plannerRan: false, minCommits, expectedIssues, excludeGates });
   }
   const range = `${base}..${head}`;
 
-  const commitCount = parseInt((git(repo, ['rev-list', '--count', range]).stdout || '0').trim(), 10) || 0;
+  // Per-commit file lists -- needed to filter beads-only commits and for content checks
+  const commitLog = (git(repo, ['log', range, '--format=COMMIT:%H', '--name-only']).stdout || '');
+  const perCommit = [];
+  let cur = null;
+  for (const line of commitLog.split('\n')) {
+    const t = line.trim();
+    if (t.startsWith('COMMIT:')) { if (cur) perCommit.push(cur); cur = { sha: t.slice(7), files: [] }; }
+    else if (t && cur) cur.files.push(t);
+  }
+  if (cur) perCommit.push(cur);
+
+  // A commit counts as "real" only if it touches at least one source or test file.
+  // Commits that only export beads state, write sprint-logs, or update process
+  // scaffolding do not demonstrate sprint work and are excluded from the threshold.
+  const isRealCommit = (files) => files.some(f =>
+    /\.(js|ts|jsx|tsx|mjs|cjs|py|go|rs|java|c|cpp|h|hpp|cs|rb|swift|kt|php|sh|bash)$/i.test(f));
+  const commitCount = perCommit.length;
+  const realCommitCount = perCommit.filter(c => isRealCommit(c.files)).length;
 
   const finalFiles = (git(repo, ['diff', '--name-only', range]).stdout || '')
     .split('\n').map((s) => s.trim()).filter(Boolean);
 
-  const touchedBasenames = (git(repo, ['log', range, '--name-only', '--pretty=format:']).stdout || '')
-    .split('\n').map((s) => s.trim()).filter(Boolean).map(baseName);
+  const touchedPaths = (git(repo, ['log', range, '--name-only', '--pretty=format:']).stdout || '')
+    .split('\n').map((s) => s.trim()).filter(Boolean);
+  const touchedBasenames = touchedPaths.map(baseName);
+
+  // C1: read content of feedback.md at each commit that touched it, look for verdict tokens
+  const feedbackShas = perCommit.filter(c => c.files.some(f => baseName(f) === 'feedback.md')).map(c => c.sha);
+  const feedbackVerdicts = [];
+  for (const sha of feedbackShas.slice(0, 15)) {
+    const content = git(repo, ['show', `${sha}:feedback.md`]).stdout || '';
+    if (/APPROVED|CHANGES NEEDED/i.test(content)) feedbackVerdicts.push(sha);
+  }
 
   // beads P1 issues that were open at base and are closed after the sprint.
   // Baseline (open P1 candidates) comes from the base branch. For "closed now" read
@@ -140,7 +199,13 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   // switches bd to a db backend that leaves issues.jsonl stale, so a closed issue can
   // still look open in the file (seen on the macOS runner).
   const baseB = readBeadsRef(repo, base);
+  const headB = readBeadsRef(repo, head);
   const candidates = [...baseB].filter(([, o]) => isP1(o) && !isClosed(o)).map(([id]) => id);
+
+  // C2: planner ran if there is a commit whose subject starts with "plan:"
+  // Checking beads size diff is unreliable -- bd export only runs at cleanup,
+  // so a timed-out sprint always fails even if the planner did run.
+  const plannerRan = (git(repo, ['log', range, '--grep=^plan[: ]', '-i', '--oneline']).stdout || '').trim().length > 0;
 
   // An issue counts as closed if ANY durable source says so (dolt leaves the file
   // stale, and the live db may sit in a since-removed worktree, so no single source
@@ -148,10 +213,12 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   //   1. the branch's committed .beads/issues.jsonl (durable if the skill ran `bd export`)
   //   2. the on-disk .beads/issues.jsonl at the base checkout
   //   3. the live bd db via `bd show`
-  const headB = readBeadsRef(repo, head);
   const diskB = readBeadsDisk(repo);
   const closedP1 = candidates.filter((id) =>
     isClosed(headB.get(id)) || isClosed(diskB.get(id)) || bdSaysClosed(repo, id));
 
-  return evaluateGates({ pr, commitCount, finalFiles, touchedBasenames, closedP1, minCommits, expectedIssues });
+  // C3/C4: closure evidenced in committed branch jsonl (headB), not just disk/live db
+  const beadsSprintClosed = candidates.filter(id => isClosed(headB.get(id)));
+
+  return evaluateGates({ pr, commitCount, realCommitCount, finalFiles, touchedBasenames, touchedPaths, feedbackVerdicts, closedP1, beadsSprintClosed, plannerRan, minCommits, expectedIssues, excludeGates });
 }

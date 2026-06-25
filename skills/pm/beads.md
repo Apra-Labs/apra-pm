@@ -1,18 +1,21 @@
-# Beads -- the task-DB backbone
+# Beads -- the single source of truth
 
-beads (`bd`) is pm's tracking backbone. It holds what is in flight, what is
-blocked, what was deferred, and what each review found. git holds the work (plan,
-progress, review); beads holds the tracking.
+beads (`bd`) is pm's task store and message bus. It holds what is in flight, what
+is blocked, what was deferred, what each task must satisfy, and what each review
+found. There is no PLAN.md and no progress.json: the planner writes tasks into
+beads, the doer reads `bd ready` and claims/closes tasks, and the reviewer reads
+each task's acceptance criteria with `bd show`. git holds only the code, the branch
+history, and the requirements/design narrative; **beads holds all task state.**
 
 ## One project, one DB
 
 An orchestrator manages one project, so there is one beads DB for that project and
-one **epic per sprint**. The DB is a local `.beads/` at the **base checkout** (the
+one **sprint root** per sprint. The DB is a local `.beads/` at the **base checkout** (the
 orchestrator's repo root) -- not inside any track worktree. The orchestrator runs
-every `bd` command from there and is the DB's only writer: agents never touch beads;
-they write `progress.json` on their branch, and the orchestrator syncs that into
-beads.
-
+every `bd` command from there. Doers run `bd ready` / `bd update --claim` /
+`bd close` against that same DB; reviewers run `bd show` only -- they never write to
+beads. On CHANGES NEEDED the reviewer writes `reopenIds` and `newTasks` to
+`feedback.md`; the orchestrator reads that and runs the beads updates.
 The DB persists on disk across sessions, so it survives without being committed.
 Committing it is optional and only shares issue history across machines; if you do,
 commit it on the base or integration branch -- keeping it off the track feature
@@ -21,51 +24,62 @@ or label.
 
 ## Lifecycle hooks (not optional)
 
-The orchestrator calls `bd` at these points:
+`bd` is called at these points. The planner, doer, and reviewer run their own `bd`
+commands; the orchestrator runs setup, completion, and recovery queries.
 
-**Sprint setup** -- create the epic, reusing an existing one if present:
+**Sprint setup** (orchestrator) -- create the sprint root, reusing an existing one if present:
 ```
 bd search "sprint: <name>" --status all   # reuse the id if found
-bd create "sprint: <name>" -p 1            # else create -> <epic-id>
+bd create "sprint: <name>" -p 1            # else create -> <sprint-id>
 ```
 
-**After the plan is APPROVED** -- one task per `PLAN.md` item, dependencies wired,
-the assigned model and track recorded:
+**Plan phase** (planner) -- one task per plan item, each carrying its acceptance
+criteria, assigned model tier, priority, and track; dependencies wired. The planner
+writes these directly into beads -- there is no PLAN.md:
 ```
-bd create "T1.1: <title>" -p 1 --parent <epic-id> --assignee <track>   # -> task-id
-bd create "T1.2: <title>" -p 2 --parent <epic-id> --assignee <track>
+bd create "T1.1: <title>" -p 1 --parent <sprint-id> --assignee <track> \
+  --acceptance="<what must be true for this task to be done>" \
+  --notes="model: standard-tier"                                   # -> task-id
+bd create "T1.2: <title>" -p 2 --parent <sprint-id> --assignee <track> \
+  --acceptance="..." --notes="model: cheap-tier"
 bd dep add <T1.2-id> <T1.1-id>             # T1.2 blocked until T1.1 done
 ```
-Record each task's beads id in `progress.json` (`tasks[i].bead`).
+The acceptance criteria are the reviewer's contract; the model tier in notes is the
+doer's dispatch tier. Both live on the task -- nothing is written to a plan file.
 
-**On doer dispatch** -- claim the task (check first; never steal a claimed task):
+**Doer dispatch** (doer) -- read the task, claim it, implement, close it:
 ```
-bd show <task-id> --json | jq -r .status   # dispatch only if "open"
-bd update <task-id> --status in_progress --assignee <track>
-```
-
-**At a VERIFY checkpoint** -- close the phase's completed tasks:
-```
-bd close <task-id> [<task-id> ...]
+bd show <task-id>                          # read description + acceptance + model tier
+bd update <task-id> --claim                # claim (open -> in_progress, assigns self)
+bd close <task-id>                         # when the work is complete
 bd ready                                   # confirm what is unblocked next
 ```
+The doer finds work with `bd ready` (tasks with no open blockers) and picks the
+highest-priority ready task. Never steal a task already `in_progress`.
 
-**Reviewer returns CHANGES NEEDED** -- one task per HIGH finding, assigned to the
-track, so no finding is lost:
+**Reviewer returns CHANGES NEEDED** (orchestrator, after reading feedback.md) -- the
+reviewer writes its verdict, human notes, and two machine-readable lines to
+`feedback.md` (see `doer-reviewer-loop.md` reviewer template). The orchestrator
+parses those lines and runs:
 ```
-bd create "fix: <finding>" -p 0 --parent <epic-id> --assignee <track>
-```
-Close it when the reviewer clears the finding.
+# for each id in reopenIds:
+bd update <task-id> --status=open --notes="review: <finding from notes section>"
 
-**At completion** -- close the epic, close the delivered source issues, persist the
+# for each entry in newTasks:
+bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --acceptance="<notes>"
+```
+Reopened tasks return to `bd ready` as work for the next iteration. On APPROVED
+neither command is needed -- tasks stay closed.
+
+**At completion** -- close the sprint root, close the delivered source issues, persist the
 state, link the PR:
 ```
-bd close <epic-id> <source-issue-id> [<source-issue-id> ...]
+bd close <sprint-id> <source-issue-id> [<source-issue-id> ...]
 bd export -o <track-worktree>/.beads/issues.jsonl   # refresh the tracked file from the db
-bd note <epic-id> "PR: <url>"
+bd note <sprint-id> "PR: <url>"
 ```
 The source issues are the ready backlog items the sprint's requirement was drawn
-from. Closing the epic alone leaves them open, so the backlog never reflects the
+from. Closing the sprint root alone leaves them open, so the backlog never reflects the
 delivered work -- close them here too. With a db backend (dolt) `bd close` does NOT
 update `issues.jsonl`; `bd export -o <file>` rewrites it (a bare `bd export` prints to
 stdout). Commit the refreshed `.beads/issues.jsonl` on the branch so the closures are
@@ -73,16 +87,19 @@ durable and visible in the PR.
 
 ## Findings are never lost
 
-Every HIGH review finding becomes a tracked task. MEDIUM/LOW findings and any scope
-deferred mid-sprint become low-priority backlog tasks. A finding either gets fixed
-(`bd close`) or is explicitly carried as backlog -- it is never dropped silently.
+A review finding against the reviewed task goes into `reopenIds` in feedback.md; the
+orchestrator runs `bd update --status=open` so the doer picks it up next loop. A
+finding outside the reviewed scope goes into `newTasks`; the orchestrator creates it.
+MEDIUM/LOW findings and any scope deferred mid-sprint become low-priority backlog
+tasks. Every finding either gets fixed (`bd close`) or is explicitly carried as
+backlog -- it is never dropped silently.
 
 ## Backlog
 
-Deferred work lives as low-priority tasks under the epic, with enough detail to act
+Deferred work lives as low-priority tasks under the sprint root, with enough detail to act
 on later without re-investigation:
 ```
-bd create "<headline>" -p 3 --parent <epic-id> --description "Impact / Source / Detail / Cost of not doing it"
+bd create "<headline>" -p 3 --parent <sprint-id> --description "Impact / Source / Detail / Cost of not doing it"
 ```
 Manage it:
 ```
@@ -94,20 +111,23 @@ bd dep add <id> <blocker-id>        # gate behind another item
 
 ## Status and recovery via beads
 
-To see position at any time:
+State re-derives entirely from beads + git -- no PLAN.md, no progress.json. To see
+position at any time:
 ```
-bd ready                  # everything unblocked right now, across tracks
-bd list --tree <epic-id>  # full sprint tree: tasks, status, assignee
-bd show <task-id>         # full context on one item
+bd list --status=open                  # work still to do
+bd list --status=in_progress           # tasks claimed by an interrupted dispatch
+bd ready                               # everything unblocked right now, across tracks
+bd list --tree <sprint-id>               # full sprint tree: tasks, status, assignee
+bd show <task-id>                      # full context: description, acceptance, model tier, notes
 ```
-beads reflects orchestrator actions (claim/close), not on-disk completion -- always
-confirm against `git log` and the track's `progress.json` before acting (a task
-marked in_progress may be incomplete on disk if a dispatch was interrupted). See
-`sprint.md` Recovery.
+beads reflects claim/close actions, not on-disk completion -- always confirm against
+`git log <base>..<branch>` and `git status` before acting. A task marked
+`in_progress` with no matching commits is an orphaned claim from a crashed dispatch;
+reset it with `bd update <id> --status=open`. See `sprint.md` Recovery.
 
 ## Rules
 
-- **Check before create** (epic and task) -- `bd search ... --status all`; reuse if
+- **Check before create** (sprint root and task) -- `bd search ... --status all`; reuse if
   found, never duplicate.
 - **Check before claim** -- dispatch only if the task is `open`.
 - `bd close` is idempotent and safe to re-run.

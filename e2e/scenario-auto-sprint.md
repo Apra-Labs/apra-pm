@@ -1,42 +1,11 @@
-You are an automated sprint runner. Your job is to execute one full sprint on a
-fleet-e2e-toy repository using the auto-sprint workflow. Do not use the pm skill.
-Do not spawn manual agents. Use only the three steps below.
+# e2e -- auto-sprint on the toy
 
-Repository: {{REPO}}
-Sprint branch: {{BRANCH}}
+Use the /auto-sprint dynamic workflow to run one sprint.
 
----
+- **Repo:** already cloned at `{{REPO}}` (base `main`, remote `origin` -> the toy).
+- **Branch:** `{{BRANCH}}`.
+- **Sprint goals:** gh-toy-mi2, gh-toy-7rp, gh-toy-4ef
 
-Step 1 - Check out the sprint branch
-
-Run this bash command:
-
-  git -C {{REPO}} checkout -b {{BRANCH}}
-
----
-
-Step 2 - Read open epic IDs
-
-Run this bash command:
-
-  cd {{REPO}} && bd list --status=open --type=epic
-
-Capture the beads IDs (e.g. BD-1, BD-2) from the output. These are the epics
-the sprint will implement.
-
----
-
-Step 3 - Invoke the sprint workflow
-
-Use the Workflow tool with:
-  name: "auto-sprint"
-  args (as a JSON object):
-    branch:       "{{BRANCH}}"
-    issues:       [<the beads IDs from step 2 as a JSON array, e.g. ["BD-1","BD-2"]>]
-    goal:         "P1/P2"
-    base_branch:  "main"
-
-The workflow handles everything: planning tasks in beads, implementing them,
-deploying to a test environment (if deploy.md and integ-test-playbook.md exist),
-updating project docs, and creating a pull request. Wait for it to complete
-before doing anything else. Do not take any additional actions.
+Check out `{{BRANCH}}` in the repo, then invoke the /auto-sprint workflow with
+issues `["gh-toy-mi2", "gh-toy-7rp", "gh-toy-4ef"]`, branch `{{BRANCH}}`, goal `P1`,
+and base_branch `main`. Wait for the workflow to complete.

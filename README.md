@@ -20,7 +20,7 @@ No agent ever decides whether to continue -- all routing is in the workflow scri
 
 ```
 while (open issues above goal threshold > 0 AND cycles < max):
-  Plan       -- planner (opus) decomposes epics into a feature+task DAG in beads
+  Plan       -- planner (opus) decomposes sprint goals into a feature+task DAG in beads
                plan-reviewer validates coverage, acceptance criteria, and assigns
                a complexity bucket (S/M/L) and model to every task
   Develop    -- doer works bd-ready tasks on the model the planner assigned;
@@ -101,7 +101,7 @@ Requires `git`, `gh` (GitHub CLI), and beads (`bd`) on PATH.
 | Argument | Required | Default | Description |
 |---|---|---|---|
 | `branch` | yes | -- | Sprint branch. Created if it does not exist. |
-| `issues` | yes | -- | Beads epic IDs to implement this sprint. |
+| `issues` | yes | -- | Beads sprint goal IDs to implement this sprint. |
 | `goal` | no | `P1/P2` | Exit criterion: `P1`, `P1/P2`, or `P1/P2/P3`. |
 | `max_cycles` | no | `5` | Hard ceiling on sprint cycles. |
 | `requirementsFile` | no | -- | Additional context file for the planner. |
@@ -114,7 +114,7 @@ directly to harvest.
 **Other providers** -- invoke the pm skill:
 
 ```
-/pm implement the auth overhaul epic (BD-12, BD-15) on branch feat/auth-overhaul
+/pm implement the auth overhaul sprint goals (BD-12, BD-15) on branch feat/auth-overhaul
 ```
 
 ## E2E

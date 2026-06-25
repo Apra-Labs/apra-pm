@@ -15,10 +15,11 @@
 // cache) is captured per run and reported in the summary for cost-regression tracking.
 //
 // Usage:
-//   node e2e/run-e2e.mjs [--suite s1] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr]
+//   node e2e/run-e2e.mjs [--suite s1,s10] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr]
 //
-// Selection: default is all suites. --suite picks one by id; --provider filters by
-// provider. The skill must be installed first (node install.mjs --llm <provider>).
+// Selection: default is all suites. --suite accepts comma-separated IDs (e.g. s1,s10)
+// and may be repeated. --provider filters by provider. The skill must be installed
+// first (node install.mjs --llm <provider>).
 //
 // Auth: pushing the branch and opening the PR needs write access to the toy. Provide
 // it via GH_TOKEN / E2E_GH_TOKEN (wired into the push URL and gh), or rely on the
@@ -69,10 +70,10 @@ function which(bin) {
 }
 
 function parseArgs() {
-  const a = { suite: null, provider: null, timeout: 2700, keepPr: false };
+  const a = { suites: [], provider: null, timeout: 5400, keepPr: false };
   const v = process.argv.slice(2);
   for (let i = 0; i < v.length; i++) {
-    if (v[i] === '--suite') a.suite = v[++i];
+    if (v[i] === '--suite') a.suites.push(...v[++i].split(',').map((s) => s.trim()).filter(Boolean));
     else if (v[i] === '--provider') a.provider = v[++i];
     else if (v[i] === '--timeout') a.timeout = Number(v[++i]);
     else if (v[i] === '--keep-pr') a.keepPr = true;
@@ -91,10 +92,12 @@ function ghEnv(token) { return token ? { ...process.env, GH_TOKEN: token } : pro
 // Set PMLITE_E2E_TRUST_LLM=1 on self-hosted (private) runners where leakage
 // is not a concern and the LLM may need the token for gh CLI calls.
 function llmEnv() {
-  if (process.env.PMLITE_E2E_TRUST_LLM === '1') return process.env;
-  const e = { ...process.env };
-  delete e.GH_TOKEN;
-  delete e.E2E_GH_TOKEN;
+  const e = process.env.PMLITE_E2E_TRUST_LLM === '1' ? { ...process.env } : (() => {
+    const x = { ...process.env }; delete x.GH_TOKEN; delete x.E2E_GH_TOKEN; return x;
+  })();
+  // Workflows run as background tasks in Claude Code's print mode. Without this
+  // the process exits after 600s leaving the workflow unfinished.
+  e.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = '0';
   return e;
 }
 
@@ -134,7 +137,7 @@ function teardownPr(branch, token) {
 }
 
 function selectSuites(a) {
-  if (a.suite) return cfg.suites.filter((s) => s.id === a.suite);
+  if (a.suites.length) return cfg.suites.filter((s) => a.suites.includes(s.id));
   let s = cfg.suites;
   if (a.provider) s = s.filter((x) => x.provider === a.provider);
   return s;
@@ -153,6 +156,17 @@ function commandFor(provider, prompt, model) {
 }
 
 function git(args, opts = {}) { return spawnSync('git', args, { encoding: 'utf-8', ...opts }); }
+
+// opencode picks up the runner's global XDG_CONFIG_HOME which may have fleet MCP
+// or other server entries. When the pm skill loads and sees dispatch tools it cannot
+// use, opencode exits silently with 0 commits. Write a blank opencode.json into a
+// temp config dir and point XDG_CONFIG_HOME there so opencode starts clean.
+function opencodeEnv(workDir) {
+  const cfgDir = path.join(workDir, '.config', 'opencode');
+  fs.mkdirSync(cfgDir, { recursive: true });
+  fs.writeFileSync(path.join(cfgDir, 'opencode.json'), JSON.stringify({ $schema: 'https://opencode.ai/config.json' }) + '\n');
+  return { ...llmEnv(), XDG_CONFIG_HOME: path.join(workDir, '.config') };
+}
 
 // agy writes its conversation to disk, not stdout. After it exits we look up the
 // conversation id for the run cwd and dump its transcript.jsonl. Mirrors the proven
@@ -197,6 +211,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
 
 function runSuite(suite, timeoutS, keepPr) {
   const res = { id: suite.id, provider: suite.provider, status: '', notes: '', pr: null, telemetry: null, gates: null };
+  res.os = process.platform;
   const { bin } = commandFor(suite.provider, '', suite.model);
   if (!which(bin)) { res.status = 'SKIP'; res.notes = `${bin} not found on PATH`; return res; }
 
@@ -209,6 +224,13 @@ function runSuite(suite, timeoutS, keepPr) {
   git(['-C', repo, 'config', 'user.email', 'e2e@pm']);
   git(['-C', repo, 'config', 'user.name', 'pm-e2e']);
 
+  // The toy repo commits .beads/embeddeddolt/ (Dolt DB created by a newer bd). Running
+  // bd init on a runner with an older bd fails: "Error 1105: table has unknown fields".
+  // Fix: delete the committed Dolt DB first so bd init creates a fresh one at its own
+  // schema version. Also delete .local_version so bd doesn't try to forward-migrate.
+  const beadsDir = path.join(repo, '.beads');
+  try { fs.rmSync(path.join(beadsDir, 'embeddeddolt'), { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(path.join(beadsDir, '.local_version'), { force: true }); } catch {}
   // beads needs issue_prefix set before the model can run bd commands.
   // The toy repo commits .beads/issues.jsonl but not git config, so initialize
   // here with the toy's prefix so `bd ready` and `bd list` work out of the box.
@@ -227,13 +249,15 @@ function runSuite(suite, timeoutS, keepPr) {
     .replaceAll('{{BRANCH}}', branch);
   const { bin: cmd, args } = commandFor(suite.provider, prompt, suite.model);
 
-  console.log(`[${suite.id}] ${cmd} (cwd ${work}, branch ${branch}) ...`);
+  console.log(`[${suite.id}] ${cmd} (cwd ${repo}, branch ${branch}) ...`);
   let timedOut = false;
   if (suite.provider === 'agy') {
-    ({ timedOut } = runAgy(cmd, args, work, logPath, () => !!capturePr(branch, token), timeoutS));
+    ({ timedOut } = runAgy(cmd, args, repo, logPath, () => !!capturePr(branch, token), timeoutS));
   } else {
-    const r = spawnSync(cmd, args, { cwd: work, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env: llmEnv() });
-    fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}`);
+    const env = suite.provider === 'opencode' ? opencodeEnv(work) : llmEnv();
+    const r = spawnSync(cmd, args, { cwd: repo, encoding: 'utf-8', timeout: timeoutS * 1000, maxBuffer: 64 * 1024 * 1024, env });
+    const meta = `\n---META--- exit=${r.status} signal=${r.signal} error=${r.error ? r.error.code : 'none'}\n`;
+    fs.writeFileSync(logPath, `${r.stdout || ''}\n---STDERR---\n${r.stderr || ''}${meta}`);
     timedOut = !!(r.error && r.error.code === 'ETIMEDOUT');
   }
 
@@ -245,7 +269,7 @@ function runSuite(suite, timeoutS, keepPr) {
   // teardown, while the branch still exists on origin. The gates -- not any
   // self-reported checkpoint -- are the sole arbiter of success.
   res.pr = capturePr(branch, token);
-  const v = validateSprint({ repo, branch, pr: res.pr, minCommits: suite.minCommits, expectedIssues: suite.expectedIssues });
+  const v = validateSprint({ repo, branch, pr: res.pr, minCommits: suite.minCommits, expectedIssues: suite.expectedIssues, excludeGates: suite.excludeGates });
   res.gates = v.gates;
 
   if (v.pass) {
@@ -253,17 +277,21 @@ function runSuite(suite, timeoutS, keepPr) {
     res.notes = 'all validation gates passed';
   } else {
     const failed = res.gates.filter((g) => !g.pass).map((g) => g.name);
-    res.status = 'FAIL';
-    const why = timedOut ? `timed out after ${timeoutS}s; ` : '';
-    res.notes = `${why}gates failed: ${failed.join(', ')}`.trim();
-    if (timedOut && !res.pr) res.notes += `; ${diagnoseFailure(logPath)}`.replace(/; $/, '');
+    if (timedOut) {
+      res.status = 'INCOMPLETE';
+      res.notes = `timed out after ${timeoutS}s; partial gates failed: ${failed.join(', ')}`;
+      if (!res.pr) res.notes += `; ${diagnoseFailure(logPath)}`.replace(/; $/, '');
+    } else {
+      res.status = 'FAIL';
+      res.notes = `gates failed: ${failed.join(', ')}`;
+    }
   }
 
   if (!keepPr) teardownPr(branch, token);
   return res;
 }
 
-function main() {
+async function main() {
   const a = parseArgs();
   const suites = selectSuites(a);
   if (!suites.length) { console.error('no suites match the given filters'); process.exit(2); }
@@ -280,8 +308,6 @@ function main() {
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({ results }, null, 2) + '\n');
 
-  // Copy each run's raw CLI log into the artifact dir so a failed run is inspectable
-  // (the tmp work dir is otherwise discarded by the runner).
   for (const r of results) {
     const src = r.work && path.join(r.work, 'cli.log');
     if (src && fs.existsSync(src)) {

@@ -3,7 +3,7 @@ export const meta = {
   description: `Multi-cycle sprint workflow: plan -> develop -> test -> harvest.
 
 args must be a JSON object (not a string) with these fields:
-  issues       REQUIRED. Array of beads epic IDs, e.g. ["BD-1","BD-2"].
+  issues       REQUIRED. Array of beads issue IDs (sprint roots), e.g. ["BD-1","BD-2"].
   branch       REQUIRED. Sprint branch name, e.g. "feat/auth". Created if it does not exist.
   goal         Optional. Exit when no open issues at or above this priority. "P1" | "P1/P2" | "P1/P2/P3". Default: "P1/P2".
   max_cycles   Optional. Hard cycle ceiling. Default: 5.
@@ -23,7 +23,7 @@ Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`
 // priority-based quality goal is met or the cycle ceiling is reached.
 //
 // Agent roster:
-//   planner           -- reads open beads epics/features/bugs, creates feature+task DAG
+//   planner           -- reads open beads sprint goals/features/bugs, creates feature+task DAG
 //   plan-reviewer     -- validates DAG: coverage, task size, acceptance criteria
 //   doer              -- works bd-ready tasks (impl and test-dev), VERIFY checkpoint
 //   reviewer          -- reviews doer output, can reopen tasks
@@ -37,7 +37,7 @@ Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`
 //
 // args (JSON object serialised to string by the Workflow runtime):
 //   branch           -- sprint branch (required); asserted/created at startup
-//   issues           -- beads epic IDs to implement, e.g. ["BD-1","BD-2"] (required)
+//   issues           -- beads issue IDs to implement (sprint roots), e.g. ["BD-1","BD-2"] (required)
 //   goal             -- exit criterion: "P1" | "P1/P2" | "P1/P2/P3"  (default: "P1/P2")
 //   max_cycles       -- hard ceiling on sprint cycles                  (default: 5)
 //   requirementsFile -- optional context file for the planner          (default: none)
@@ -72,27 +72,42 @@ if (args) {
 
 let branch             = opts.branch           || '';   // empty = auto-detect in setup; reassigned after setup resolves
 const rawIssues        = opts.issues            || [];
-const epicIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
+const rootIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
 const goal             = opts.goal             || 'P1/P2';
 const maxCycles        = Number(opts.max_cycles) || 5;
 const requirementsFile = opts.requirementsFile  || '';
 const base_branch      = opts.base_branch       || 'main';
 
-if (epicIds.length === 0) {
+if (rootIds.length === 0) {
   log('ERROR: at least one beads issue ID is required (pass as arg: /auto-sprint BD-1)');
   return { error: 'missing issues' };
 }
 
 // Goal -> numeric priority threshold.
-// Exit when open issues in epic subtree at priority <= threshold reaches zero.
+// Exit when open issues in sprint-goal subtree at priority <= threshold reaches zero.
 const GOAL_THRESHOLD = { 'P1': 1, 'P1/P2': 2, 'P1/P2/P3': 3 };
 const threshold = GOAL_THRESHOLD[goal] || 2;
 
 // PURE_FUNCTIONS_BEGIN -- extracted by test/sprint-cost.test.mjs via vm; keep this block self-contained
 
-const MODEL_OPUS   = 'claude-opus-4-8';
-const MODEL_SONNET = 'claude-sonnet-4-6';
-const MODEL_HAIKU  = 'claude-haiku-4-5';
+// Provider-agnostic tier names. These are the only strings that appear in
+// calibration.json and in dispatch calls. Provider-specific model IDs live
+// exclusively in TIER_TO_MODEL below -- the single place to update when models change.
+const TIER_CHEAP    = 'cheap';
+const TIER_STANDARD = 'standard';
+const TIER_PREMIUM  = 'premium';
+
+// Claude model IDs -- change here only, nowhere else in this file.
+const TIER_TO_MODEL = {
+  [TIER_CHEAP]:    'claude-haiku-4-5',
+  [TIER_STANDARD]: 'claude-sonnet-4-6',
+  [TIER_PREMIUM]:  'claude-opus-4-8',
+};
+
+// Legacy aliases kept so existing dispatch call-sites (model: MODEL_OPUS etc.) are unchanged.
+const MODEL_OPUS   = TIER_PREMIUM;
+const MODEL_SONNET = TIER_STANDARD;
+const MODEL_HAIKU  = TIER_CHEAP;
 
 // ------------------------------------------------------------------ schemas
 
@@ -155,6 +170,7 @@ const SETUP_SCHEMA = {
     playbookExists: { type: 'boolean' },
     startedAt:      { type: 'string', description: 'yyyymmdd_hhmmss from date +%Y%m%d_%H%M%S' },
     calibrationRaw: { type: 'string' },  // verbatim stdout of cat calibration.json; JS parses it
+    transcriptDir:  { type: 'string', description: 'Directory where subagent JSONL conversation logs are written (best-effort; may be empty string if not resolvable)' },
   },
 };
 
@@ -203,7 +219,7 @@ const INTEG_RUN_SCHEMA = {
 };
 
 // Returned by the resume-check agent at the top of every cycle.
-// planDone   -- true if the epic already has features AND every feature has at
+// planDone   -- true if the sprint goal already has children AND every feature has at
 //               least one task with non-empty acceptance criteria; skip plan loop.
 // inProgressIds -- tasks currently in_progress; reset to open before the develop
 //                  loop so a crashed doer never orphans work forever.
@@ -217,11 +233,12 @@ function approved(review) {
 // Live pricing for dispatch cost tracking. Initialized from DEFAULT_CALIBRATION;
 // synced to calibration.json values after setup() returns.
 // Prices are output tokens only in USD per 1M. Source: Anthropic pricing 2026-06-04.
+// Keys are tier names (cheap/standard/premium), not model IDs.
 // See also: sprint-logs/calibration.json model_prices_per_1m_output_tokens.
 let OUTPUT_PRICE_PER_M = {
-  [MODEL_HAIKU]:   5.00,
-  [MODEL_SONNET]: 15.00,
-  [MODEL_OPUS]:   25.00,
+  [TIER_CHEAP]:    5.00,
+  [TIER_STANDARD]: 15.00,
+  [TIER_PREMIUM]:  25.00,
 };
 
 // ------------------------------------------------------------------ CALIBRATION DEFAULTS
@@ -232,31 +249,31 @@ const DEFAULT_CALIBRATION = {
   _doc: 'Sprint cost calibration. All estimation constants live here -- nothing is hardcoded in agents. Fields named _doc are documentation strings; skip them when reading values. The historical section is written automatically by the harvester after each sprint; do not edit it manually.',
   schema_version: 1,
   model_prices_per_1m_output_tokens: {
-    _doc: 'USD per 1M output tokens. Source: Anthropic published pricing 2026-06-04. Update when pricing changes. This file is the single source of truth -- DEFAULT_CALIBRATION in auto-sprint.js is only used to bootstrap this file on first run.',
-    [MODEL_HAIKU]:   5.00,
-    [MODEL_SONNET]: 15.00,
-    [MODEL_OPUS]:   25.00,
+    _doc: 'USD per 1M output tokens, keyed by tier name (cheap/standard/premium). Source: Anthropic published pricing 2026-06-04. Update when pricing changes. Provider-specific model IDs are resolved from tier names in auto-sprint.js TIER_TO_MODEL -- they never appear in this file.',
+    [TIER_CHEAP]:    5.00,
+    [TIER_STANDARD]: 15.00,
+    [TIER_PREMIUM]:  25.00,
   },
   role_models: {
-    _doc: "Fixed model per workflow role. 'doer' and 'reviewer' are NOT here -- the planner sets model per task in beads metadata; reviewer escalates to max(task_model, sonnet). Change an entry here to reroute a role to a different model tier.",
-    'setup':             MODEL_HAIKU,
-    'planner':           MODEL_OPUS,
-    'plan-reviewer':     MODEL_SONNET,
-    'deployer':          MODEL_SONNET,
-    'integ-test-runner': MODEL_SONNET,
-    'ci-watcher':        MODEL_HAIKU,
-    'harvester':         MODEL_SONNET,
-    'log-flush':         MODEL_HAIKU,
-    'check-blockers':    MODEL_HAIKU,
-    'ready-streaks':     MODEL_HAIKU,
+    _doc: "Tier name per workflow role. 'doer' and 'reviewer' are NOT here -- the planner sets tier per task in beads metadata; reviewer escalates to max(task_tier, standard). Change an entry here to reroute a role to a different tier.",
+    'setup':             TIER_CHEAP,
+    'planner':           TIER_PREMIUM,
+    'plan-reviewer':     TIER_STANDARD,
+    'deployer':          TIER_STANDARD,
+    'integ-test-runner': TIER_STANDARD,
+    'ci-watcher':        TIER_CHEAP,
+    'harvester':         TIER_STANDARD,
+    'log-flush':         TIER_CHEAP,
+    'check-blockers':    TIER_CHEAP,
+    'ready-streaks':     TIER_CHEAP,
   },
   doer_model_fallback: {
-    _doc: 'Model assumed for doer cost estimation when a task has no model metadata in beads. In practice the planner always sets model metadata -- this is a safety net only.',
-    model: MODEL_SONNET,
+    _doc: 'Tier assumed for doer cost estimation when a task has no tier metadata in beads. In practice the planner always sets tier metadata -- this is a safety net only.',
+    model: TIER_STANDARD,
   },
   reviewer_model_rule: {
-    _doc: 'Reviewer model is max(doer_task_model, minimum). If the doer used opus, reviewer uses opus; otherwise reviewer uses sonnet. This mirrors the reviewerModel selection in auto-sprint.js.',
-    minimum: MODEL_SONNET,
+    _doc: 'Reviewer tier is max(doer_task_tier, minimum). If the doer used premium, reviewer uses premium; otherwise reviewer uses standard. This mirrors the reviewerModel selection in auto-sprint.js.',
+    minimum: TIER_STANDARD,
   },
   complexity_buckets: {
     _doc: 'Estimated doer output tokens per task by complexity bucket S/M/L. Plan-reviewer assigns a bucket to each task by reading its description. historical.bucket_avg_tokens overrides these defaults once enough sprint data has been collected.',
@@ -306,9 +323,9 @@ const DEFAULT_CALIBRATION = {
 // ------------------------------------------------------------------ COST ARITHMETIC
 // All sprint cost computations are pure JavaScript -- no agent touches a number.
 
-// Reviewer model mirrors auto-sprint dispatch logic: max(taskModel, sonnet).
+// Reviewer tier mirrors auto-sprint dispatch logic: max(taskTier, standard).
 function reviewerModelFor(taskModel) {
-  return taskModel === MODEL_OPUS ? MODEL_OPUS : MODEL_SONNET;
+  return taskModel === TIER_PREMIUM ? TIER_PREMIUM : TIER_STANDARD;
 }
 
 function computeSprintQuote(taskAssignments, calibration) {
@@ -458,7 +475,43 @@ function computeSprintAnalysis(quote, logEntries, calibration, actualCycles) {
   return { analysisText, byRole, actualCycles, totEstOutputUsd: totEstUsd, totEstTrueUsd: totEstUsd * inputMult, totActUsd };
 }
 
-function computeUpdatedCalibration(calibration, analysis, startedAt) {
+// accumulateBucketTokens: join doer log entries back to their S/M/L buckets.
+// Each doer dispatch entry carries label 'doer-c<N>-i<M>' and context
+// 'tasks A, B, C'. We map every listed task ID to its bucket (via the
+// id->bucket map built from taskAssignments) and attribute the entry's
+// outTokens to those buckets, split evenly across the listed IDs that resolve
+// to a known bucket. Returns { S?:{tokens,n}, M?:..., L?:... } -- only buckets
+// that were actually exercised appear (absent buckets stay absent so
+// computeSprintQuote keeps using its calibration defaults).
+function accumulateBucketTokens(logEntries, taskAssignments) {
+  const bucketOf = {};
+  for (const t of (taskAssignments || [])) {
+    if (t && t.id != null && t.bucket != null) bucketOf[String(t.id)] = t.bucket;
+  }
+  const acc = {};
+  for (const e of (logEntries || [])) {
+    const label = e.label || '';
+    if (label.replace(/-c\d.*$/, '') !== 'doer') continue;       // doer entries only
+    const tokens = e.outTokens || 0;
+    if (tokens <= 0) continue;
+    const ctx = String(e.context || '');
+    const m   = ctx.match(/tasks\s+(.+)$/i);
+    if (!m) continue;
+    const ids = m[1].split(',').map(s => s.trim()).filter(Boolean);
+    // Resolve each listed ID to a bucket; skip IDs we can't map.
+    const buckets = ids.map(id => bucketOf[id]).filter(b => b != null);
+    if (buckets.length === 0) continue;
+    const share = tokens / buckets.length;                       // even split
+    for (const b of buckets) {
+      if (!acc[b]) acc[b] = { tokens: 0, n: 0 };
+      acc[b].tokens += share;
+      acc[b].n      += 1;
+    }
+  }
+  return acc;
+}
+
+function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignments, logEntries) {
   const hist = JSON.parse(JSON.stringify(calibration.historical || {}));
   const max  = hist.max_sprints_in_sample || 5;
   const prev = Math.min(hist.sprints_sampled || 0, max - 1);
@@ -484,38 +537,244 @@ function computeUpdatedCalibration(calibration, analysis, startedAt) {
   const revTok  = analysis.byRole['reviewer']?.tokens || 0;
   if (doerTok > 0) hist.reviewer_ratio_avg = blend(hist.reviewer_ratio_avg, revTok / doerTok);
 
-  // bucket_avg_tokens is intentionally not updated here: matching a doer log entry back
-  // to an S/M/L bucket requires joining task IDs in the log entry context field against
-  // the saved taskAssignments. That join is future work; bucket defaults in
-  // calibration.json remain the source for doer_tokens estimates until then.
+  // bucket_avg_tokens join: attribute each doer log entry's outTokens to the
+  // S/M/L bucket(s) of the task IDs in its context string, then blend the
+  // per-bucket average into hist.bucket_avg_tokens using the same sprints_sampled
+  // accounting as roles above. Buckets with no data this sprint keep their prior
+  // value untouched (and unexercised buckets stay absent), so computeSprintQuote
+  // defaults still apply where we have no history.
+  hist.bucket_avg_tokens = hist.bucket_avg_tokens || {};
+  const bucketAcc = accumulateBucketTokens(logEntries, taskAssignments);
+  for (const [bucket, data] of Object.entries(bucketAcc)) {
+    if (data.n === 0) continue;
+    const avg = data.tokens / data.n;
+    hist.bucket_avg_tokens[bucket] = blend(hist.bucket_avg_tokens[bucket], avg);
+  }
 
   return { ...calibration, historical: hist };
 }
 
+// ---- shell-dispatch parsers (pure) -------------------------------------------
+// These parse the outputs[] array returned by the bounded Haiku shell dispatches
+// (countBeadsBlockers / getReadyStreaks / checkCycleState). Factoring the parse
+// logic out keeps it unit-testable and guarantees a single, side-effect-free
+// parse path -- the dispatch wrappers never loop or branch on parse failure, they
+// just feed outputs here and accept whatever this returns.
+//
+// `outputs` is the agent-returned array of strings (one per command). `rootCount`
+// is the number of leading `bd graph` ID-list commands; the final element is the
+// JSON list command. All functions degrade safely on missing/garbage input.
+
+// collectSubtreeIds: union the IDs from the leading rootCount whitespace-joined
+// ID-list outputs (one per sprint goal) into a Set.
+function collectSubtreeIds(outputs, rootCount) {
+  const ids = new Set();
+  for (let i = 0; i < rootCount; i++) {
+    String(outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => ids.add(id));
+  }
+  return ids;
+}
+
+// parseBlockers: contract {count, ids} of open issues with priority<=thr inside
+// the sprint-goal subtree. Missing/short outputs => sentinel {count: 999, ids: []} so the
+// caller treats blockers as present (fail-safe, never exits the sprint early).
+function parseBlockers(outputs, rootCount, thr) {
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { count: 999, ids: [] };
+  const subtree = collectSubtreeIds(outputs, rootCount);
+  let ids = [];
+  try {
+    const open = JSON.parse(outputs[rootCount]);
+    ids = Array.isArray(open)
+      ? open.filter(x => subtree.has(x.id) && x.p <= thr).map(x => x.id)
+      : [];
+  } catch { ids = []; }
+  return { count: ids.length, ids };
+}
+
+// parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks in the
+// subtree by model, ordered by min priority.
+function parseReadyStreaks(outputs, rootCount, defaultModel) {
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { totalCount: 0, streaks: [] };
+  const subtree = collectSubtreeIds(outputs, rootCount);
+  let readyTasks = [];
+  try {
+    const all = JSON.parse(outputs[rootCount]);
+    readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
+  } catch { readyTasks = []; }
+
+  // Hoist the known-tiers set and reverse map outside the loop (constant across tasks).
+  const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
+  const MODEL_TO_TIER = Object.fromEntries(Object.entries(TIER_TO_MODEL).map(([t, id]) => [id, t]));
+
+  const byModel = {};
+  for (const t of readyTasks) {
+    const rawModel = t.m || defaultModel;
+    // Normalise: if the stored value is a provider-specific model ID rather than a tier
+    // name, resolve it back to a tier so dispatch() works correctly. This handles tasks
+    // created before the cheap/standard/premium tier rename. Uses console.warn (not log)
+    // so it is safe when this block is extracted into a vm/require context for testing.
+    let model = rawModel;
+    if (!KNOWN_TIERS.has(rawModel)) {
+      const tier = MODEL_TO_TIER[rawModel];
+      if (tier) {
+        model = tier;
+        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: pre-migration model '${rawModel}' normalised to tier '${model}'`);
+      } else {
+        model = defaultModel;
+        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: unrecognised model '${rawModel}', defaulting to '${defaultModel}'`);
+      }
+    }
+    if (!byModel[model]) byModel[model] = [];
+    byModel[model].push({ id: t.id, priority: t.p });
+  }
+  const streaks = Object.entries(byModel).map(([model, tasks]) => ({
+    model,
+    ids: tasks.slice().sort((a, b) => a.priority - b.priority).map(x => x.id),
+    _min: Math.min(...tasks.map(x => x.priority)),
+  })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
+
+  return { totalCount: readyTasks.length, streaks };
+}
+
+// parseCycleState: contract {planDone, inProgressIds}. planDone is true for a
+// sprint goal when it has >=1 feature and either all features closed or every task has a
+// description. Missing/short outputs => {planDone: false, ...} (fail-safe: never
+// declares planning complete on bad input).
+function parseCycleState(outputs, rootCount) {
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { planDone: false, inProgressIds: [] };
+  const inProgressIds = String(outputs[rootCount] || '').trim().split(/\s+/).filter(Boolean);
+  const planDone = Array.from({ length: rootCount }).every((_, i) => {
+    try {
+      const issues = JSON.parse(outputs[i]);
+      if (!Array.isArray(issues)) return false;
+      const features = issues.filter(x => x.t === 'feature');
+      if (features.length === 0) return false;
+      const openFts = features.filter(x => x.s !== 'closed');
+      if (openFts.length === 0) return true;
+      const tasks = issues.filter(x => x.t === 'task');
+      if (tasks.length === 0) return false;
+      return tasks.every(x => x.d);
+    } catch { return false; }
+  });
+  return { planDone, inProgressIds };
+}
+
+// buildSprintSummary assembles a structured human-readable end-of-sprint summary
+// from already-computed inputs. Pure function -- no I/O.
+//
+// Parameters:
+//   analysis      -- result of computeSprintAnalysis (analysisText, byRole, actualCycles, totActUsd...)
+//   sprintQuote   -- result of computeSprintQuote or null
+//   calibration   -- current calibration object
+//   opts          -- { branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt }
+//
+// Returns: { summaryText }  -- markdown string suitable for writing to .analysis.md
+function buildSprintSummary(analysis, sprintQuote, calibration, opts) {
+  const { branch = '', goal = '', goalMet = false, cycleCount = 0,
+          tasksCompleted = 0, tasksOpen = 0, startedAt = '' } = opts || {};
+  const thr  = (calibration && calibration.outlier_thresholds) || { outlier_pct: 200, calibration_failure_pct: 500 };
+  const cycles = (calibration && calibration.cycle_assumptions) || {};
+  const estCycles = cycles.expected || 1;
+
+  // ---- goal / cycle section
+  const goalLine    = `**Goal:** ${goal || '(unset)'}  ->  ${goalMet ? 'MET' : 'NOT MET'}`;
+  const cyclesLine  = `**Cycles:** estimated ${estCycles}, actual ${cycleCount}`;
+  const tasksLine   = `**Tasks:** ${tasksCompleted} completed, ${tasksOpen} open/carried-forward`;
+
+  // ---- cost table (re-use the analysisText already computed)
+  const costSection = analysis ? analysis.analysisText : '(no cost analysis available)';
+
+  // ---- outlier role suggestions
+  // sprintQuote.tasks have shape {id,bucket,model,doerTokens,reviewerTokens,outputUsd} -- no `role` field.
+  // Estimates per role:
+  //   doer     -> sum of t.doerTokens     across all tasks, scaled by estCycles
+  //   reviewer -> sum of t.reviewerTokens across all tasks, scaled by estCycles
+  //   overhead -> calibration.fixed_overhead_tokens[role_key] (log-flush scaled by estCycles)
+  const overhead = (calibration && calibration.fixed_overhead_tokens) || {};
+  const suggestions = [];
+  if (analysis && analysis.byRole) {
+    for (const [role, data] of Object.entries(analysis.byRole)) {
+      if (!data.tokens) continue;
+      let estTokensForRole = 0;
+      if (role === 'doer') {
+        if (!sprintQuote) continue;
+        estTokensForRole = (sprintQuote.tasks || [])
+          .reduce((s, t) => s + (t.doerTokens || 0), 0) * estCycles;
+      } else if (role === 'reviewer') {
+        if (!sprintQuote) continue;
+        estTokensForRole = (sprintQuote.tasks || [])
+          .reduce((s, t) => s + (t.reviewerTokens || 0), 0) * estCycles;
+      } else {
+        // overhead role: look up in fixed_overhead_tokens (keys use underscores)
+        const key = role.replace(/-/g, '_');
+        const tok = overhead[key];
+        if (typeof tok !== 'number') continue;
+        // log-flush runs once per cycle; other overhead roles run once per sprint
+        estTokensForRole = role === 'log-flush' ? tok * estCycles : tok;
+      }
+      if (estTokensForRole <= 0) continue;
+      const pctOver = (data.tokens - estTokensForRole) / estTokensForRole * 100;
+      if (Math.abs(pctOver) > thr.outlier_pct) {
+        const dir = pctOver > 0 ? 'over' : 'under';
+        suggestions.push(
+          `- \`${role}\` actual ${Math.round(Math.abs(pctOver))}% ${dir} estimate -> ` +
+          `consider ${pctOver > 0 ? 'bumping' : 'reducing'} \`fixed_overhead_tokens.${role.replace(/-/g, '_')}\` or bucket sizes`
+        );
+      }
+    }
+  }
+  const suggestSection = suggestions.length
+    ? `### Suggested calibration adjustments\n\n${suggestions.join('\n')}\n`
+    : `### Suggested calibration adjustments\n\n_No outliers detected -- calibration looks good._\n`;
+
+  const summaryText =
+    `# Sprint summary: ${branch}\n\n` +
+    `**Started:** ${startedAt || '(unknown)'}  \n` +
+    `${goalLine}  \n` +
+    `${cyclesLine}  \n` +
+    `${tasksLine}\n\n` +
+    `---\n\n` +
+    `### Cost analysis\n\n` +
+    costSection + `\n` +
+    `---\n\n` +
+    suggestSection;
+
+  return { summaryText };
+}
+
 // PURE_FUNCTIONS_END
 
-function outputCostUsd(model, tokens) {
-  const rate = OUTPUT_PRICE_PER_M[model] || OUTPUT_PRICE_PER_M[MODEL_SONNET];
+function outputCostUsd(tier, tokens) {
+  const rate = OUTPUT_PRICE_PER_M[tier] || OUTPUT_PRICE_PER_M[TIER_STANDARD];
   return (tokens / 1_000_000) * rate;
+}
+
+// Resolve a tier name to the provider-specific model ID for agent() dispatch.
+// Falls back to standard tier if the tier is unrecognised.
+function resolveModel(tier) {
+  return TIER_TO_MODEL[tier] || TIER_TO_MODEL[TIER_STANDARD];
 }
 
 // Real output-token cost via differential budget.spent() snapshots.
 // budget.spent() is the only actual usage the harness exposes (output tokens only).
+// opts.model is a tier name (cheap/standard/premium); resolved to a model ID for agent().
 // opts.context -- short human string describing what was worked (e.g. "tasks BD-5,BD-6")
 let cycleCostUsd = 0;
 const dispatchLedger = [];  // accumulates across all cycles; flushed to sprint-logs/<branch>.jsonl per cycle
 
 async function dispatch(prompt, opts) {
+  const tier = opts.model || TIER_STANDARD;
+  const modelId = resolveModel(tier);
   const before = budget.spent();
-  const result = await agent(prompt, opts);
+  const result = await agent(prompt, { ...opts, model: modelId });
   const outTokens = budget.spent() - before;
-  const cost = outputCostUsd(opts.model || MODEL_SONNET, outTokens);
+  const cost = outputCostUsd(tier, outTokens);
   cycleCostUsd += cost;
   const entry = {
     cycle:   cycleCount === 0 ? 'setup' : cycleCount,
     phase:   opts.phase  || '?',
     label:   opts.label  || '?',
-    model:   opts.model  || MODEL_SONNET,
+    model:   tier,
     context: opts.context || '',
     outTokens,
     costUsd: parseFloat(cost.toFixed(4)),
@@ -526,75 +785,74 @@ async function dispatch(prompt, opts) {
 }
 
 
-async function countBeadsBlockers(thr, epics) {
+// ------------------------------------------------------------ shell dispatch
+//
+// All three exit-check helpers below run a tiny, fixed set of read-only commands
+// (`bd graph --json <goal-id> | node-extract` plus one `bd list ... | node-extract`)
+// via a single Haiku dispatch and parse the result with a pure parser above.
+//
+// Latency-hardening (gh-7: check-blockers once took 12.5 min):
+//   * Root cause -- the dispatch prompt said "return each command's stdout
+//     verbatim" against a strict array-of-strings schema, with NO turn cap. A
+//     stray escaping/parse concern on the (potentially large) `bd graph` output
+//     made the agent re-run commands and re-emit output across many turns, so a
+//     5-second job could burn minutes. The node extractors already shrink output
+//     to an ID list / tiny JSON, so the only real failure mode was looping.
+//   * Fix -- (a) every shell dispatch is a SINGLE-ATTEMPT contract: maxTurns is
+//     bounded to (#commands + 1), so the agent physically cannot loop for
+//     minutes; (b) the prompt is explicit that it must run each command exactly
+//     once and never retry/re-run; (c) parsing is fully tolerant (pure parsers
+//     return a fail-safe sentinel on bad/short output) so there is never a reason
+//     to bounce work back to the agent.
+const SHELL_DISPATCH_PROMPT_HEADER =
+  `Run each command below EXACTLY ONCE, in order. Return each command's stdout ` +
+  `as one string element of outputs[] (same order; outputs.length must equal the ` +
+  `number of commands).\n` +
+  `Rules: do NOT summarize, reformat, interpret, or escape the output. Do NOT ` +
+  `re-run any command. Do NOT retry on empty or unexpected output -- an empty ` +
+  `string is a valid result; just return it. This is a single attempt: run, ` +
+  `capture, return, stop.\n\n`;
+
+function buildShellPrompt(cmds) {
+  return SHELL_DISPATCH_PROMPT_HEADER + cmds.map((c, i) => `${i + 1}. ${c}`).join('\n');
+}
+
+// Bound the agent to one turn per command plus a single wrap-up turn. The harness
+// stops the dispatch at maxTurns, so a misbehaving agent cannot stall for minutes.
+function shellMaxTurns(cmds) {
+  return cmds.length + 1;
+}
+
+async function dispatchShell(cmds, opts) {
+  return dispatch(buildShellPrompt(cmds), {
+    schema: SHELL_OUTPUTS_SCHEMA,
+    maxTurns: shellMaxTurns(cmds),
+    ...opts,
+  });
+}
+
+async function countBeadsBlockers(thr, roots) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
   const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
   const cmds = [
-    ...epics.map(id => `bd graph --json ${id} | ${idExtract}`),
+    ...roots.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --status=open --json | ${openExtract}`,
   ];
-  const r = await dispatch(
-    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
-    `Do NOT summarize, reformat, or interpret the output.\n\n` +
-    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
-    { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop', schema: SHELL_OUTPUTS_SCHEMA }
-  );
-  if (!r?.outputs || r.outputs.length < cmds.length) return { count: 999, ids: [] };
-
-  const subtreeIds = new Set();
-  for (let i = 0; i < epics.length; i++) {
-    (r.outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => subtreeIds.add(id));
-  }
-  let ids = [];
-  try {
-    const open = JSON.parse(r.outputs[epics.length]);
-    ids = Array.isArray(open)
-      ? open.filter(x => subtreeIds.has(x.id) && x.p <= thr).map(x => x.id)
-      : [];
-  } catch {}
-  return { count: ids.length, ids };
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop' });
+  return parseBlockers(r?.outputs, roots.length, thr);
 }
 
-async function getReadyStreaks(epicIds) {
+async function getReadyStreaks(rootIds) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
   const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
   const cmds = [
-    ...epicIds.map(id => `bd graph --json ${id} | ${idExtract}`),
+    ...rootIds.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --ready --type=task --json | ${taskExtract}`,
   ];
-  const r = await dispatch(
-    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
-    `Do NOT summarize, reformat, or interpret the output.\n\n` +
-    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
-    { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop', schema: SHELL_OUTPUTS_SCHEMA }
-  );
-  if (!r?.outputs || r.outputs.length < cmds.length) return { totalCount: 0, streaks: [] };
-
-  const subtreeIds = new Set();
-  for (let i = 0; i < epicIds.length; i++) {
-    (r.outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => subtreeIds.add(id));
-  }
-  let readyTasks = [];
-  try {
-    const all = JSON.parse(r.outputs[epicIds.length]);
-    readyTasks = Array.isArray(all) ? all.filter(t => subtreeIds.has(t.id)) : [];
-  } catch {}
-
-  const byModel = {};
-  for (const t of readyTasks) {
-    const model = t.m || MODEL_SONNET;
-    if (!byModel[model]) byModel[model] = [];
-    byModel[model].push({ id: t.id, priority: t.p });
-  }
-  const streaks = Object.entries(byModel).map(([model, tasks]) => ({
-    model,
-    ids: tasks.sort((a, b) => a.priority - b.priority).map(x => x.id),
-    _min: Math.min(...tasks.map(x => x.priority)),
-  })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
-
-  return { totalCount: readyTasks.length, streaks };
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop' });
+  return parseReadyStreaks(r?.outputs, rootIds.length, TIER_STANDARD);
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
@@ -610,45 +868,22 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
   );
 }
 
-async function checkCycleState(epicIds) {
+async function checkCycleState(rootIds) {
   // Extract only the fields needed for planDone check to keep output small.
   const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(d).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
   const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
   const cmds = [
-    ...epicIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
+    ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
     `bd list --status=in_progress --type=task --json | ${ipExtract}`,
   ];
-  const r = await dispatch(
-    `Run each command below in order and return each command's stdout verbatim as a string in outputs[].\n` +
-    `Do NOT summarize, reformat, or interpret the output.\n\n` +
-    cmds.map((c, i) => `${i + 1}. ${c}`).join('\n'),
-    { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan', schema: SHELL_OUTPUTS_SCHEMA }
-  );
-  if (!r?.outputs || r.outputs.length < cmds.length) return { planDone: false, inProgressIds: [] };
-
-  const inProgressIds = (r.outputs[epicIds.length] || '').trim().split(/\s+/).filter(Boolean);
-
-  const planDone = epicIds.every((_, i) => {
-    try {
-      const issues   = JSON.parse(r.outputs[i]);
-      if (!Array.isArray(issues)) return false;
-      const features = issues.filter(x => x.t === 'feature');
-      if (features.length === 0) return false;
-      const openFts  = features.filter(x => x.s !== 'closed');
-      if (openFts.length === 0) return true;
-      const tasks    = issues.filter(x => x.t === 'task');
-      if (tasks.length === 0) return false;
-      return tasks.every(x => x.d);
-    } catch { return false; }
-  });
-
-  return { planDone, inProgressIds };
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan' });
+  return parseCycleState(r?.outputs, rootIds.length);
 }
 
 // ------------------------------------------------------------------ STATE
 
 let cycleCount   = 0;
-let epicDone     = false;
+let goalMet     = false;
 let prevOpenIds  = [];
 let headSha      = '';
 let abortReason  = '';
@@ -694,7 +929,15 @@ const setup = await dispatch(
   `    Write the following JSON exactly to sprint-logs/calibration.json:\n` +
   JSON.stringify(DEFAULT_CALIBRATION, null, 2) + `\n` +
   `    Return that same JSON text verbatim as the "calibrationRaw" field.\n\n` +
-  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibrationRaw.`,
+  `Step 7: Resolve transcript directory.\n` +
+  `  Claude subagent conversation logs (JSONL) are stored under:\n` +
+  `    $HOME/.claude/projects/<project-slug>/\n` +
+  `  where <project-slug> is derived from the repo absolute path by uppercasing the\n` +
+  `  drive letter and replacing path separators with dashes.\n` +
+  `  Run: ls "$HOME/.claude/projects/" 2>/dev/null\n` +
+  `  Find the entry whose slug matches the repo path (e.g. repo=/c/foo/bar -> C--foo-bar).\n` +
+  `  If found, return the full path as transcriptDir. If not found, return an empty string.\n\n` +
+  `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibrationRaw, transcriptDir.`,
   { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
 );
 
@@ -733,6 +976,10 @@ Object.assign(OUTPUT_PRICE_PER_M, calibration.model_prices_per_1m_output_tokens 
 
 // State for cost estimation -- populated after plan is APPROVED.
 let sprintQuote = null;
+// taskAssignments (id->bucket->model) from the last approved plan-review.
+// Held at workflow scope so computeUpdatedCalibration can join doer log entries
+// back to S/M/L buckets at sprint close without re-querying beads.
+let taskAssignments = [];
 
 // Derive a filename-safe version of the branch for sprint-logs/.
 // Replaces path separators and non-safe chars with dashes so that parallel
@@ -751,12 +998,17 @@ let flushedCount = 0;  // how many dispatchLedger entries have been appended to 
 async function appendNewEntries(label, phase) {
   const newEntries = dispatchLedger.slice(flushedCount);
   if (newEntries.length === 0) return;
-  const lines = newEntries.map(e => JSON.stringify({ ts: sprintTs, ...e })).join('\n');
+  // ts placeholder is replaced by the agent with the real wall-clock time at flush,
+  // not the fixed sprint-start timestamp, so each flush batch gets its own timestamp.
+  const lines = newEntries.map(e => JSON.stringify({ ts: '__FLUSH_TS__', ...e })).join('\n');
   flushedCount = dispatchLedger.length;  // update before dispatch so log-append entry goes in next batch
   await dispatch(
-    `Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+    `Step 1: Run: date +%Y-%m-%dT%H:%M:%S%z\n` +
+    `Save the output as FLUSH_TS (e.g. "2026-06-22T22:15:30+0530").\n\n` +
+    `Step 2: Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
     `If the file does not exist, create it. If the sprint-logs/ directory does not exist, create it first:\n` +
     `  mkdir -p "${repo}/sprint-logs"\n\n` +
+    `In the lines below, replace every occurrence of "__FLUSH_TS__" with the FLUSH_TS value from Step 1.\n` +
     `Lines to append (one JSON object per line):\n${lines}\n\n` +
     `Then commit and push:\n` +
     `  git -C "${repo}" add sprint-logs/\n` +
@@ -774,10 +1026,36 @@ if (!setup.deployMdExists) log('WARNING: deploy.md not found -- integration test
 if (!setup.playbookExists) log('WARNING: integ-test-playbook.md not found -- integration test phase will be skipped');
 if (!integTestEnabled) log('Integration testing disabled for this sprint. Harvest will run after Develop.');
 
-const epicSummary = epicIds.join(', ');
-log(`Epics: ${epicSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
+const rootSummary = rootIds.join(', ');
+log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles: ${maxCycles}`);
 
-// ------------------------------------------------------------------ EPIC LOOP
+// ------------------------------------------------------------------ SPRINT META RECORD
+// Write the first JSONL entry (type=meta) capturing sprint metadata and transcript dir.
+// This is benign for existing consumers: computeSprintAnalysis skips entries without a label.
+{
+  const metaLine = JSON.stringify({
+    ts: sprintTs, type: 'meta',
+    branch, startedAt: setup.startedAt,
+    roots: rootIds, goal,
+    transcriptDir: setup.transcriptDir || '',
+  });
+  await dispatch(
+    `Write sprint meta record and commit.\n\n` +
+    `Step 1: Ensure sprint-logs/ directory exists:\n` +
+    `  mkdir -p "${repo}/sprint-logs"\n\n` +
+    `Step 2: Append (do NOT overwrite) the following line to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+    `  If the file does not exist, create it first.\n\n` +
+    `Line:\n${metaLine}\n\n` +
+    `Step 3: Commit and push:\n` +
+    `  git -C "${repo}" add sprint-logs/\n` +
+    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-meta ${branch} ${setup.startedAt}"\n` +
+    `  git -C "${repo}" push origin ${branch}\n` +
+    `Do not modify any other file. Return "OK" when done.`,
+    { model: MODEL_HAIKU, label: 'sprint-meta', phase: 'Plan' }
+  );
+}
+
+// ------------------------------------------------------------------ SPRINT LOOP
 
 while (cycleCount < maxCycles) {
   cycleCount++;
@@ -788,7 +1066,7 @@ while (cycleCount < maxCycles) {
 
   phase('Plan');
 
-  const cycleState = await checkCycleState(epicIds);
+  const cycleState = await checkCycleState(rootIds);
   log(`Cycle state: planDone=${cycleState.planDone} inProgress=[${cycleState.inProgressIds.join(', ')}]`);
 
   // Reset any tasks orphaned in_progress from a previous crashed run.
@@ -817,14 +1095,14 @@ while (cycleCount < maxCycles) {
 
     const plannerResult = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-      `Sprint epics: ${epicSummary}\n` +
+      `Sprint goals: ${rootSummary}\n` +
       (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
       `\n` +
       (planFeedback
         ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
         : '') +
       `Inspect existing state first:\n` +
-      `  ${epicIds.map(id => `bd show ${id} && bd graph --compact ${id}`).join('\n  ')}\n` +
+      `  ${rootIds.map(id => `bd show ${id} && bd graph --compact ${id}`).join('\n  ')}\n` +
       `Run: bd show <id> on any existing features/tasks to read their current descriptions.\n` +
       `Then build or complete the feature+task DAG -- create only what is missing:\n` +
       `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
@@ -833,9 +1111,9 @@ while (cycleCount < maxCycles) {
       `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
       `The correct wiring direction is: parents depend on children (children unblock first).\n` +
       `\n` +
-      `  Step 1 -- wire epic -> feature (epic waits for features):\n` +
-      `    bd dep add <epic-id> <feature-id>\n` +
-      `    After this: "bd ready" will NOT show the epic (it's waiting). Features show as ready.\n` +
+      `  Step 1 -- wire sprint goal -> child (goal waits for children):\n` +
+      `    bd dep add <goal-id> <child-id>\n` +
+      `    After this: "bd ready" will NOT show the sprint goal (it's waiting). Children show as ready.\n` +
       `\n` +
       `  Step 2 -- wire feature -> tasks (feature waits for tasks):\n` +
       `    bd dep add <feature-id> <impl-task-id>\n` +
@@ -846,33 +1124,35 @@ while (cycleCount < maxCycles) {
       `    bd dep add <test-task-id> <impl-task-id>\n` +
       `    After this: "bd ready" shows only impl-task. test-task unblocks once impl-task closes.\n` +
       `\n` +
-      `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT features or epics.\n` +
-      `  If features appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
+      `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT sprint goals or blocked parents.\n` +
+      `  If sprint goals appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
       `\n` +
       `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
       `\n` +
-      `  Create type=feature issues as children of each epic (use bd dep add epic feature per above).\n` +
+      `  Break each sprint goal into child issues: bd create --parent <goal-id> (use type=feature for sub-goals, type=task for leaf work).\n` +
       `  Create type=task issues for each feature: implementation tasks AND integration\n` +
       `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
       `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
       `  Each task must be completable in one agent session (1-3 file changes max)\n` +
       `  Every task needs clear acceptance criteria in its description\n` +
-      `  - Assign each task a model based on complexity -- after creating or updating each\n` +
-      `    task, run: bd update <id> --set-metadata model=<model-id>\n` +
-      `    Available models and when to use them:\n` +
-      `      ${MODEL_HAIKU}  -- mechanical work: rename, config tweak, move file, simple wiring\n` +
-      `      ${MODEL_SONNET} -- standard work: new function, test suite, API endpoint, refactor\n` +
-      `      ${MODEL_OPUS}   -- hard work: architecture, multi-file design, ambiguous requirements\n` +
-      `  - Group tasks so consecutive tasks in dependency order share a model where\n` +
-      `    possible -- this minimises model-switching overhead during execution\n` +
+      `  - Assign each task a tier AND complexity bucket based on complexity -- after creating or updating each\n` +
+      `    task, run: bd update <id> --set-metadata model=<tier>\n` +
+      `    Available tiers and when to use them:\n` +
+      `      ${TIER_CHEAP}    -- mechanical work: rename, config tweak, move file, simple wiring\n` +
+      `      ${TIER_STANDARD} -- standard work: new function, test suite, API endpoint, refactor\n` +
+      `      ${TIER_PREMIUM}  -- hard work: architecture, multi-file design, ambiguous requirements\n` +
+      `    Complexity buckets (S/M/L) are assigned by the plan-reviewer based on task scope.\n` +
+      `    Every task MUST receive a bucket assignment -- tasks without a bucket cannot be cost-estimated.\n` +
+      `  - Group tasks so consecutive tasks in dependency order share a tier where\n` +
+      `    possible -- this minimises tier-switching overhead during execution\n` +
       (cycleCount > 1
         ? `This is cycle ${cycleCount}. Focus on open issues only.\n` +
-          `Do NOT add new scope beyond the original epics and open bugs/enhancements.\n` +
+          `Do NOT add new scope beyond the original sprint goals and open bugs/enhancements.\n` +
           `Do NOT re-create tasks that are already closed.\n`
         : '') +
       `Confirm with any text when done.`,
       { model: MODEL_OPUS, label: plannerLabel, phase: 'Plan', agentType: 'planner',
-        context: `planning epics ${epicSummary}` }
+        context: `planning sprint goals ${rootSummary}` }
     );
 
     if (!plannerResult) {
@@ -882,14 +1162,14 @@ while (cycleCount < maxCycles) {
 
     const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
     const planReview = await dispatch(
-      `Repo: ${repo}\nBranch: ${branch}\nSprint epics: ${epicSummary}\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nSprint goals: ${rootSummary}\n` +
       `Calibration file: ${repo}/sprint-logs/calibration.json (read this first if it exists)\n\n` +
-      `Review the beads DAG for these epics ONLY: ${epicSummary}\n` +
-      `Run: ${epicIds.map(id => `bd show ${id}`).join(' && ')} to inspect each epic.\n` +
-      `Run: ${epicIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
+      `Review the beads DAG for these sprint goals ONLY: ${rootSummary}\n` +
+      `Run: ${rootIds.map(id => `bd show ${id}`).join(' && ')} to inspect each sprint goal.\n` +
+      `Run: ${rootIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
       `Run: bd show <id> to inspect individual issues in depth.\n` +
       `Run: bd ready -- this is your FIRST correctness check.\n` +
-      `Do NOT review or comment on issues outside these epics.\n\n` +
+      `Do NOT review or comment on issues outside these sprint goals.\n\n` +
       `Follow your runbook (plan-reviewer.md) step by step:\n` +
       `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
       `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
@@ -899,17 +1179,20 @@ while (cycleCount < maxCycles) {
       `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
       `any dependency direction problems.`,
       { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: PLAN_REVIEW_SCHEMA, agentType: 'plan-reviewer',
-        context: `reviewing plan for epics ${epicSummary}` }
+        context: `reviewing plan for sprint goals ${rootSummary}` }
     );
 
     if (approved(planReview)) {
       planApproved = true;
       log(`Plan APPROVED on cycle ${cycleCount} round ${pi + 1}`);
 
+      // Persist taskAssignments at workflow scope for the calibration join at sprint close.
+      taskAssignments = planReview.taskAssignments || [];
+
       // Compute sprint cost quote in pure JS -- no agent does arithmetic.
-      sprintQuote = computeSprintQuote(planReview.taskAssignments || [], calibration);
+      sprintQuote = computeSprintQuote(taskAssignments, calibration);
       const sc = sprintQuote.scenarios;
-      log(`Sprint quote (${sprintQuote.calibrationSource}, ${(planReview.taskAssignments || []).length} tasks): ` +
+      log(`Sprint quote (${sprintQuote.calibrationSource}, ${taskAssignments.length} tasks): ` +
           `output-only: opt=$${sc.optimistic.outputOnly.toFixed(3)} ` +
           `exp=$${sc.expected.outputOnly.toFixed(3)} ` +
           `pess=$${sc.pessimistic.outputOnly.toFixed(3)} ` +
@@ -927,6 +1210,21 @@ while (cycleCount < maxCycles) {
           { model: MODEL_HAIKU, label: `write-quote-c${cycleCount}`, phase: 'Plan' }
         );
       }
+
+      // Commit plan: marker so the independent gate checker can confirm the plan phase ran.
+      await dispatch(
+        `Export beads snapshot and commit a plan: marker commit.\n\n` +
+        `Run these steps in order:\n` +
+        `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
+        `  git -C "${repo}" add .beads/issues.jsonl\n` +
+        `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "plan: approve task DAG"\n\n` +
+        `If that last git commit fails with "nothing to commit" (file unchanged), run instead:\n` +
+        `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "plan: approve task DAG"\n\n` +
+        `The commit message MUST start with "plan:" -- do not change it.\n\n` +
+        `After committing, push the branch:\n` +
+        `  git -C "${repo}" push origin ${branch}`,
+        { model: MODEL_HAIKU, label: `plan-commit-c${cycleCount}`, phase: 'Plan' }
+      );
     } else {
       planFeedback = (planReview && planReview.notes) || '';
       log(`Plan needs changes: ${planFeedback.slice(0, 120)}`);
@@ -949,7 +1247,7 @@ while (cycleCount < maxCycles) {
   let devFeedback = '';
 
   while (devIter < MAX_DEV_ITER) {
-    const streakResult = await getReadyStreaks(epicIds);
+    const streakResult = await getReadyStreaks(rootIds);
     if (streakResult.totalCount === 0) {
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
       break;
@@ -961,7 +1259,7 @@ while (cycleCount < maxCycles) {
     let streakAbort = false;
 
     for (const streak of streakResult.streaks) {
-      const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model.split('-').slice(-2, -1)[0] || streak.model}`;
+      const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model}`;
       log(`Streak: model=${streak.model} tasks=${streak.ids.join(', ')}`);
 
       const doerResult = await dispatch(
@@ -1001,16 +1299,16 @@ while (cycleCount < maxCycles) {
     devIter++;
     if (streakAbort) break;
 
-    // Reviewer model matches the highest-tier model used across all streaks:
-    // any opus streak -> opus; otherwise sonnet (haiku work reviewed by sonnet minimum).
+    // Reviewer tier matches the highest tier used across all streaks:
+    // any premium streak -> premium; otherwise standard (cheap work reviewed at standard minimum).
     const usedModels = streakResult.streaks.map(s => s.model);
-    const reviewerModel = usedModels.includes(MODEL_OPUS) ? MODEL_OPUS : MODEL_SONNET;
+    const reviewerModel = usedModels.includes(TIER_PREMIUM) ? TIER_PREMIUM : TIER_STANDARD;
 
     // One reviewer pass covering all streaks worked this iteration.
     const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
     const review = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-      `Sprint epics: ${epicSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
+      `Sprint goals: ${rootSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
       `Review ONLY the work done for the tasks listed above.\n` +
       `Run: bd show <id> for each task to read its acceptance criteria.\n` +
       `Run: git -C "${repo}" diff ${base_branch}...${branch} to see the changes.\n` +
@@ -1090,7 +1388,7 @@ while (cycleCount < maxCycles) {
 
       const integResult = await dispatch(
         `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
-        `Sprint epics: ${epicSummary}\n\n` +
+        `Sprint goals: ${rootSummary}\n\n` +
         `Run: bd list --type=feature --status=open\n` +
         `For each open feature, execute its integration tests.\n\n` +
         `For each feature:\n` +
@@ -1101,7 +1399,7 @@ while (cycleCount < maxCycles) {
         `  Keep feature open on failure or if inconclusive.\n\n` +
         `Priority rules:\n` +
         `  P0: system won't start or core path completely broken\n` +
-        `  P1: requirement from epic explicitly not met\n` +
+        `  P1: requirement from sprint goal explicitly not met\n` +
         `  P2: requirement partially met, degraded behaviour\n` +
         `  P3: quality, performance, or UX issue not blocking core function\n\n` +
         `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
@@ -1126,7 +1424,7 @@ while (cycleCount < maxCycles) {
 
   // ---------------------------------------------------------------- EXIT CHECK
 
-  const blockers = await countBeadsBlockers(threshold, epicIds);
+  const blockers = await countBeadsBlockers(threshold, rootIds);
   const currentOpenIds = (blockers.ids || []).slice().sort();
   log(`Exit check: ${blockers.count} open issues at P<=${threshold} -- IDs: [${currentOpenIds.join(', ')}]`);
 
@@ -1149,7 +1447,7 @@ while (cycleCount < maxCycles) {
   }
 
   if (blockers.count === 0) {
-    epicDone = true;
+    goalMet = true;
     log(`Goal met after ${cycleCount} cycle(s)`);
     break;
   }
@@ -1200,11 +1498,11 @@ if (headSha) {
 const finalReviewLabel = 'final-reviewer';
 const finalReview = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-  `Sprint epics: ${epicSummary}\nGoal: ${goal}\n` +
+  `Sprint goals: ${rootSummary}\nGoal: ${goal}\n` +
   (abortReason ? `Sprint ended early: ${abortReason}. Review what was completed.\n` : '') +
-  (epicDone ? `Goal was met: all P<=${threshold} issues resolved.\n` : `Goal not yet met.\n`) +
+  (goalMet ? `Goal was met: all P<=${threshold} issues resolved.\n` : `Goal not yet met.\n`) +
   `\nReview the overall output of this sprint:\n` +
-  `  - Does the work address the original epics?\n` +
+  `  - Does the work address the original sprint goals?\n` +
   `  - Are there obvious gaps or regressions?\n` +
   `  - Is the codebase in a releasable state for what was completed?\n` +
   `APPROVED means the work is ready to harvest and raise as a PR.\n` +
@@ -1216,7 +1514,7 @@ log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);
 if (!approved(finalReview)) {
   const notes = (finalReview && finalReview.notes) || '';
   log(`Final review not approved -- aborting before harvest. Notes: ${notes.slice(0, 300)}`);
-  return { cycles: cycleCount, epicDone, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
+  return { cycles: cycleCount, goalMet, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
 }
 
 // ------------------------------------------------------------------ HARVEST
@@ -1227,10 +1525,34 @@ const logEntries = dispatchLedger;
 const sprintAnalysis = computeSprintAnalysis(sprintQuote, logEntries, calibration, cycleCount);
 log('Sprint cost analysis computed (JS):\n' + sprintAnalysis.analysisText);
 
+// Build structured summary and write sprint-logs/<branch>-<ts>.analysis.md artefact.
+const tasksCompleted = goalMet
+  ? (sprintQuote ? sprintQuote.tasks.length : 0)
+  : Math.max(0, (sprintQuote ? sprintQuote.tasks.length : 0) - prevOpenIds.length);
+const tasksOpen = goalMet ? 0 : prevOpenIds.length;
+const sprintSummary = buildSprintSummary(sprintAnalysis, sprintQuote, calibration, {
+  branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt: setup.startedAt,
+});
+log('Sprint summary:\n' + sprintSummary.summaryText);
+const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.analysis.md`;
+await dispatch(
+  `Write sprint analysis artefact and commit.\n\n` +
+  `Step 1: Ensure sprint-logs/ directory exists:\n` +
+  `  mkdir -p "${repo}/sprint-logs"\n\n` +
+  `Step 2: Write the following content to "${repo}/${analysisArtifactFile}" (overwrite if exists):\n\n` +
+  sprintSummary.summaryText + `\n\n` +
+  `Step 3: Commit and push:\n` +
+  `  git -C "${repo}" add "${repo}/${analysisArtifactFile}"\n` +
+  `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-analysis ${branch} ${setup.startedAt}"\n` +
+  `  git -C "${repo}" push origin ${branch}\n` +
+  `Do not modify any other file. Return "OK" when done.`,
+  { model: MODEL_HAIKU, label: 'sprint-analysis-write', phase: 'Harvest' }
+);
+
 const harvestLabel = 'harvester';
 const harvestResult = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-  `Sprint epics: ${epicSummary}\nCycles completed: ${cycleCount}\nGoal met: ${epicDone}\n` +
+  `Sprint goals: ${rootSummary}\nCycles completed: ${cycleCount}\nGoal met: ${goalMet}\n` +
   `sprintLogFile: ${sprintLogFile}\n\n` +
   `The sprint is complete. Harvest the sprint artefacts.\n` +
   `Follow your runbook (agents/harvester.md).\n\n` +
@@ -1244,14 +1566,14 @@ const harvestResult = await dispatch(
 
 if (!harvestResult || harvestResult.status !== 'OK') {
   log(`Harvest failed: ${(harvestResult && harvestResult.notes) || 'null'} -- skipping PR`);
-  return { cycles: cycleCount, epicDone, goal, harvest: 'failed' };
+  return { cycles: cycleCount, goalMet, goal, harvest: 'failed' };
 }
 
 // ------------------------------------------------------------------ CALIBRATION UPDATE
 // Update historical averages in calibration.json after every successful sprint.
 // All arithmetic is in JS; the haiku agent only writes the resulting JSON file.
 
-const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt);
+const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt, taskAssignments, logEntries);
 const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
 await dispatch(
   `Write updated calibration file and commit.\n\n` +
@@ -1266,6 +1588,48 @@ await dispatch(
   { model: MODEL_HAIKU, label: 'calibration-update', phase: 'Harvest' }
 );
 
+// ------------------------------------------------------------------ CLOSE DELIVERED SPRINT GOALS
+
+// The doer closes tasks; the original sprint-goal epics must be closed explicitly.
+await dispatch(
+  `Close the delivered sprint goals in beads.\n\n` +
+  `Run:\n` +
+  rootIds.map(id => `  bd close ${id} --reason="implemented in sprint ${branch}"`).join('\n') + `\n\n` +
+  `If an issue is already closed, bd close is a no-op. Return "OK" when done.`,
+  { model: MODEL_HAIKU, label: 'close-sprint-goals', phase: 'Harvest' }
+);
+
+// ------------------------------------------------------------------ BEADS EXPORT + SCAFFOLD CLEANUP
+
+// Export beads state so committed .beads/*.jsonl reflects all closed P1 issues.
+// Also remove sprint process files (requirements.md, feedback.md) from the PR net diff.
+await dispatch(
+  `Persist beads state and clean sprint scaffolding from the PR diff.\n\n` +
+  `Step 1 -- Export beads state:\n` +
+  `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
+  `  git -C "${repo}" add .beads/issues.jsonl\n` +
+  `  git -C "${repo}" diff --cached --quiet || git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: export beads state"\n` +
+  `  (The "diff --cached --quiet || commit" pattern only commits if something actually changed.)\n\n` +
+  `Step 2 -- Check what process files are still in the PR diff:\n` +
+  `  git -C "${repo}" diff --name-only ${base_branch}...${branch}\n\n` +
+  `Step 3 -- For each of requirements.md, feedback.md that appears in the diff:\n` +
+  `  a) Check if the file existed on ${base_branch}:\n` +
+  `       git -C "${repo}" ls-tree --name-only ${base_branch} | grep -F <filename>\n` +
+  `  b) If NOT on base (sprint created it): git -C "${repo}" rm --force <filepath>\n` +
+  `  c) If on base (sprint modified it): git -C "${repo}" checkout ${base_branch} -- <filepath>\n` +
+  `  After handling all such files:\n` +
+  `    git -C "${repo}" add -A\n` +
+  `    git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: drop sprint scaffolding"\n` +
+  `  (If no scaffold files remain in diff, skip the commit.)\n\n` +
+  `Step 4 -- Verify the diff is clean:\n` +
+  `  git -C "${repo}" diff --name-only ${base_branch}...${branch}\n` +
+  `  The output must NOT contain requirements.md or feedback.md. If it does, repeat Step 3.\n\n` +
+  `Step 5 -- Push all local commits to remote:\n` +
+  `  git -C "${repo}" push origin ${branch}\n\n` +
+  `Return "OK" when done.`,
+  { model: MODEL_HAIKU, label: 'beads-export-cleanup', phase: 'Harvest' }
+);
+
 // ------------------------------------------------------------------ PR
 
 await dispatch(
@@ -1273,8 +1637,8 @@ await dispatch(
   `Command: gh pr create --base ${base_branch} --head ${branch}\n` +
   `Title: summarise what was implemented across ${cycleCount} cycle(s).\n` +
   `Body:\n` +
-  `  - What was built (per epic)\n` +
-  `  - Sprint goal: ${goal} -- ${epicDone ? 'MET' : 'NOT MET (partial delivery)'}\n` +
+  `  - What was built (per sprint goal)\n` +
+  `  - Sprint goal: ${goal} -- ${goalMet ? 'MET' : 'NOT MET (partial delivery)'}\n` +
   `  - Cycles run: ${cycleCount}\n` +
   `  - Open items carried forward (if any): bd list --status=open and summarise\n` +
   `  - Final review notes: ${(finalReview && finalReview.notes) || '(none)'}\n` +
@@ -1309,4 +1673,4 @@ log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
 log(`  (input token cost not included -- see ${sprintLogFile} for per-dispatch detail)`);
 log('================================================\n');
 
-return { cycles: cycleCount, epicDone, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
+return { cycles: cycleCount, goalMet, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
