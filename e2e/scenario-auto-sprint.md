@@ -1,21 +1,14 @@
-# pm e2e -- auto-sprint on the toy
+# pm e2e -- sprint on the toy
 
-Run one sprint using the `/auto-sprint` skill (do NOT use pm, pm-lite, or any other skill).
+Use the **pm** skill to run one sprint. Inputs the skill needs:
 
 - **Repo:** already cloned at `{{REPO}}` (base `main`, remote `origin` -> the toy).
 - **Branch:** `{{BRANCH}}`.
-- **Sprint goals:** `gh-toy-mi2` (CLI CRUD commands), `gh-toy-7rp` (help system and input validation), `gh-toy-4ef` (add --version flag to CLI).
+- **Requirement:** implement these three P1 issues: `gh-toy-mi2` (CLI CRUD commands), `gh-toy-7rp` (help system and input validation), `gh-toy-4ef` (add --version flag to CLI).
 
-Steps:
-1. `cd {{REPO}} && git checkout {{BRANCH}}`
-2. Invoke the `/auto-sprint` skill with these exact args (JSON object, NOT a string):
-   ```json
-   {
-     "issues": ["gh-toy-mi2", "gh-toy-7rp", "gh-toy-4ef"],
-     "branch": "{{BRANCH}}",
-     "goal": "P1",
-     "base_branch": "main"
-   }
-   ```
-3. Wait for the skill to complete. Do not run any other commands during the sprint.
-4. Report the result returned by the skill.
+Run the pm commands in order: **plan** (with those 3 issues as the requirement), **start**, **cleanup**.
+
+**Do not stop until ALL of the following are true:**
+- A commit whose message starts with `plan:` exists in the branch history (written by the pm skill during the plan phase).
+- `.beads/issues.jsonl` on the branch reflects gh-toy-mi2, gh-toy-7rp, and gh-toy-4ef as closed.
+- A pull request exists for branch `{{BRANCH}}` targeting `main`.
