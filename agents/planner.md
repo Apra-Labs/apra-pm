@@ -57,10 +57,19 @@ Wire dependencies (semantics: `bd dep add A B` means A is blocked by B -- B must
 
 Before finishing, run:
 ```bash
-bd list --status=open
+bd graph --compact <sprint-id>
+bd blocked
+bd ready
 ```
 
-Check each open feature:
+**Acyclicity check (mandatory):** A correct DAG has no cycles. Verify:
+1. `bd ready` must return at least one issue. If it returns nothing, there is a cycle -- every issue is blocked by another. Find and break the cycle before finishing.
+2. A parent issue must NEVER depend on its own children. `bd dep add <sprint-id> <feature>` means sprint is blocked by feature -- correct. `bd dep add <feature> <sprint-id>` would be a cycle -- never do this.
+3. Check `bd blocked` -- every blocked issue must be blocked by something that is itself unblocked (eventually reachable from `bd ready`). If a blocked issue traces back to itself, that is a cycle.
+
+If you find a cycle: remove the offending dependency with `bd dep remove <A> <B>`, fix the direction, and re-run `bd ready` to confirm issues are unblocked.
+
+Also check each open feature:
 - Has at least one [impl] task AND one [test] task?
 - Every task description has clear acceptance criteria?
 - No task spans more than ~3 file changes?
