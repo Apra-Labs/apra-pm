@@ -61,9 +61,11 @@ function claudeOnlyPermissions() {
 
 // --- opencode agent transform -----------------------------------------------
 // OpenCode uses a different agent frontmatter schema:
-//   description, mode: subagent, permission: { edit, write, bash }
+//   description, mode: subagent, permission: { edit, write, bash, external_directory }
 // Claude uses: name, description, tools: [...]
 // This mirrors the transformAgentForOpenCode in apra-fleet src/cli/agent-transform.ts.
+// external_directory: allow is required because e2e sprints run in /tmp worktrees
+// that are outside the project CWD; without it subagents hang on a permission prompt.
 function transformAgentForOpenCode(content) {
   const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
   if (!fmMatch) return content;
@@ -98,6 +100,7 @@ function transformAgentForOpenCode(content) {
     `  edit: ${perm.edit}`,
     `  write: ${perm.write}`,
     `  bash: ${perm.bash}`,
+    '  external_directory: allow',
     '---',
     '',
   ].join('\n');
