@@ -80,7 +80,9 @@ than it saves.
 
 Write `<worktree>/requirements.md` on the track branch. Quality bar: full detail
 (code locations, root causes, impact), risk front-loaded (the riskiest assumption
-must become Task 1 of the plan), no 2-3 line summaries. Commit it.
+must become Task 1 of the plan), no 2-3 line summaries. Commit it with the message
+`plan: write requirements` -- the `plan:` prefix is required (it signals to the
+independent gate checker that the Plan phase ran).
 
 ## Phase 2 -- Design
 
@@ -161,7 +163,20 @@ itself -- note it as a manual or external step in `deploy.md`.
 
 The cycle loop has exited (goal met or cycle ceiling reached) and every track's
 Develop phase ended on an APPROVED review with no open tasks at the goal priority.
-Run the Harvest phase once:
+Run the Harvest phase once. **ALL steps below are mandatory and must complete before
+calling the sprint done.**
+
+```
+MANDATORY CHECKLIST -- verify each before exiting:
+  [ ] 1. CI watch dispatched
+  [ ] 2. Final reviewer dispatched + APPROVED
+  [ ] 3. Harvester dispatched (docs/ or CHANGELOG in branch diff)
+  [ ] 4. Cost analysis committed (or skipped if no Node.js)
+  [ ] 5. Sprint root + delivered issues closed
+  [ ] 6. bd export committed to branch (.beads/*.jsonl updated)
+  [ ] 7. Sprint scaffolding (requirements.md, feedback.md) removed from PR diff
+  [ ] 8. PR raised with gh pr create
+```
 
 1. **CI watch** -- dispatch `ci-watcher` (cheap-tier) to poll CI for the sprint HEAD
    SHA: green / red / not configured / pending. If CI is not configured, file a
@@ -187,14 +202,20 @@ Run the Harvest phase once:
 5. **Close the sprint root and the delivered issues** -- `bd close <sprint-id>`; also close
    any source beads issues this sprint implemented -- the ready backlog items the
    requirement was drawn from -- with `bd close <issue-id> ...`. Closing the sprint root
-   alone leaves those open. Record the PR link on the sprint root once raised (see
-   `beads.md`). Then **persist the closures durably**: with a db backend (e.g. dolt)
-   `bd close` updates only the db and leaves `.beads/issues.jsonl` stale, so export
-   the refreshed state into the track worktree and commit it on the branch --
-   `bd export -o <track-worktree>/.beads/issues.jsonl` (a bare `bd export` only prints
-   to stdout; you MUST pass `-o`), then commit that file in the worktree as `pm`.
-   This carries the closed state into the PR regardless of backend.
-6. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
+   alone leaves those open.
+6. **Persist beads state to branch** -- this step is REQUIRED for the PR to carry
+   durable issue-closure evidence. Run:
+   ```
+   bd export -o <track-worktree>/.beads/issues.jsonl
+   git -C <track-worktree> add .beads/issues.jsonl
+   git -C <track-worktree> -c user.name='pm' -c user.email='pm@pm.local' \
+     commit -m "chore: export beads state"
+   ```
+   (A bare `bd export` only prints to stdout; you MUST pass `-o <path>` to write the
+   file. This step carries the closed state into the PR regardless of backend type.)
+   Record the PR link on the sprint root with `bd update <sprint-id> --notes "pr: <url>"`
+   once the PR is raised (step 8).
+7. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
    only. The tracking files (`requirements.md`, `design.md`, `feedback.md`) are
    sprint narrative and the reviewer message bus, not product; beads holds the
    durable task record, and these stay visible in the branch history as proof the
@@ -208,13 +229,14 @@ Run the Harvest phase once:
    `git diff --name-only <base>...<branch>` must list no tracking-file name in any
    case. If one remains, repeat until the net diff is product only. (Same drop the
    parallel-track flow does before integrating.)
-7. **Raise the PR** -- run the PR command directly: open a PR from the (integration)
+8. **Raise the PR** -- run the PR command directly: open a PR from the (integration)
    branch to the base, then watch checks until CI is green. For a local-only sprint
    there is no PR -- report the branch and its `git diff <base>...<branch>` instead.
-8. **Do NOT merge.** Surface the PR URL and CI status; await explicit user
+   Use `gh pr create --base <base_branch> --head <branch> --title "..." --body "..."`.
+9. **Do NOT merge.** Surface the PR URL and CI status; await explicit user
    instruction to merge.
-9. **Remove worktrees** -- `git -C <repo> worktree remove <repo>-wt/<track>` for
-   each track once the PR is raised (or the branch is merged).
+10. **Remove worktrees** -- `git -C <repo> worktree remove <repo>-wt/<track>` for
+    each track once the PR is raised (or the branch is merged).
 
 ## Parallel tracks
 

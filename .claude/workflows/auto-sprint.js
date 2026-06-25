@@ -1210,6 +1210,21 @@ while (cycleCount < maxCycles) {
           { model: MODEL_HAIKU, label: `write-quote-c${cycleCount}`, phase: 'Plan' }
         );
       }
+
+      // Commit plan: marker so the independent gate checker can confirm the plan phase ran.
+      await dispatch(
+        `Export beads snapshot and commit a plan: marker commit.\n\n` +
+        `Run these steps in order:\n` +
+        `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
+        `  git -C "${repo}" add .beads/issues.jsonl\n` +
+        `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "plan: approve task DAG"\n\n` +
+        `If that last git commit fails with "nothing to commit" (file unchanged), run instead:\n` +
+        `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "plan: approve task DAG"\n\n` +
+        `The commit message MUST start with "plan:" -- do not change it.\n\n` +
+        `After committing, push the branch:\n` +
+        `  git -C "${repo}" push origin ${branch}`,
+        { model: MODEL_HAIKU, label: `plan-commit-c${cycleCount}`, phase: 'Plan' }
+      );
     } else {
       planFeedback = (planReview && planReview.notes) || '';
       log(`Plan needs changes: ${planFeedback.slice(0, 120)}`);
@@ -1571,6 +1586,48 @@ await dispatch(
   `If the file content is unchanged, the commit may be a no-op -- that is fine.\n` +
   `Return "OK" when done.`,
   { model: MODEL_HAIKU, label: 'calibration-update', phase: 'Harvest' }
+);
+
+// ------------------------------------------------------------------ CLOSE DELIVERED SPRINT GOALS
+
+// The doer closes tasks; the original sprint-goal epics must be closed explicitly.
+await dispatch(
+  `Close the delivered sprint goals in beads.\n\n` +
+  `Run:\n` +
+  rootIds.map(id => `  bd close ${id} --reason="implemented in sprint ${branch}"`).join('\n') + `\n\n` +
+  `If an issue is already closed, bd close is a no-op. Return "OK" when done.`,
+  { model: MODEL_HAIKU, label: 'close-sprint-goals', phase: 'Harvest' }
+);
+
+// ------------------------------------------------------------------ BEADS EXPORT + SCAFFOLD CLEANUP
+
+// Export beads state so committed .beads/*.jsonl reflects all closed P1 issues.
+// Also remove sprint process files (requirements.md, feedback.md) from the PR net diff.
+await dispatch(
+  `Persist beads state and clean sprint scaffolding from the PR diff.\n\n` +
+  `Step 1 -- Export beads state:\n` +
+  `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
+  `  git -C "${repo}" add .beads/issues.jsonl\n` +
+  `  git -C "${repo}" diff --cached --quiet || git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: export beads state"\n` +
+  `  (The "diff --cached --quiet || commit" pattern only commits if something actually changed.)\n\n` +
+  `Step 2 -- Check what process files are still in the PR diff:\n` +
+  `  git -C "${repo}" diff --name-only ${base_branch}...${branch}\n\n` +
+  `Step 3 -- For each of requirements.md, feedback.md that appears in the diff:\n` +
+  `  a) Check if the file existed on ${base_branch}:\n` +
+  `       git -C "${repo}" ls-tree --name-only ${base_branch} | grep -F <filename>\n` +
+  `  b) If NOT on base (sprint created it): git -C "${repo}" rm --force <filepath>\n` +
+  `  c) If on base (sprint modified it): git -C "${repo}" checkout ${base_branch} -- <filepath>\n` +
+  `  After handling all such files:\n` +
+  `    git -C "${repo}" add -A\n` +
+  `    git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: drop sprint scaffolding"\n` +
+  `  (If no scaffold files remain in diff, skip the commit.)\n\n` +
+  `Step 4 -- Verify the diff is clean:\n` +
+  `  git -C "${repo}" diff --name-only ${base_branch}...${branch}\n` +
+  `  The output must NOT contain requirements.md or feedback.md. If it does, repeat Step 3.\n\n` +
+  `Step 5 -- Push all local commits to remote:\n` +
+  `  git -C "${repo}" push origin ${branch}\n\n` +
+  `Return "OK" when done.`,
+  { model: MODEL_HAIKU, label: 'beads-export-cleanup', phase: 'Harvest' }
 );
 
 // ------------------------------------------------------------------ PR
