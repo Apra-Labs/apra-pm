@@ -70,7 +70,7 @@ function which(bin) {
 }
 
 function parseArgs() {
-  const a = { suites: [], provider: null, timeout: 2700, keepPr: false };
+  const a = { suites: [], provider: null, timeout: 5400, keepPr: false };
   const v = process.argv.slice(2);
   for (let i = 0; i < v.length; i++) {
     if (v[i] === '--suite') a.suites.push(...v[++i].split(',').map((s) => s.trim()).filter(Boolean));

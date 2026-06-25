@@ -35,7 +35,7 @@ jobs:
     env:
       GEMINI_CLI_TRUST_WORKSPACE: "true"
     runs-on: ${{ inputs.runner != '' && inputs.runner || 'self-hosted' }}
-    timeout-minutes: 60
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
 

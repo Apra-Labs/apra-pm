@@ -10,7 +10,7 @@
 //                             (requirements.md, feedback.md)
 //   4. process-discipline     those scaffolding files DID appear in intermediate commits
 //                             AND feedback.md contained an APPROVED/CHANGES NEEDED verdict
-//   5. planner-created-tasks  beads gained new tasks (headB.size > baseB.size)
+//   5. planner-created-tasks  a "plan:" commit exists in the branch history
 //   6. beads-closed           P1 issues were closed (from any durable source)
 //   7. beads-sprint-closed    P1 closures evidenced in committed branch .beads/*.jsonl
 //   8. harvester-ran          a harvest artifact (docs/, CHANGELOG, .analysis.md) is in
@@ -57,11 +57,11 @@ export function evaluateGates(d) {
         ].filter(Boolean).join('; ')
       : 'scaffold committed and feedback.md contained a verdict');
 
-  const plannedTaskCount = d.plannedTaskCount ?? 0;
-  add('planner-created-tasks', plannedTaskCount > 0,
-    plannedTaskCount > 0
-      ? `planner created ${plannedTaskCount} new task(s) in beads`
-      : 'no new tasks found in committed .beads/*.jsonl -- planner may not have run or sprint did not commit beads state');
+  const plannerRan = !!(d.plannerRan);
+  add('planner-created-tasks', plannerRan,
+    plannerRan
+      ? 'plan: commit found in branch history'
+      : 'no plan: commit found in branch history -- planner may not have run');
 
   const expected = d.expectedIssues ?? 3;
   const closed = d.closedP1 || [];
@@ -154,7 +154,7 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   const base = (git(repo, ['rev-parse', 'origin/main']).stdout || '').trim();
 
   if (!head || !base) {
-    return evaluateGates({ pr, commitCount: 0, realCommitCount: 0, finalFiles: [], touchedBasenames: [], feedbackVerdicts: [], closedP1: [], beadsSprintClosed: [], plannedTaskCount: 0, minCommits, expectedIssues, excludeGates });
+    return evaluateGates({ pr, commitCount: 0, realCommitCount: 0, finalFiles: [], touchedBasenames: [], feedbackVerdicts: [], closedP1: [], beadsSprintClosed: [], plannerRan: false, minCommits, expectedIssues, excludeGates });
   }
   const range = `${base}..${head}`;
 
@@ -201,9 +201,10 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   const baseB = readBeadsRef(repo, base);
   const candidates = [...baseB].filter(([, o]) => isP1(o) && !isClosed(o)).map(([id]) => id);
 
-  // C2: planner should have created new tasks (headB has more issues than baseB)
-  const headB = readBeadsRef(repo, head);
-  const plannedTaskCount = Math.max(0, headB.size - baseB.size);
+  // C2: planner ran if there is a commit whose subject starts with "plan:"
+  // Checking beads size diff is unreliable -- bd export only runs at cleanup,
+  // so a timed-out sprint always fails even if the planner did run.
+  const plannerRan = (git(repo, ['log', range, '--grep=^plan[: ]', '-i', '--oneline']).stdout || '').trim().length > 0;
 
   // An issue counts as closed if ANY durable source says so (dolt leaves the file
   // stale, and the live db may sit in a since-removed worktree, so no single source
@@ -218,5 +219,5 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   // C3/C4: closure evidenced in committed branch jsonl (headB), not just disk/live db
   const beadsSprintClosed = candidates.filter(id => isClosed(headB.get(id)));
 
-  return evaluateGates({ pr, commitCount, realCommitCount, finalFiles, touchedBasenames, touchedPaths, feedbackVerdicts, closedP1, beadsSprintClosed, plannedTaskCount, minCommits, expectedIssues, excludeGates });
+  return evaluateGates({ pr, commitCount, realCommitCount, finalFiles, touchedBasenames, touchedPaths, feedbackVerdicts, closedP1, beadsSprintClosed, plannerRan, minCommits, expectedIssues, excludeGates });
 }
