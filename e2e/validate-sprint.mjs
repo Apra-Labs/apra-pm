@@ -199,6 +199,7 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   // switches bd to a db backend that leaves issues.jsonl stale, so a closed issue can
   // still look open in the file (seen on the macOS runner).
   const baseB = readBeadsRef(repo, base);
+  const headB = readBeadsRef(repo, head);
   const candidates = [...baseB].filter(([, o]) => isP1(o) && !isClosed(o)).map(([id]) => id);
 
   // C2: planner ran if there is a commit whose subject starts with "plan:"
