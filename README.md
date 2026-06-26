@@ -30,8 +30,8 @@ while (open issues above goal threshold > 0 AND cycles < max):
   Teardown   -- deployer resets the test environment
   Exit check -- beads query: are open issues above threshold? same set as last cycle?
 
-CI check (haiku, non-blocking): polls after Develop; gates before Harvest
-Harvest (once): harvester updates docs/CHANGELOG and raises PR
+CI check (haiku, non-blocking): polls after PR is created; annotates PR when not green
+Harvest (once): harvester writes sprint analysis, updates docs/CHANGELOG, raises PR
 ```
 
 ### Cost estimation and calibration
@@ -52,7 +52,8 @@ Model prices used for estimation: haiku $5/M, sonnet $15/M, opus $25/M output to
 Sprint logs are durable per-branch outputs named
 `sprint-logs/<branch>-<yyyymmdd_hhmmss>.jsonl` and are never deleted.
 
-See `docs/sprint-workflow.md` for the full user guide.
+See `docs/sprint-workflow.md` for the full user guide and `docs/dispatch-patterns.md`
+for the architectural decisions governing agent dispatch and parallelism.
 
 ## pm skill (all providers)
 
@@ -70,7 +71,7 @@ test/                    sprint-cost.test.mjs -- 45 unit tests (npm test)
 sprint-logs/             calibration.json + per-sprint JSONL cost logs (durable)
 install.mjs              installer: copies skill + agents + workflow into provider config dir
 e2e/                     end-to-end suite: drive the skill headless on the toy repo
-docs/                    sprint-workflow.md user guide + design intent
+docs/                    sprint-workflow.md user guide + design intent; dispatch-patterns.md
 .githooks/               pre-commit (ASCII-only guard)
 ```
 
