@@ -1,1 +1,36 @@
 {\"ts\":\"2026-06-26T14:04:36Z\",\"type\":\"meta\",\"branch\":\"feature/enhance_parallelism\",\"startedAt\":\"20260626_140436\",\"roots\":[\"apra-pm-gtv\"],\"goal\":\"P1/P2\",\"transcriptDir\":\"/c/Users/akhil/.claude/projects/C--akhil-git-apra-pm\"}
+{"ts":"2026-06-26T14:04:36Z","type":"cycle-start","cycle":1,"branch":"feature/enhance_parallelism"}
+{"ts":"2026-06-26T14:24:56-0400","cycle":"setup","phase":"Plan","label":"setup-shell","model":"cheap","context":"","outTokens":992,"costUsd":0.005}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":"setup","phase":"Plan","label":"setup","model":"cheap","context":"","outTokens":4155,"costUsd":0.0208}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":"setup","phase":"Plan","label":"sprint-meta","model":"cheap","context":"","outTokens":742,"costUsd":0.0037}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Plan","label":"cycle-meta-c1","model":"cheap","context":"","outTokens":1137,"costUsd":0.0057}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Plan","label":"cycle-state","model":"cheap","context":"","outTokens":1244,"costUsd":0.0062}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Plan","label":"planner-c1-r0","model":"premium","context":"planning sprint goals apra-pm-gtv","outTokens":20130,"costUsd":0.5032}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Plan","label":"plan-reviewer-c1-r0","model":"standard","context":"reviewing plan for sprint goals apra-pm-gtv","outTokens":2877,"costUsd":0.0432}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Plan","label":"plan-commit-c1","model":"cheap","context":"","outTokens":3649,"costUsd":0.0182}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":701,"costUsd":0.0035}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Develop","label":"doer-c1-i0: apra-pm-gtv.1","model":"standard","context":"tasks apra-pm-gtv.1","outTokens":3464,"costUsd":0.052}
+
+{"ts":"2026-06-26T14:24:56-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i1: apra-pm-gtv.1","model":"standard","context":"reviewing tasks apra-pm-gtv.1","outTokens":3325,"costUsd":0.0499}
+
+{"ts":"2026-06-26T14:29:12-0400","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i1","model":"cheap","context":"11 new entries","outTokens":2413,"costUsd":0.0121}
+{"ts":"2026-06-26T14:29:12-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":2525,"costUsd":0.0126}
+{"ts":"2026-06-26T14:29:12-0400","cycle":1,"phase":"Develop","label":"doer-c1-i1: apra-pm-gtv.2","model":"standard","context":"tasks apra-pm-gtv.2","outTokens":2693,"costUsd":0.0404}
+{"ts":"2026-06-26T14:29:12-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i2: apra-pm-gtv.2","model":"standard","context":"reviewing tasks apra-pm-gtv.2","outTokens":2271,"costUsd":0.0341}
+{"ts":"2026-06-26T14:34:16-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":1417,"costUsd":0.0071}
+{"ts":"2026-06-26T14:34:16-0400","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i2","model":"cheap","context":"4 new entries","outTokens":1481,"costUsd":0.0074}
+{"ts":"2026-06-26T14:34:16-0400","cycle":1,"phase":"Develop","label":"doer-c1-i2: apra-pm-gtv","model":"standard","context":"tasks apra-pm-gtv","outTokens":1337,"costUsd":0.0201}
+{"ts":"2026-06-26T14:34:16-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i3: apra-pm-gtv","model":"standard","context":"reviewing tasks apra-pm-gtv","outTokens":3606,"costUsd":0.0541}
+{"ts":"2026-06-26T14:35:41-04:00","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i3","model":"cheap","context":"4 new entries","outTokens":1373,"costUsd":0.0069}
+{"ts":"2026-06-26T14:35:41-04:00","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":1468,"costUsd":0.0073}
+{"ts":"2026-06-26T14:35:41-04:00","cycle":1,"phase":"Develop","label":"push-sha-c1","model":"cheap","context":"","outTokens":471,"costUsd":0.0024}
+{"ts":"2026-06-26T14:35:41-04:00","cycle":1,"phase":"Develop","label":"exit-check","model":"cheap","context":"","outTokens":992,"costUsd":0.005}
