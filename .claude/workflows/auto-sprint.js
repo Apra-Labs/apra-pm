@@ -1361,7 +1361,16 @@ while (cycleCount < maxCycles) {
     if (!approved(review)) {
       devFeedback = (review && review.notes) || '';
       log(`Reviewer feedback: ${devFeedback.slice(0, 120)}`);
-      await commitFeedback(repo, branch, devFeedback, 'pm-reviewer', reviewerLabel, 'Develop');
+      // Fire-and-forget: write feedback.md to disk only -- next doer's 'git add -A' picks it up.
+      // The plan-reviewer commitFeedback (below) MUST remain awaited and commit+push so the
+      // planner can read it from remote. Dev-path feedback is local-only.
+      dispatch(
+        `Repo: ${repo}\nBranch: ${branch}\n\n` +
+        `Write the following reviewer feedback to feedback.md (overwrite if it exists):\n\n` +
+        `${devFeedback}\n\n` +
+        `Do not commit, push, or run any other command. Write the file to disk and stop.`,
+        { model: MODEL_HAIKU, label: `feedback-write-${reviewerLabel}`, phase: 'Develop' }
+      );  // intentionally NOT awaited
       // Reopened tasks will show in bd ready next iteration
     } else {
       devFeedback = '';
@@ -1598,8 +1607,10 @@ await dispatch(
 // calls so the final cycle's JSONL lines are captured even when no later doer runs.
 await dispatch(
   `Persist beads state and clean sprint scaffolding from the PR diff.\n\n` +
-  `Step 1 -- Stage any pending sprint-log entries (unconditional):\n` +
-  `  git -C "${repo}" add sprint-logs/\n\n` +
+  `Step 1 -- Stage sprint-logs and evict scaffold files from the working tree (unconditional):\n` +
+  `  git -C "${repo}" add sprint-logs/\n` +
+  `  git -C "${repo}" rm -f feedback.md requirements.md 2>/dev/null || true\n` +
+  `  rm -f "${repo}/feedback.md" "${repo}/requirements.md" 2>/dev/null || true\n\n` +
   `Step 2 -- Export beads state:\n` +
   `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
   `  git -C "${repo}" add .beads/issues.jsonl\n` +
