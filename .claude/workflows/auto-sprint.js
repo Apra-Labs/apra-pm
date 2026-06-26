@@ -750,6 +750,13 @@ function buildSprintSummary(analysis, sprintQuote, calibration, opts) {
   return { summaryText };
 }
 
+// labelTaskIds: returns up to 3 IDs joined by space; appends '+Nmore' when there are more than 3.
+function labelTaskIds(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return '';
+  if (ids.length <= 3) return ids.join(' ');
+  return ids.slice(0, 3).join(' ') + ` +${ids.length - 3}more`;
+}
+
 // PURE_FUNCTIONS_END
 
 function outputCostUsd(tier, tokens) {
@@ -1301,7 +1308,7 @@ while (cycleCount < maxCycles) {
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
       break;
     }
-    log(`Ready: ${streakResult.totalCount} task(s) across ${streakResult.streaks.length} model streak(s)`);
+    log(`Dev iter ${devIter} c${cycleCount}: ${streakResult.totalCount} ready task(s) across ${streakResult.streaks.length} model streak(s)`);
 
     // Dispatch one doer per model streak; collect all worked task IDs for the reviewer.
     const workedIds = [];
@@ -1309,8 +1316,14 @@ while (cycleCount < maxCycles) {
     let doerNullReset = false;
 
     for (const streak of streakResult.streaks) {
-      const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model}`;
-      log(`Streak: model=${streak.model} tasks=${streak.ids.join(', ')}`);
+      const doerLabel = `doer-c${cycleCount}-i${devIter}: ${labelTaskIds(streak.ids)}`;
+      const streakEstUsd = sprintQuote
+        ? streak.ids.reduce((sum, id) => {
+            const t = sprintQuote.tasks.find(t => t.id === id);
+            return sum + (t ? t.outputUsd : 0);
+          }, 0)
+        : null;
+      log(`Doer c${cycleCount}-i${devIter}: ${labelTaskIds(streak.ids)} [model=${streak.model}${streakEstUsd != null ? ` est=$${streakEstUsd.toFixed(4)}` : ''}]`);
 
       const doerResult = await dispatch(
         `Repo: ${repo}\nBranch: ${branch}\n\n` +
@@ -1367,7 +1380,7 @@ while (cycleCount < maxCycles) {
     const reviewerModel = usedModels.includes(TIER_PREMIUM) ? TIER_PREMIUM : TIER_STANDARD;
 
     // One reviewer pass covering all streaks worked this iteration.
-    const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}`;
+    const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}: ${labelTaskIds(workedIds)}`;
     const review = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
       `Sprint goals: ${rootSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
@@ -1382,7 +1395,7 @@ while (cycleCount < maxCycles) {
       { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer',
         context: `reviewing tasks ${workedIds.join(', ')}` }
     );
-    log(`Reviewer verdict: ${review && review.verdict || 'null'}`);
+    log(`Reviewer c${cycleCount}-i${devIter}: ${(review && review.verdict) || 'null'} -- ${labelTaskIds(workedIds)}`);
 
     if (!approved(review)) {
       devFeedback = (review && review.notes) || '';
