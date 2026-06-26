@@ -1455,45 +1455,9 @@ while (cycleCount < maxCycles) {
   prevOpenIds = currentOpenIds;
 }
 
-// ------------------------------------------------------------------ CI CHECK
+// ------------------------------------------------------------------ FINAL REVIEW
 
 phase('Harvest');
-
-let ciResult = null;
-if (headSha) {
-  ciResult = await dispatch(
-    `Check CI status for commit ${headSha} on branch ${branch}.\n` +
-    `Run: gh run list --branch ${branch} --limit 3 --json status,conclusion,databaseId\n` +
-    `If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n` +
-    `If runs exist and conclusion is "success": return status "green".\n` +
-    `If runs exist and conclusion is "failure": return status "red" with notes (include run URL).\n` +
-    `If no runs found: return status "not_configured".\n` +
-    `Do not block for more than 10 minutes total.`,
-    { model: MODEL_HAIKU, label: 'ci-watcher', phase: 'Harvest', schema: CI_SCHEMA, agentType: 'ci-watcher' }
-  );
-
-  if (ciResult) {
-    log(`CI status: ${ciResult.status}`);
-    if (ciResult.status === 'not_configured') {
-      log('CI not configured -- creating beads task');
-      await dispatch(
-        `Run: bd create --title="Add CI pipeline to project" ` +
-        `--description="The auto-sprint workflow found no CI runs for branch ${branch}. ` +
-        `CI is required for the sprint exit gate. ` +
-        `This task covers: choosing a CI provider, writing the workflow config, and verifying it triggers on push." ` +
-        `--type=task --priority=2\n` +
-        `Then run: bd show <new-id> and confirm it was created.`,
-        { model: MODEL_HAIKU, label: 'ci-task-create', phase: 'Harvest' }
-      );
-      log('ACTION REQUIRED: Set up CI for this project. Task created in beads.');
-    } else if (ciResult.status === 'red') {
-      log(`CI FAILED: ${(ciResult.notes || '').slice(0, 200)}`);
-      log('Proceeding to harvest with CI failure noted in PR.');
-    }
-  }
-}
-
-// ------------------------------------------------------------------ FINAL REVIEW
 
 const finalReviewLabel = 'final-reviewer';
 const finalReview = await dispatch(
@@ -1632,7 +1596,7 @@ await dispatch(
 
 // ------------------------------------------------------------------ PR
 
-await dispatch(
+const harvestPr = await dispatch(
   `In repo ${repo} on branch ${branch}, create a GitHub pull request targeting ${base_branch}.\n` +
   `Command: gh pr create --base ${base_branch} --head ${branch}\n` +
   `Title: summarise what was implemented across ${cycleCount} cycle(s).\n` +
@@ -1642,11 +1606,56 @@ await dispatch(
   `  - Cycles run: ${cycleCount}\n` +
   `  - Open items carried forward (if any): bd list --status=open and summarise\n` +
   `  - Final review notes: ${(finalReview && finalReview.notes) || '(none)'}\n` +
-  (headSha && ciResult && ciResult.status !== 'green'
-    ? `  - CI: ${ciResult.status} -- see notes\n` : '') +
-  `  - Token cost summary from: bd memories auto-sprint`,
-  { model: MODEL_SONNET, label: 'harvest-pr', phase: 'Harvest' }
+  `  - Token cost summary from: bd memories auto-sprint\n\n` +
+  `After creating the PR, return its number as prNumber (integer).`,
+  { model: MODEL_SONNET, label: 'harvest-pr', phase: 'Harvest',
+    schema: { type: 'object', required: ['prNumber'], properties: { prNumber: { type: 'number' }, prUrl: { type: 'string' } } } }
 );
+const prNumber = harvestPr && harvestPr.prNumber;
+
+// ------------------------------------------------------------------ CI CHECK (post-PR)
+
+let ciResult = null;
+if (prNumber) {
+  ciResult = await dispatch(
+    `Check CI status for PR #${prNumber} on branch ${branch}.\n` +
+    `Run: gh run list --pr ${prNumber} --limit 3 --json status,conclusion,databaseId\n` +
+    `If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n` +
+    `If runs exist and conclusion is "success": return status "green".\n` +
+    `If runs exist and conclusion is "failure": return status "red" with notes (include run URL).\n` +
+    `If no runs found: return status "not_configured".\n` +
+    `Do not block for more than 10 minutes total.`,
+    { model: MODEL_HAIKU, label: 'ci-watcher', phase: 'Harvest', schema: CI_SCHEMA, agentType: 'ci-watcher' }
+  );
+
+  if (ciResult) {
+    log(`CI status: ${ciResult.status}`);
+    if (ciResult.status === 'not_configured') {
+      log('CI not configured -- creating beads task');
+      await dispatch(
+        `Run: bd create --title="Add CI pipeline to project" ` +
+        `--description="The auto-sprint workflow found no CI runs for branch ${branch}. ` +
+        `CI is required for the sprint exit gate. ` +
+        `This task covers: choosing a CI provider, writing the workflow config, and verifying it triggers on push." ` +
+        `--type=task --priority=2\n` +
+        `Then run: bd show <new-id> and confirm it was created.`,
+        { model: MODEL_HAIKU, label: 'ci-task-create', phase: 'Harvest' }
+      );
+      log('ACTION REQUIRED: Set up CI for this project. Task created in beads.');
+    } else if (ciResult.status === 'red') {
+      log(`CI FAILED: ${(ciResult.notes || '').slice(0, 200)}`);
+    }
+
+    // Append CI result to the PR body so the note lands after the PR is created.
+    if (ciResult.status !== 'green') {
+      await dispatch(
+        `Annotate PR #${prNumber} with the CI status result.\n\n` +
+        `Run: gh pr comment ${prNumber} --body "**CI status: ${ciResult.status}**${ciResult.notes ? '\\n\\n' + ciResult.notes : ''}"`,
+        { model: MODEL_HAIKU, label: 'ci-pr-annotate', phase: 'Harvest' }
+      );
+    }
+  }
+}
 
 // ------------------------------------------------------------------ COST SUMMARY
 // Pure JS -- no agent call. Groups dispatchLedger by role (derived from label prefix)
