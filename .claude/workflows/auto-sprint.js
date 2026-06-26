@@ -1978,17 +1978,31 @@ if (prNumber) {
   if (ciResult) {
     log(`CI status: ${ciResult.status}`);
     if (ciResult.status === 'not_configured') {
-      log('CI not configured -- creating beads task');
-      await dispatch(
-        `Run: bd create --title="Add CI pipeline to project" ` +
-        `--description="The auto-sprint workflow found no CI runs for branch ${branch}. ` +
-        `CI is required for the sprint exit gate. ` +
-        `This task covers: choosing a CI provider, writing the workflow config, and verifying it triggers on push." ` +
-        `--type=task --priority=2\n` +
-        `Then run: bd show <new-id> and confirm it was created.`,
-        { model: MODEL_HAIKU, label: 'ci-task-create', phase: 'Harvest' }
+      log('CI not configured -- checking for existing open CI pipeline task');
+      const dedupResult = await dispatch(
+        `Run: bd search "Add CI pipeline" --status=open --json\n` +
+        `Parse the JSON output and look for any issue whose title matches ` +
+        `"Add CI pipeline to project" (exact or close variant, case-insensitive).\n` +
+        `If a matching OPEN issue is found, return JSON: {"exists": true, "id": "<issue-id>"}\n` +
+        `If no matching open issue is found (or the command returns empty/no results), ` +
+        `return JSON: {"exists": false, "id": null}`,
+        { model: MODEL_HAIKU, label: 'ci-task-dedup', phase: 'Harvest',
+          schema: { type: 'object', properties: { exists: { type: 'boolean' }, id: { type: ['string', 'null'] } }, required: ['exists', 'id'] } }
       );
-      log('ACTION REQUIRED: Set up CI for this project. Task created in beads.');
+      if (dedupResult && dedupResult.exists) {
+        log(`CI pipeline task already exists: ${dedupResult.id} -- skipping creation`);
+      } else {
+        await dispatch(
+          `Run: bd create --title="Add CI pipeline to project" ` +
+          `--description="The auto-sprint workflow found no CI runs for branch ${branch}. ` +
+          `CI is required for the sprint exit gate. ` +
+          `This task covers: choosing a CI provider, writing the workflow config, and verifying it triggers on push." ` +
+          `--type=task --priority=2\n` +
+          `Then run: bd show <new-id> and confirm it was created.`,
+          { model: MODEL_HAIKU, label: 'ci-task-create', phase: 'Harvest' }
+        );
+        log('ACTION REQUIRED: Set up CI for this project. Task created in beads.');
+      }
     } else if (ciResult.status === 'red') {
       log(`CI FAILED: ${(ciResult.notes || '').slice(0, 200)}`);
     }
