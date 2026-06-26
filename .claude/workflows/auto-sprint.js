@@ -1473,8 +1473,35 @@ while (cycleCount < maxCycles) {
   }
 
   // ---------------------------------------------------------------- EXIT CHECK
+  // Merge final getReadyStreaks + countBeadsBlockers into one dispatchShell to avoid
+  // running bd graph twice on the same roots. Command ordering (strict):
+  //   [0..N-1] bd graph root0..rootN-1  (shared by both parsers)
+  //   [N]      bd list --status=open    (openListIdx = rootCount)
+  //   [N+1]    bd list --ready          (readyListIdx = rootCount+1)
+  // Fallback: if outputs.length < rootCount+2, fall back to two separate dispatches.
 
-  const blockers = await countBeadsBlockers(threshold, rootIds);
+  let blockers;
+  {
+    const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
+    const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+    const _taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
+    const exitCmds = [
+      ...rootIds.map(id => `bd graph --json ${id} | ${_idExtract}`),
+      `bd list --status=open --json | ${_openExtract}`,
+      `bd list --ready --type=task --json | ${_taskExtract}`,
+    ];
+    const exitResult = await dispatchShell(exitCmds, { model: MODEL_HAIKU, label: 'exit-check', phase: 'Develop' });
+    if (exitResult?.outputs && exitResult.outputs.length >= rootIds.length + 2) {
+      blockers = parseBlockers(exitResult.outputs, rootIds.length, rootIds.length, threshold);
+      // Ready streaks prefetched but not used: develop loop already determined no ready tasks.
+      // Parsed here to validate the merged output; result discarded at cycle end.
+      parseReadyStreaks(exitResult.outputs, rootIds.length, rootIds.length + 1, TIER_STANDARD);
+    } else {
+      // Fallback: outputs too short (agent returned partial results) -- use separate dispatches.
+      log('exit-check: outputs.length < rootCount+2 -- falling back to separate dispatches');
+      blockers = await countBeadsBlockers(threshold, rootIds);
+    }
+  }
   const currentOpenIds = (blockers.ids || []).slice().sort();
   log(`Exit check: ${blockers.count} open issues at P<=${threshold} -- IDs: [${currentOpenIds.join(', ')}]`);
 
