@@ -289,6 +289,27 @@ by task id.
 
 ---
 
+## CI pipeline task: dedup guard
+
+When the `not_configured` branch fires at the end of setup (no CI runs found for
+the project), `auto-sprint.js` must not create a duplicate "Add CI pipeline"
+beads task if one already exists. The guard is:
+
+1. Run `bd search "Add CI pipeline" --status=open --json` first.
+2. If any open match is returned, log the existing id and skip `bd create`.
+3. If only **closed** matches are returned (or no matches at all), proceed with
+   `bd create` as normal.
+
+**Key invariant -- closed-issue case:** a previously closed CI task must NOT
+suppress creation of a new one. The guard checks `--status=open` explicitly so
+that a resolved prior task never blocks a fresh cycle from filing the task again.
+
+**Tests (test/ci-watcher.test.mjs):** assert search-before-create ordering, that
+`--status=open` is present in the search command, and that the already-exists
+branch emits the existing id without calling `bd create`.
+
+---
+
 ## Exit check: scoped to sprint roots only
 
 `parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds)` accepts an
