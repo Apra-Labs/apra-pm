@@ -1213,32 +1213,23 @@ while (cycleCount < maxCycles) {
           `| true-est (x${sprintQuote.inputMultiplier.toFixed(1)}): ` +
           `exp=$${sc.expected.total.toFixed(3)}`);
 
-      // Write per-task cost estimates to beads notes via a lightweight haiku dispatch.
-      if (sprintQuote.tasks.length > 0) {
-        const bdCmds = sprintQuote.tasks.map(t =>
+      // Write per-task cost estimates and commit the plan snapshot in a single dispatchShell.
+      // All commands are pre-built in JS from taskAssignments -- Haiku only executes them.
+      // bd export runs AFTER the cost-note writes so the snapshot captures updated task notes.
+      const planCommitCmds = [
+        ...sprintQuote.tasks.map(t =>
           `bd update ${t.id} --notes="cost-estimate: bucket=${t.bucket} model=${t.model} ` +
           `doer_tokens=${t.doerTokens} reviewer_tokens=${t.reviewerTokens} output_usd=${t.outputUsd.toFixed(4)}"`
-        ).join('\n');
-        await dispatch(
-          `Write cost estimates to beads task notes.\n\nRun these commands:\n${bdCmds}`,
-          { model: MODEL_HAIKU, label: `write-quote-c${cycleCount}`, phase: 'Plan' }
-        );
-      }
-
-      // Commit plan: marker so the independent gate checker can confirm the plan phase ran.
-      await dispatch(
-        `Export beads snapshot and commit a plan: marker commit.\n\n` +
-        `Run these steps in order:\n` +
-        `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
-        `  git -C "${repo}" add .beads/issues.jsonl\n` +
-        `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "plan: approve task DAG"\n\n` +
-        `If that last git commit fails with "nothing to commit" (file unchanged), run instead:\n` +
-        `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "plan: approve task DAG"\n\n` +
-        `The commit message MUST start with "plan:" -- do not change it.\n\n` +
-        `After committing, push the branch:\n` +
-        `  git -C "${repo}" push origin ${branch}`,
-        { model: MODEL_HAIKU, label: `plan-commit-c${cycleCount}`, phase: 'Plan' }
-      );
+        ),
+        `bd export -o "${repo}/.beads/issues.jsonl"`,
+        `git -C "${repo}" add .beads/issues.jsonl`,
+        `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "plan: approve task DAG"`,
+        `git -C "${repo}" push origin ${branch}`,
+      ];
+      await dispatchShell(planCommitCmds, {
+        model: MODEL_HAIKU, label: `plan-commit-c${cycleCount}`, phase: 'Plan',
+        maxTurns: planCommitCmds.length + 2,
+      });
     } else {
       planFeedback = (planReview && planReview.notes) || '';
       log(`Plan needs changes: ${planFeedback.slice(0, 120)}`);
