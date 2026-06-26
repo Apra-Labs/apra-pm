@@ -41,7 +41,7 @@ test('parseBlockers: returns {count, ids} of open issues in subtree at/under thr
       { id: 'BD-9', p: 0 },   // not in subtree    -> ignored
     ]),
   ];
-  const r = parseBlockers(outputs, 1, 2);
+  const r = parseBlockers(outputs, 1, 1, 2);
   assert.equal(r.count, 2);
   assert.deepEqual(r.ids.sort(), ['BD-1', 'BD-3']);
 });
@@ -52,19 +52,19 @@ test('parseBlockers: unions IDs across multiple sprint root graphs', () => {
     'BD-2',
     JSON.stringify([{ id: 'BD-1', p: 1 }, { id: 'BD-2', p: 2 }]),
   ];
-  const r = parseBlockers(outputs, 2, 2);
+  const r = parseBlockers(outputs, 2, 2, 2);
   assert.equal(r.count, 2);
   assert.deepEqual(r.ids.sort(), ['BD-1', 'BD-2']);
 });
 
 test('parseBlockers: fail-safe sentinel {999,[]} on short/missing outputs', () => {
-  assert.deepEqual(parseBlockers(undefined, 1, 2), { count: 999, ids: [] });
-  assert.deepEqual(parseBlockers([], 1, 2), { count: 999, ids: [] });
-  assert.deepEqual(parseBlockers(['BD-1'], 1, 2), { count: 999, ids: [] }); // missing JSON output
+  assert.deepEqual(parseBlockers(undefined, 1, 1, 2), { count: 999, ids: [] });
+  assert.deepEqual(parseBlockers([], 1, 1, 2), { count: 999, ids: [] });
+  assert.deepEqual(parseBlockers(['BD-1'], 1, 1, 2), { count: 999, ids: [] }); // missing JSON output
 });
 
 test('parseBlockers: garbage JSON yields no blockers (count 0), never throws', () => {
-  const r = parseBlockers(['BD-1', 'not json {{{'], 1, 2);
+  const r = parseBlockers(['BD-1', 'not json {{{'], 1, 1, 2);
   assert.deepEqual(r, { count: 0, ids: [] });
 });
 
@@ -80,7 +80,7 @@ test('parseReadyStreaks: groups ready tasks by model, ordered by min priority', 
       { id: 'BD-X', p: 0, m: MODEL_HAIKU }, // not in subtree -> dropped
     ]),
   ];
-  const r = parseReadyStreaks(outputs, 1, MODEL_SONNET);
+  const r = parseReadyStreaks(outputs, 1, 1, MODEL_SONNET);
   assert.equal(r.totalCount, 3);
   // haiku streak has min priority 1 -> comes first
   assert.equal(r.streaks[0].model, MODEL_HAIKU);
@@ -91,13 +91,13 @@ test('parseReadyStreaks: groups ready tasks by model, ordered by min priority', 
 });
 
 test('parseReadyStreaks: defaults model when metadata missing', () => {
-  const r = parseReadyStreaks(['BD-1', JSON.stringify([{ id: 'BD-1', p: 2 }])], 1, MODEL_SONNET);
+  const r = parseReadyStreaks(['BD-1', JSON.stringify([{ id: 'BD-1', p: 2 }])], 1, 1, MODEL_SONNET);
   assert.equal(r.streaks[0].model, MODEL_SONNET);
 });
 
 test('parseReadyStreaks: empty/garbage => {0, []}', () => {
-  assert.deepEqual(parseReadyStreaks(undefined, 1, MODEL_SONNET), { totalCount: 0, streaks: [] });
-  assert.deepEqual(parseReadyStreaks(['BD-1', 'oops'], 1, MODEL_SONNET), { totalCount: 0, streaks: [] });
+  assert.deepEqual(parseReadyStreaks(undefined, 1, 1, MODEL_SONNET), { totalCount: 0, streaks: [] });
+  assert.deepEqual(parseReadyStreaks(['BD-1', 'oops'], 1, 1, MODEL_SONNET), { totalCount: 0, streaks: [] });
 });
 
 // ---- parseCycleState (checkCycleState contract) ------------------------------

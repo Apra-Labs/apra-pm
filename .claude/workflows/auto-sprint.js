@@ -575,17 +575,18 @@ function collectSubtreeIds(outputs, rootCount) {
   return ids;
 }
 
-// parseBlockers: contract {count, ids} of open issues with priority<=thr inside
+// parseBlockers: contract {count, ids} of open issues with priority<=threshold inside
 // the sprint-goal subtree. Missing/short outputs => sentinel {count: 999, ids: []} so the
 // caller treats blockers as present (fail-safe, never exits the sprint early).
-function parseBlockers(outputs, rootCount, thr) {
-  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { count: 999, ids: [] };
+// openListIdx is the explicit index of the open-issues JSON command in outputs[].
+function parseBlockers(outputs, rootCount, openListIdx, threshold) {
+  if (!Array.isArray(outputs) || outputs.length < openListIdx + 1) return { count: 999, ids: [] };
   const subtree = collectSubtreeIds(outputs, rootCount);
   let ids = [];
   try {
-    const open = JSON.parse(outputs[rootCount]);
+    const open = JSON.parse(outputs[openListIdx]);
     ids = Array.isArray(open)
-      ? open.filter(x => subtree.has(x.id) && x.p <= thr).map(x => x.id)
+      ? open.filter(x => subtree.has(x.id) && x.p <= threshold).map(x => x.id)
       : [];
   } catch { ids = []; }
   return { count: ids.length, ids };
@@ -593,12 +594,13 @@ function parseBlockers(outputs, rootCount, thr) {
 
 // parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks in the
 // subtree by model, ordered by min priority.
-function parseReadyStreaks(outputs, rootCount, defaultModel) {
-  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { totalCount: 0, streaks: [] };
+// readyListIdx is the explicit index of the ready-tasks JSON command in outputs[].
+function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
+  if (!Array.isArray(outputs) || outputs.length < readyListIdx + 1) return { totalCount: 0, streaks: [] };
   const subtree = collectSubtreeIds(outputs, rootCount);
   let readyTasks = [];
   try {
-    const all = JSON.parse(outputs[rootCount]);
+    const all = JSON.parse(outputs[readyListIdx]);
     readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
   } catch { readyTasks = []; }
 
@@ -840,7 +842,7 @@ async function countBeadsBlockers(thr, roots) {
     `bd list --status=open --json | ${openExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop' });
-  return parseBlockers(r?.outputs, roots.length, thr);
+  return parseBlockers(r?.outputs, roots.length, roots.length, thr);
 }
 
 async function getReadyStreaks(rootIds) {
@@ -852,7 +854,7 @@ async function getReadyStreaks(rootIds) {
     `bd list --ready --type=task --json | ${taskExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop' });
-  return parseReadyStreaks(r?.outputs, rootIds.length, TIER_STANDARD);
+  return parseReadyStreaks(r?.outputs, rootIds.length, rootIds.length, TIER_STANDARD);
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
