@@ -1123,12 +1123,12 @@ while (cycleCount < maxCycles) {
   // Reset any tasks orphaned in_progress from a previous crashed run.
   if (cycleState.inProgressIds.length > 0) {
     log(`Resetting ${cycleState.inProgressIds.length} orphaned in_progress task(s) to open`);
-    for (const id of cycleState.inProgressIds) {
-      await dispatch(
-        `Run: bd update ${id} --status=open`,
-        { model: MODEL_HAIKU, label: `reset-${id}`, phase: 'Plan' }
-      );
-    }
+    const resetCmds = cycleState.inProgressIds.map(id => `bd update ${id} --status=open`);
+    await dispatchShell(resetCmds, {
+      model: MODEL_HAIKU,
+      label: 'reset-orphans',
+      phase: 'Plan',
+    });
   }
 
   // ---------------------------------------------------------------- PLAN
