@@ -833,6 +833,12 @@ async function dispatchShell(cmds, opts) {
   });
 }
 
+// Run multiple async operations in parallel and return all results.
+// This is a convenience wrapper around Promise.all() for readability.
+async function parallel(tasks) {
+  return Promise.all(tasks);
+}
+
 async function countBeadsBlockers(thr, roots) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
@@ -1569,35 +1575,36 @@ if (!harvestResult || harvestResult.status !== 'OK') {
   return { cycles: cycleCount, goalMet, goal, harvest: 'failed' };
 }
 
-// ------------------------------------------------------------------ CALIBRATION UPDATE
+// ------------------------------------------------------------------ CALIBRATION UPDATE + CLOSE GOALS (parallel)
 // Update historical averages in calibration.json after every successful sprint.
 // All arithmetic is in JS; the haiku agent only writes the resulting JSON file.
+// The doer closes tasks; the original sprint-goal epics must be closed explicitly.
+// These have no data dependency between them, so run in parallel.
 
 const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt, taskAssignments, logEntries);
 const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
-await dispatch(
-  `Write updated calibration file and commit.\n\n` +
-  `Step 1: Ensure sprint-logs/ directory exists: mkdir -p "${repo}/sprint-logs"\n` +
-  `Step 2: Write this JSON to "${repo}/sprint-logs/calibration.json" exactly as provided below:\n\n` +
-  calibrationJson + `\n\n` +
-  `Step 3: Commit the file:\n` +
-  `  git -C "${repo}" add sprint-logs/calibration.json\n` +
-  `  git -C "${repo}" commit -m "chore: update sprint calibration after ${cycleCount} cycle(s) on ${branch}"\n\n` +
-  `If the file content is unchanged, the commit may be a no-op -- that is fine.\n` +
-  `Return "OK" when done.`,
-  { model: MODEL_HAIKU, label: 'calibration-update', phase: 'Harvest' }
-);
 
-// ------------------------------------------------------------------ CLOSE DELIVERED SPRINT GOALS
-
-// The doer closes tasks; the original sprint-goal epics must be closed explicitly.
-await dispatch(
-  `Close the delivered sprint goals in beads.\n\n` +
-  `Run:\n` +
-  rootIds.map(id => `  bd close ${id} --reason="implemented in sprint ${branch}"`).join('\n') + `\n\n` +
-  `If an issue is already closed, bd close is a no-op. Return "OK" when done.`,
-  { model: MODEL_HAIKU, label: 'close-sprint-goals', phase: 'Harvest' }
-);
+await parallel([
+  dispatch(
+    `Write updated calibration file and commit.\n\n` +
+    `Step 1: Ensure sprint-logs/ directory exists: mkdir -p "${repo}/sprint-logs"\n` +
+    `Step 2: Write this JSON to "${repo}/sprint-logs/calibration.json" exactly as provided below:\n\n` +
+    calibrationJson + `\n\n` +
+    `Step 3: Commit the file:\n` +
+    `  git -C "${repo}" add sprint-logs/calibration.json\n` +
+    `  git -C "${repo}" commit -m "chore: update sprint calibration after ${cycleCount} cycle(s) on ${branch}"\n\n` +
+    `If the file content is unchanged, the commit may be a no-op -- that is fine.\n` +
+    `Return "OK" when done.`,
+    { model: MODEL_HAIKU, label: 'calibration-update', phase: 'Harvest' }
+  ),
+  dispatch(
+    `Close the delivered sprint goals in beads.\n\n` +
+    `Run:\n` +
+    rootIds.map(id => `  bd close ${id} --reason="implemented in sprint ${branch}"`).join('\n') + `\n\n` +
+    `If an issue is already closed, bd close is a no-op. Return "OK" when done.`,
+    { model: MODEL_HAIKU, label: 'close-sprint-goals', phase: 'Harvest' }
+  ),
+]);
 
 // ------------------------------------------------------------------ BEADS EXPORT + SCAFFOLD CLEANUP
 
