@@ -1505,27 +1505,19 @@ const sprintSummary = buildSprintSummary(sprintAnalysis, sprintQuote, calibratio
 });
 log('Sprint summary:\n' + sprintSummary.summaryText);
 const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.analysis.md`;
-await dispatch(
-  `Write sprint analysis artefact and commit.\n\n` +
-  `Step 1: Ensure sprint-logs/ directory exists:\n` +
-  `  mkdir -p "${repo}/sprint-logs"\n\n` +
-  `Step 2: Write the following content to "${repo}/${analysisArtifactFile}" (overwrite if exists):\n\n` +
-  sprintSummary.summaryText + `\n\n` +
-  `Step 3: Commit and push:\n` +
-  `  git -C "${repo}" add "${repo}/${analysisArtifactFile}"\n` +
-  `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-analysis ${branch} ${setup.startedAt}"\n` +
-  `  git -C "${repo}" push origin ${branch}\n` +
-  `Do not modify any other file. Return "OK" when done.`,
-  { model: MODEL_HAIKU, label: 'sprint-analysis-write', phase: 'Harvest' }
-);
 
 const harvestLabel = 'harvester';
 const harvestResult = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
   `Sprint goals: ${rootSummary}\nCycles completed: ${cycleCount}\nGoal met: ${goalMet}\n` +
-  `sprintLogFile: ${sprintLogFile}\n\n` +
+  `sprintLogFile: ${sprintLogFile}\n` +
+  `analysisArtifactFile: ${analysisArtifactFile}\n\n` +
   `The sprint is complete. Harvest the sprint artefacts.\n` +
   `Follow your runbook (agents/harvester.md).\n\n` +
+  `IMPORTANT: Your FIRST action (Step 1 of your runbook) is to write the analysis artifact below ` +
+  `to "${repo}/${analysisArtifactFile}" and commit it before doing anything else.\n\n` +
+  `analysisText (write this verbatim to ${analysisArtifactFile}):\n` +
+  sprintSummary.summaryText + `\n\n` +
   `costAnalysis (insert this block verbatim into CHANGELOG.md after the summary paragraph):\n` +
   `${sprintAnalysis.analysisText}\n` +
   `Final review notes to include in CHANGELOG:\n` +

@@ -8,7 +8,22 @@ tools: [Read, Edit, Write, Bash, Grep, Glob]
 
 You are extracting durable knowledge from a completed sprint and preparing a deliverable.
 
-## Step 1 -- Read sprint context
+## Step 1 -- Write sprint analysis artifact (FIRST, before anything else)
+
+Your task context includes an `analysisArtifactFile` path and an `analysisText` block.
+
+Write the `analysisText` verbatim to the file at `<repo>/<analysisArtifactFile>` (overwrite if it exists):
+
+```bash
+mkdir -p "<repo>/sprint-logs"
+# Write analysisText content to <repo>/<analysisArtifactFile>
+git -C "<repo>" add "<repo>/<analysisArtifactFile>"
+git -C "<repo>" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-analysis <branch> <startedAt>"
+```
+
+Do NOT reformat or modify the analysisText -- write it exactly as provided.
+
+## Step 2 -- Read sprint context
 
 Read the following to understand what was built:
 - Any requirements files mentioned in your task
@@ -16,7 +31,7 @@ Read the following to understand what was built:
 - `git diff <base-branch>..<branch> --stat` -- files changed
 - Open/closed issues: `bd list --status=closed` and `bd list --status=open`
 
-## Step 2 -- Extract durable knowledge into docs/
+## Step 3 -- Extract durable knowledge into docs/
 
 Create or update files under `docs/` to capture long-term knowledge.
 
@@ -33,7 +48,7 @@ Create or update files under `docs/` to capture long-term knowledge.
 
 Commit the docs/ changes with a descriptive message.
 
-## Step 3 -- Update README.md and CHANGELOG.md
+## Step 4 -- Update README.md and CHANGELOG.md
 
 - Update `README.md` to reflect new features, changed behaviour, or removed capabilities
 - Prepend a new entry to `CHANGELOG.md` (create it if it does not exist) summarising
@@ -43,7 +58,7 @@ Commit the docs/ changes with a descriptive message.
 
 Commit these changes.
 
-## Step 4 -- Defer low-priority open issues
+## Step 5 -- Defer low-priority open issues
 
 ```bash
 bd list --status=open --priority=3
@@ -57,13 +72,13 @@ bd close <id> --reason="deferred to next sprint"
 
 Do NOT close P1 or P2 issues unless explicitly instructed.
 
-## Step 5 -- Push
+## Step 6 -- Push
 
 ```bash
 git push origin <branch>
 ```
 
-## Step 6 -- Return status
+## Step 7 -- Return status
 
 Return:
 - `status`: "OK" if all steps completed successfully
