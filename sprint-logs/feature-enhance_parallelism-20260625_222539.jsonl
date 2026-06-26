@@ -23,3 +23,8 @@
 {"ts":"2026-06-26T00:32:50-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":3803,"costUsd":0.019}
 {"ts":"2026-06-26T00:32:50-0400","cycle":1,"phase":"Develop","label":"doer-c1-i3-standard","model":"standard","context":"tasks apra-pm-0kl, apra-pm-auh","outTokens":7950,"costUsd":0.1193}
 {"ts":"2026-06-26T00:32:50-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i4","model":"standard","context":"reviewing tasks apra-pm-0kl, apra-pm-auh","outTokens":6800,"costUsd":0.102}
+{"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i4","model":"cheap","context":"4 new entries","outTokens":1790,"costUsd":0.0089}
+{"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":4883,"costUsd":0.0244}
+{"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"push-c1","model":"cheap","context":"","outTokens":358,"costUsd":0.0018}
+{"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"head-sha-c1","model":"cheap","context":"","outTokens":220,"costUsd":0.0011}
+{"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"check-blockers","model":"cheap","context":"","outTokens":2644,"costUsd":0.0132}
