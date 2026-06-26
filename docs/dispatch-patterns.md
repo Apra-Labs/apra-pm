@@ -153,6 +153,66 @@ The analysis file path is `sprint-logs/<branch>-<timestamp>.analysis.md`.
 
 ---
 
+## Harvest: dolt push (non-fatal)
+
+After `beads-export-cleanup` commits the beads JSONL export and before PR
+creation, the Harvest phase dispatches a Haiku agent to run `bd dolt push`.
+
+Key invariants:
+
+- **Ordering**: dolt-push runs AFTER `beads-export-cleanup` (so the export is
+  committed and the Dolt working tree is clean) and BEFORE `harvestPr` (PR
+  creation). Reordering breaks the "sync before PR" guarantee.
+- **Non-fatal**: the dispatch prompt explicitly instructs "do NOT throw, return
+  an error, or abort the workflow". If `bd dolt push` exits non-zero (no remote
+  configured, network failure, etc.) the agent logs a warning and returns "OK".
+  There is no early-return guard on the result in the calling JS code.
+- **Sprint log**: the dispatch uses `phase: 'Harvest'` and `label: 'dolt-push'`
+  so its cost is captured in the sprint log and the Execution Summary.
+
+When `bd dolt push` fails, it is always safe to run manually after harvest:
+
+```bash
+bd dolt push
+```
+
+---
+
+## Sprint Execution Summary
+
+`buildExecutionSummary(logEntries, opts)` is a pure function (inside the
+`PURE_FUNCTIONS` block of `auto-sprint.js`) that assembles a markdown
+"Sprint Execution Summary" section for appending to `.analysis.md`.
+
+**Inputs:**
+- `logEntries` -- the dispatch ledger array `{ cycle, phase, label, model, outTokens, costUsd, ts? }`.
+  The `ts` field is optional -- `dispatchLedger` entries carry no timestamp.
+  Only entries merged from the committed JSONL log-append carry `ts`.
+- `opts` -- `{ cycleCount, goalMet, goal, tasksOpen, openIssueIds, startedAt }`.
+
+**What it emits:**
+- Cycle count with parenthetical notes (develop iterations, reviewer CHANGES NEEDED
+  rounds, plan re-rounds) derived from dispatch labels.
+- Per-phase dispatch/token/cost table (Plan, Develop, Test, Harvest).
+- Per-phase wall-clock timing (best-effort -- reports "n/a (no timestamps)" when
+  `ts` is absent rather than fabricating durations).
+- Failures/retries: labels matching `CHANGES NEEDED`, `feedback-write`, or
+  `null-recovery` patterns.
+- Remaining risks: `goalMet=false` flag + open issue ids at close.
+
+**Wiring:** appended to `sprintSummary.summaryText` unconditionally at line ~1818,
+before the `goalMet`/fallback branch. This means the Execution Summary reaches
+`.analysis.md` on BOTH the harvester path and the JS fallback path.
+
+**Per-phase timing limitation:** in production, `dispatchLedger` entries carry no
+`ts` field; the timing rows will always emit "n/a (no timestamps)". The JSONL log
+does contain `ts`, but it is never merged into `logEntries` at the callsite.
+This is a known gap -- timing data degrades gracefully and the section remains
+useful for token/cost data. A follow-up is needed to merge JSONL `ts` into
+`logEntries` so timing populates.
+
+---
+
 ## Develop loop: doer context-limit resilience
 
 Three mechanisms protect the develop loop against doer context exhaustion:
