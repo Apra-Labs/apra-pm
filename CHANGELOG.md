@@ -1,5 +1,37 @@
 # Changelog
 
+## feature/enhance_parallelism -- 2026-06-26 (cycle 3)
+
+**Sprint goal:** Harvest auto bd dolt push (apra-pm-6pw) and Sprint Execution Summary in .analysis.md (apra-pm-2wz). Goal not met -- root feature issues remain open per sprint convention; all implementation and test subtasks (6pw.1.1, 6pw.1.2, 2wz.1.1, 2wz.1.2, 2wz.1.3) are closed and work is releasable.
+
+**What was implemented:**
+
+- `auto-sprint.js`: `bd dolt push` dispatch added to Harvest phase, after `beads-export-cleanup` and before PR creation. Non-fatal -- failure logs a warning and does not abort harvest. Covered by `test/harvest-dolt-push.test.mjs` (8 tests: ordering, non-fatal, no-guard assertions).
+- `auto-sprint.js`: `buildExecutionSummary(logEntries, opts)` pure function added (inside PURE_FUNCTIONS block). Emits cycles, per-phase token/cost/dispatch table, failures/retries, and remaining risks at close. Wired unconditionally at harvest so the section appears on both the harvester path and the JS fallback path. Works when `goalMet=false`. Covered by `test/sprint-execution-summary.test.mjs` (28 tests).
+- Test suite: 281 tests pass.
+
+**Known gap:** per-phase wall-clock timing in the Execution Summary degrades to "n/a (no timestamps)" in production because `dispatchLedger` entries carry no `ts` field. The JSONL log contains `ts` but is not merged into `logEntries` at the callsite. The section is still useful for token/cost data; a follow-up is needed to merge JSONL timestamps.
+
+**Carried forward:** `apra-pm-6pw` and `apra-pm-2wz` (root issues, open per sprint convention); per-phase timing gap (follow-up bead recommended).
+
+Scope reviewed: branch feature/enhance_parallelism vs main, focused on apra-pm-6pw and apra-pm-2wz (subtasks 6pw.1.1/1.2 and 2wz.1.1/1.2/1.3, all closed). Full suite: 281 tests pass (node --test). No build/lint step is configured in package.json (skill repo).
+
+#### Sprint cost analysis
+Calibration: historical (2 sprints)   Cycles: estimated 1.5, actual 2
+
+| Role       | Est tokens | Act tokens |   D%   | Est USD  | Act USD  |
+|------------|------------|------------|-------|----------|----------|
+| doer       |     41,250 |     35,173 |  -15% |   $0.701 |   $0.691 |
+| reviewer   |     11,145 |     10,218 |   -8% |   $0.189 |   $0.203 |
+| overhead   |      7,150 |     75,114 | +951% |   $0.121 |   $1.039 |
+| TOTAL      |     59,545 |    120,505 | +102% |   $1.011 |   $1.933 |
+True-cost estimate (output x 4x): $4.046
+
+Outliers (>200% variance): overhead
+Calibration failures (>500%): overhead
+
+---
+
 ## feature/enhance_parallelism -- 2026-06-26 (cycle 2)
 
 **Sprint goal:** Doer context-limit resilience, Develop-phase progress visibility, and exit-check scoping to sprint roots. 3 sprint goals targeted; goal was not met (root feature issues remain open per sprint convention -- subtasks all closed, work is releasable).

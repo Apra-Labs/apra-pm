@@ -52,6 +52,18 @@ Model prices used for estimation: haiku $5/M, sonnet $15/M, opus $25/M output to
 Sprint logs are durable per-branch outputs named
 `sprint-logs/<branch>-<yyyymmdd_hhmmss>.jsonl` and are never deleted.
 
+### Harvest: dolt push and execution summary
+
+After the beads export/cleanup step and before PR creation, the Harvest phase
+automatically runs `bd dolt push` to sync the Dolt remote. Failure is non-fatal
+-- a missing remote or network error logs a warning and harvest continues.
+
+The sprint analysis artifact (`sprint-logs/<branch>-<timestamp>.analysis.md`)
+now includes a **Sprint Execution Summary** section: cycles run (with develop
+iteration count, reviewer CHANGES NEEDED rounds, and plan re-rounds), per-phase
+dispatch/token/cost breakdown, failures/retries, and remaining risks at close.
+The summary is generated even when `goalMet=false`.
+
 ### Develop-loop resilience
 
 The develop loop includes three protections against doer context exhaustion:
