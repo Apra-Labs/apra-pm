@@ -19,3 +19,7 @@
 {"ts":"2026-06-26T00:24:09-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":1918,"costUsd":0.0096}
 {"ts":"2026-06-26T00:24:09-0400","cycle":1,"phase":"Develop","label":"doer-c1-i2-standard","model":"standard","context":"tasks apra-pm-1wu, apra-pm-4lj, apra-pm-ke2, apra-pm-mhq, apra-pm-06c, apra-pm-627, apra-pm-9dk, apra-pm-486, apra-pm-3rq, apra-pm-0kl.3, apra-pm-auh.3","outTokens":25321,"costUsd":0.3798}
 {"ts":"2026-06-26T00:24:09-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i3","model":"standard","context":"reviewing tasks apra-pm-1wu, apra-pm-4lj, apra-pm-ke2, apra-pm-mhq, apra-pm-06c, apra-pm-627, apra-pm-9dk, apra-pm-486, apra-pm-3rq, apra-pm-0kl.3, apra-pm-auh.3","outTokens":6711,"costUsd":0.1007}
+{"ts":"2026-06-26T00:32:50-0400","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i3","model":"cheap","context":"4 new entries","outTokens":1451,"costUsd":0.0073}
+{"ts":"2026-06-26T00:32:50-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":3803,"costUsd":0.019}
+{"ts":"2026-06-26T00:32:50-0400","cycle":1,"phase":"Develop","label":"doer-c1-i3-standard","model":"standard","context":"tasks apra-pm-0kl, apra-pm-auh","outTokens":7950,"costUsd":0.1193}
+{"ts":"2026-06-26T00:32:50-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i4","model":"standard","context":"reviewing tasks apra-pm-0kl, apra-pm-auh","outTokens":6800,"costUsd":0.102}
