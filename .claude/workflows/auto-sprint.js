@@ -1767,6 +1767,22 @@ await dispatch(
   { model: MODEL_HAIKU, label: 'beads-export-cleanup', phase: 'Harvest' }
 );
 
+// ------------------------------------------------------------------ DOLT PUSH
+
+// Sync beads Dolt remote so refs/dolt/data is up to date.
+// Non-fatal: a missing remote or network error must not abort harvest.
+await dispatch(
+  `Sync beads state to the Dolt remote.\n\n` +
+  `Run:\n` +
+  `  bd dolt push\n\n` +
+  `Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n` +
+  `If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n` +
+  `  "bd dolt push failed (non-fatal): <reason>"\n` +
+  `and continue -- do NOT throw, return an error, or abort the workflow.\n\n` +
+  `Return "OK" when done (regardless of whether the push succeeded or failed).`,
+  { model: MODEL_HAIKU, label: 'dolt-push', phase: 'Harvest' }
+);
+
 // ------------------------------------------------------------------ PR
 
 const harvestPr = await dispatch(
