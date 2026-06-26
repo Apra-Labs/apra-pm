@@ -993,8 +993,11 @@ const integTestEnabled = setup.deployMdExists && setup.playbookExists;
 const sprintTs = setup.startedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
 let flushedCount = 0;  // how many dispatchLedger entries have been appended to sprintLogFile
 
-// Appends only the NEW (not yet flushed) ledger entries to the sprint log file,
-// commits, and pushes. Call after each meaningful agent boundary for JIT visibility.
+// Appends only the NEW (not yet flushed) ledger entries to the sprint log file.
+// Fire-and-forget: does NOT await, and does NOT commit or push.
+// The next natural committer (doer/sprint-meta/beads-export-cleanup) picks the file
+// up via 'git add sprint-logs/' or 'git add -A'. The final-cycle entries are captured
+// by an unconditional 'git add sprint-logs/' in beads-export-cleanup.
 async function appendNewEntries(label, phase) {
   const newEntries = dispatchLedger.slice(flushedCount);
   if (newEntries.length === 0) return;
@@ -1002,7 +1005,7 @@ async function appendNewEntries(label, phase) {
   // not the fixed sprint-start timestamp, so each flush batch gets its own timestamp.
   const lines = newEntries.map(e => JSON.stringify({ ts: '__FLUSH_TS__', ...e })).join('\n');
   flushedCount = dispatchLedger.length;  // update before dispatch so log-append entry goes in next batch
-  await dispatch(
+  dispatch(  // intentionally NOT awaited -- fire-and-forget write to disk only
     `Step 1: Run: date +%Y-%m-%dT%H:%M:%S%z\n` +
     `Save the output as FLUSH_TS (e.g. "2026-06-22T22:15:30+0530").\n\n` +
     `Step 2: Append (do NOT overwrite) the following lines to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
@@ -1010,11 +1013,7 @@ async function appendNewEntries(label, phase) {
     `  mkdir -p "${repo}/sprint-logs"\n\n` +
     `In the lines below, replace every occurrence of "__FLUSH_TS__" with the FLUSH_TS value from Step 1.\n` +
     `Lines to append (one JSON object per line):\n${lines}\n\n` +
-    `Then commit and push:\n` +
-    `  git -C "${repo}" add sprint-logs/\n` +
-    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-log ${label}"\n` +
-    `  git -C "${repo}" push origin ${branch}\n` +
-    `Do not modify any other file.`,
+    `Do not commit, push, or modify any other file. Write the lines to disk and stop.`,
     { model: MODEL_HAIKU, label: `log-append-${label}`, phase: phase || 'Develop',
       context: `${newEntries.length} new entries` }
   );
@@ -1567,16 +1566,20 @@ await dispatch(
 
 // Export beads state so committed .beads/*.jsonl reflects all closed P1 issues.
 // Also remove sprint process files (requirements.md, feedback.md) from the PR net diff.
+// Step 1 stages any sprint-log entries written by fire-and-forget appendNewEntries
+// calls so the final cycle's JSONL lines are captured even when no later doer runs.
 await dispatch(
   `Persist beads state and clean sprint scaffolding from the PR diff.\n\n` +
-  `Step 1 -- Export beads state:\n` +
+  `Step 1 -- Stage any pending sprint-log entries (unconditional):\n` +
+  `  git -C "${repo}" add sprint-logs/\n\n` +
+  `Step 2 -- Export beads state:\n` +
   `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
   `  git -C "${repo}" add .beads/issues.jsonl\n` +
   `  git -C "${repo}" diff --cached --quiet || git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: export beads state"\n` +
   `  (The "diff --cached --quiet || commit" pattern only commits if something actually changed.)\n\n` +
-  `Step 2 -- Check what process files are still in the PR diff:\n` +
+  `Step 3 -- Check what process files are still in the PR diff:\n` +
   `  git -C "${repo}" diff --name-only ${base_branch}...${branch}\n\n` +
-  `Step 3 -- For each of requirements.md, feedback.md that appears in the diff:\n` +
+  `Step 4 -- For each of requirements.md, feedback.md that appears in the diff:\n` +
   `  a) Check if the file existed on ${base_branch}:\n` +
   `       git -C "${repo}" ls-tree --name-only ${base_branch} | grep -F <filename>\n` +
   `  b) If NOT on base (sprint created it): git -C "${repo}" rm --force <filepath>\n` +
@@ -1585,10 +1588,10 @@ await dispatch(
   `    git -C "${repo}" add -A\n` +
   `    git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: drop sprint scaffolding"\n` +
   `  (If no scaffold files remain in diff, skip the commit.)\n\n` +
-  `Step 4 -- Verify the diff is clean:\n` +
+  `Step 5 -- Verify the diff is clean:\n` +
   `  git -C "${repo}" diff --name-only ${base_branch}...${branch}\n` +
-  `  The output must NOT contain requirements.md or feedback.md. If it does, repeat Step 3.\n\n` +
-  `Step 5 -- Push all local commits to remote:\n` +
+  `  The output must NOT contain requirements.md or feedback.md. If it does, repeat Step 4.\n\n` +
+  `Step 6 -- Push all local commits to remote:\n` +
   `  git -C "${repo}" push origin ${branch}\n\n` +
   `Return "OK" when done.`,
   { model: MODEL_HAIKU, label: 'beads-export-cleanup', phase: 'Harvest' }
