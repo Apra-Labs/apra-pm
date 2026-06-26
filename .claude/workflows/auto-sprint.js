@@ -308,6 +308,12 @@ const DEFAULT_CALIBRATION = {
     outlier_pct:             200,
     calibration_failure_pct: 500,
   },
+  doer_token_ceiling: {
+    _doc: 'Maximum output tokens for a single doer streak, keyed by tier name. Streaks that exceed this token budget are split and re-queued.',
+    cheap:    40000,
+    standard: 80000,
+    premium:  150000,
+  },
   historical: {
     _doc: 'Written by harvester after each sprint. Contains actual per-role output token averages from sprint-log JSONL files. Used by auto-sprint.js computeSprintQuote() to improve future estimates. Do not edit manually.',
     max_sprints_in_sample: 5,
@@ -1007,6 +1013,7 @@ const calibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
   reviewer_ratio:                  _parsedCalib.reviewer_ratio                  || DEFAULT_CALIBRATION.reviewer_ratio,
   input_cost_multiplier:           _parsedCalib.input_cost_multiplier           || DEFAULT_CALIBRATION.input_cost_multiplier,
   outlier_thresholds:              _parsedCalib.outlier_thresholds              || DEFAULT_CALIBRATION.outlier_thresholds,
+  doer_token_ceiling:              _parsedCalib.doer_token_ceiling              || DEFAULT_CALIBRATION.doer_token_ceiling,
 });
 // Sync output prices from loaded calibration so dispatchLedger uses correct rates.
 Object.assign(OUTPUT_PRICE_PER_M, calibration.model_prices_per_1m_output_tokens || {});

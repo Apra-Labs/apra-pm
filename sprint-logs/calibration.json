@@ -72,6 +72,12 @@
     "outlier_pct": 200,
     "calibration_failure_pct": 500
   },
+  "doer_token_ceiling": {
+    "_doc": "Maximum output tokens for a single doer streak, keyed by tier name. Streaks that exceed this token budget are split and re-queued.",
+    "cheap": 40000,
+    "standard": 80000,
+    "premium": 150000
+  },
   "historical": {
     "_doc": "Written by harvester after each sprint. Contains actual per-role output token averages from sprint-log JSONL files. Used by auto-sprint.js computeSprintQuote() to improve future estimates. Do not edit manually.",
     "max_sprints_in_sample": 5,
