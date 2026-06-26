@@ -585,14 +585,17 @@ function collectSubtreeIds(outputs, rootCount) {
 // the sprint-goal subtree. Missing/short outputs => sentinel {count: 999, ids: []} so the
 // caller treats blockers as present (fail-safe, never exits the sprint early).
 // openListIdx is the explicit index of the open-issues JSON command in outputs[].
-function parseBlockers(outputs, rootCount, openListIdx, threshold) {
+// rootIds (optional): when provided, only open issues whose ID is in this array are counted
+// as blockers (exit-check is scoped to sprint roots, not the whole subtree).
+function parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds) {
   if (!Array.isArray(outputs) || outputs.length < openListIdx + 1) return { count: 999, ids: [] };
   const subtree = collectSubtreeIds(outputs, rootCount);
+  const rootSet = Array.isArray(rootIds) && rootIds.length > 0 ? new Set(rootIds) : null;
   let ids = [];
   try {
     const open = JSON.parse(outputs[openListIdx]);
     ids = Array.isArray(open)
-      ? open.filter(x => subtree.has(x.id) && x.p <= threshold).map(x => x.id)
+      ? open.filter(x => subtree.has(x.id) && (!rootSet || rootSet.has(x.id)) && x.p <= threshold).map(x => x.id)
       : [];
   } catch { ids = []; }
   return { count: ids.length, ids };
@@ -861,7 +864,7 @@ async function countBeadsBlockers(thr, roots) {
     `bd list --status=open --json | ${openExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop' });
-  return parseBlockers(r?.outputs, roots.length, roots.length, thr);
+  return parseBlockers(r?.outputs, roots.length, roots.length, thr, roots);
 }
 
 async function getReadyStreaks(rootIds) {
@@ -1525,7 +1528,7 @@ while (cycleCount < maxCycles) {
     ];
     const exitResult = await dispatchShell(exitCmds, { model: MODEL_HAIKU, label: 'exit-check', phase: 'Develop' });
     if (exitResult?.outputs && exitResult.outputs.length >= rootIds.length + 2) {
-      blockers = parseBlockers(exitResult.outputs, rootIds.length, rootIds.length, threshold);
+      blockers = parseBlockers(exitResult.outputs, rootIds.length, rootIds.length, threshold, rootIds);
       // Ready streaks prefetched but not used: develop loop already determined no ready tasks.
       // Parsed here to validate the merged output; result discarded at cycle end.
       parseReadyStreaks(exitResult.outputs, rootIds.length, rootIds.length + 1, TIER_STANDARD);
