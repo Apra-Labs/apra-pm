@@ -760,6 +760,43 @@ function labelTaskIds(ids) {
   return ids.slice(0, 3).join(' ') + ` +${ids.length - 3}more`;
 }
 
+// truncateStreakToCeiling: returns the longest in-order prefix of streakIds whose
+// summed estimated doer output tokens stays at/under calibration.doer_token_ceiling[tier].
+// Per-task estimate mirrors computeSprintQuote: historical.bucket_avg_tokens[bucket]
+// (once at least one sprint has been sampled) with complexity_buckets fallback.
+// Always returns at least one task -- a single oversized task is dispatched alone so it
+// is never starved -- and never truncates when the tier has no configured ceiling.
+// bucketById maps task id -> complexity bucket (derived from taskAssignments).
+function truncateStreakToCeiling(streakIds, bucketById, calibration, tier) {
+  if (!Array.isArray(streakIds) || streakIds.length === 0) return [];
+  const ceilings = (calibration && calibration.doer_token_ceiling) || {};
+  const ceiling  = ceilings[tier];
+  // No (or non-positive) ceiling configured for this tier -> no truncation.
+  if (typeof ceiling !== 'number' || ceiling <= 0) return streakIds.slice();
+
+  const hist     = (calibration && calibration.historical) || {};
+  const buckets  = (calibration && calibration.complexity_buckets) || {};
+  const histToks = hist.bucket_avg_tokens || {};
+  const estFor = id => {
+    const bucket = bucketById ? bucketById[id] : undefined;
+    const h = histToks[bucket];
+    if (hist.sprints_sampled >= 1 && h != null) return Math.round(h);
+    const def = buckets[bucket] || buckets.M || { doer_tokens: 0 };
+    return def.doer_tokens || 0;
+  };
+
+  let sum = 0;
+  const kept = [];
+  for (const id of streakIds) {
+    const est = estFor(id);
+    // Once at least one task is kept, stop before exceeding the ceiling.
+    if (kept.length > 0 && sum + est > ceiling) break;
+    kept.push(id);
+    sum += est;
+  }
+  return kept;
+}
+
 // PURE_FUNCTIONS_END
 
 function outputCostUsd(tier, tokens) {
@@ -1318,22 +1355,33 @@ while (cycleCount < maxCycles) {
     let streakAbort = false;
     let doerNullReset = false;
 
+    // id->bucket map for the per-streak token-ceiling truncation, derived from the
+    // last approved plan-review's taskAssignments held at workflow scope.
+    const bucketById = Object.fromEntries((taskAssignments || []).map(t => [t.id, t.bucket]));
+
     for (const streak of streakResult.streaks) {
-      const doerLabel = `doer-c${cycleCount}-i${devIter}: ${labelTaskIds(streak.ids)}`;
+      // Truncate the streak to the longest prefix that fits the doer token ceiling for
+      // this tier. Remaining IDs are left unworked and resurface on the next
+      // getReadyStreaks iteration.
+      const fittedIds = truncateStreakToCeiling(streak.ids, bucketById, calibration, streak.model);
+      if (fittedIds.length < streak.ids.length) {
+        log(`Streak ${streak.model} truncated to token ceiling: working ${fittedIds.length}/${streak.ids.length} task(s) (${labelTaskIds(fittedIds)}); ${streak.ids.length - fittedIds.length} deferred`);
+      }
+      const doerLabel = `doer-c${cycleCount}-i${devIter}: ${labelTaskIds(fittedIds)}`;
       const streakEstUsd = sprintQuote
-        ? streak.ids.reduce((sum, id) => {
+        ? fittedIds.reduce((sum, id) => {
             const t = sprintQuote.tasks.find(t => t.id === id);
             return sum + (t ? t.outputUsd : 0);
           }, 0)
         : null;
-      log(`Doer c${cycleCount}-i${devIter}: ${labelTaskIds(streak.ids)} [model=${streak.model}${streakEstUsd != null ? ` est=$${streakEstUsd.toFixed(4)}` : ''}]`);
+      log(`Doer c${cycleCount}-i${devIter}: ${labelTaskIds(fittedIds)} [model=${streak.model}${streakEstUsd != null ? ` est=$${streakEstUsd.toFixed(4)}` : ''}]`);
 
       const doerResult = await dispatch(
         `Repo: ${repo}\nBranch: ${branch}\n\n` +
         (devFeedback
           ? `Reviewer feedback from the previous iteration (read feedback.md in ${repo} for full details):\n${devFeedback}\nAddress every finding before closing tasks.\n\n`
           : '') +
-        `Work ONLY these tasks (in order): ${streak.ids.join(', ')}\n` +
+        `Work ONLY these tasks (in order): ${fittedIds.join(', ')}\n` +
         `Confirm each is still unblocked with: bd show <id>\n` +
         `For each task:\n` +
         `  - Run: bd update <id> --claim\n` +
@@ -1344,7 +1392,7 @@ while (cycleCount < maxCycles) {
         `Work all listed tasks then stop and return status "VERIFY".\n` +
         `Always return VERIFY -- never return anything else.`,
         { model: streak.model, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer',
-          context: `tasks ${streak.ids.join(', ')}` }
+          context: `tasks ${fittedIds.join(', ')}` }
       );
 
       if (!doerResult) {
@@ -1370,7 +1418,7 @@ while (cycleCount < maxCycles) {
         streakAbort = true;
         break;
       }
-      workedIds.push(...streak.ids);
+      workedIds.push(...fittedIds);
     }
 
     devIter++;

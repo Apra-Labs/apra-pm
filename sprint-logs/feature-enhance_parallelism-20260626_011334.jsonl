@@ -1,1 +1,15 @@
 {"ts":"2026-06-26T01:13:34Z","type":"meta","branch":"feature/enhance_parallelism","startedAt":"20260626_011334","roots":["apra-pm-99a","apra-pm-bdy","apra-pm-jf9"],"goal":"P1/P2","transcriptDir":"C:\\Users\\akhil\\.claude\\projects\\C--akhil-git-apra-pm"}
+{"ts":"2026-06-26T01:13:34Z","type":"cycle-start","cycle":1,"branch":"feature/enhance_parallelism"}
+{"ts":"2026-06-26T01:57:17-0400","cycle":"setup","phase":"Plan","label":"setup-shell","model":"cheap","context":"","outTokens":1205,"costUsd":0.006}
+{"ts":"2026-06-26T01:57:17-0400","cycle":"setup","phase":"Plan","label":"setup","model":"cheap","context":"","outTokens":3348,"costUsd":0.0167}
+{"ts":"2026-06-26T01:57:17-0400","cycle":"setup","phase":"Plan","label":"sprint-meta","model":"cheap","context":"","outTokens":790,"costUsd":0.004}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Plan","label":"cycle-meta-c1","model":"cheap","context":"","outTokens":1685,"costUsd":0.0084}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Plan","label":"cycle-state","model":"cheap","context":"","outTokens":2157,"costUsd":0.0108}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Plan","label":"planner-c1-r0","model":"premium","context":"planning sprint goals apra-pm-99a, apra-pm-bdy, apra-pm-jf9","outTokens":1992,"costUsd":0.0498}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Plan","label":"planner-c1-r1","model":"premium","context":"planning sprint goals apra-pm-99a, apra-pm-bdy, apra-pm-jf9","outTokens":30266,"costUsd":0.7567}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Plan","label":"plan-reviewer-c1-r1","model":"standard","context":"reviewing plan for sprint goals apra-pm-99a, apra-pm-bdy, apra-pm-jf9","outTokens":3600,"costUsd":0.054}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Plan","label":"plan-commit-c1","model":"cheap","context":"","outTokens":18779,"costUsd":0.0939}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":1611,"costUsd":0.0081}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Develop","label":"doer-c1-i0-cheap","model":"cheap","context":"tasks apra-pm-99a.1.1, apra-pm-99a.2.1","outTokens":6656,"costUsd":0.0333}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Develop","label":"doer-c1-i0-standard","model":"standard","context":"tasks apra-pm-99a.3.1, apra-pm-bdy.1.1, apra-pm-jf9.1.1","outTokens":20408,"costUsd":0.3061}
+{"ts":"2026-06-26T01:57:17-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i1","model":"standard","context":"reviewing tasks apra-pm-99a.1.1, apra-pm-99a.2.1, apra-pm-99a.3.1, apra-pm-bdy.1.1, apra-pm-jf9.1.1","outTokens":5590,"costUsd":0.0839}

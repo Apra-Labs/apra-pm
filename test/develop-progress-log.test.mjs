@@ -51,9 +51,10 @@ test('labelTaskIds: empty array returns empty string', () => {
 // ---- source-level log() assertions ------------------------------------------
 
 test('source has a log() before doer dispatch referencing streak ids and an estimate', () => {
-  // The pre-dispatch log includes labelTaskIds(streak.ids) and est= for the estimate.
-  assert.match(src, /log\(`Doer.*labelTaskIds\(streak\.ids\).*est=/,
-    'source must have a log() before doer dispatch with streak ids and estimate reference');
+  // The pre-dispatch log includes labelTaskIds(fittedIds) -- the ceiling-truncated
+  // prefix actually dispatched -- and est= for the estimate.
+  assert.match(src, /log\(`Doer.*labelTaskIds\(fittedIds\).*est=/,
+    'source must have a log() before doer dispatch with dispatched ids and estimate reference');
 });
 
 test('source has a per-iteration log() with remaining/ready counts', () => {
@@ -70,9 +71,10 @@ test('source has a post-verdict log() with reviewer verdict and ids', () => {
 
 // ---- label template string assertions ---------------------------------------
 
-test('doer label template string uses labelTaskIds(streak.ids)', () => {
-  assert.match(src, /doerLabel\s*=\s*`doer-c.*labelTaskIds\(streak\.ids\)/,
-    'doerLabel must be built using labelTaskIds(streak.ids)');
+test('doer label template string uses labelTaskIds(fittedIds)', () => {
+  // The doer label reflects the ceiling-truncated prefix actually dispatched.
+  assert.match(src, /doerLabel\s*=\s*`doer-c.*labelTaskIds\(fittedIds\)/,
+    'doerLabel must be built using labelTaskIds(fittedIds)');
 });
 
 test('reviewer label template string uses labelTaskIds(workedIds)', () => {
