@@ -28,3 +28,12 @@
 {"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"push-c1","model":"cheap","context":"","outTokens":358,"costUsd":0.0018}
 {"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"head-sha-c1","model":"cheap","context":"","outTokens":220,"costUsd":0.0011}
 {"ts":"2026-06-26T00:36:06-04:00","cycle":1,"phase":"Develop","label":"check-blockers","model":"cheap","context":"","outTokens":2644,"costUsd":0.0132}
+{"ts":"2026-06-26T00:47:32-0400","cycle":1,"phase":"Develop","label":"log-append-end-c1","model":"cheap","context":"5 new entries","outTokens":1448,"costUsd":0.0072}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Plan","label":"cycle-state","model":"cheap","context":"","outTokens":4228,"costUsd":0.0211}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Plan","label":"planner-c2-r0","model":"premium","context":"planning sprint goals apra-pm-8aq, apra-pm-1wu, apra-pm-ke2, apra-pm-mhq, apra-pm-4lj, apra-pm-9dk, apra-pm-06c, apra-pm-627, apra-pm-0kl, apra-pm-auh, apra-pm-486, apra-pm-3rq","outTokens":3751,"costUsd":0.0938}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Plan","label":"plan-reviewer-c2-r0","model":"standard","context":"reviewing plan for sprint goals apra-pm-8aq, apra-pm-1wu, apra-pm-ke2, apra-pm-mhq, apra-pm-4lj, apra-pm-9dk, apra-pm-06c, apra-pm-627, apra-pm-0kl, apra-pm-auh, apra-pm-486, apra-pm-3rq","outTokens":6390,"costUsd":0.0958}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Plan","label":"plan-commit-c2","model":"cheap","context":"","outTokens":970,"costUsd":0.0049}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":1779,"costUsd":0.0089}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Develop","label":"push-c2","model":"cheap","context":"","outTokens":267,"costUsd":0.0013}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Develop","label":"head-sha-c2","model":"cheap","context":"","outTokens":258,"costUsd":0.0013}
+{"ts":"2026-06-26T00:47:32-0400","cycle":2,"phase":"Develop","label":"check-blockers","model":"cheap","context":"","outTokens":2397,"costUsd":0.012}
