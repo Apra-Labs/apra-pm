@@ -894,25 +894,54 @@ let abortReason  = '';
 
 phase('Plan');
 
+// Phase 1: deterministic setup steps -- run via dispatchShell so each command
+// executes exactly once with a bounded turn cap (no LLM looping on simple checks).
+//
+// Fixed output indices (always 6 elements regardless of branch/no-branch):
+//   0: repo root (git rev-parse --show-toplevel)
+//   1: branch checkout result (or "no-op" when branch was not specified)
+//   2: confirmed branch name (git rev-parse --abbrev-ref HEAD)
+//   3: startedAt timestamp (date +%Y%m%d_%H%M%S)
+//   4: deploy.md exists (YES/NO)
+//   5: integ-test-playbook.md exists (YES/NO)
+const setupShellCmds = [
+  `git rev-parse --show-toplevel`,
+  branch
+    ? `git checkout "${branch}" 2>/dev/null || git checkout --track "origin/${branch}" 2>/dev/null || git checkout -b "${branch}"`
+    : `echo "no-op"`,
+  `git rev-parse --abbrev-ref HEAD`,
+  `date +%Y%m%d_%H%M%S`,
+  `test -f deploy.md && echo YES || echo NO`,
+  `test -f integ-test-playbook.md && echo YES || echo NO`,
+];
+const setupShell = await dispatchShell(setupShellCmds, {
+  model: MODEL_HAIKU, label: 'setup-shell', phase: 'Plan',
+});
+
+const _outs = setupShell && Array.isArray(setupShell.outputs) ? setupShell.outputs : [];
+const _detectedRepo    = (_outs[0] || '').trim();
+const _detectedBranch  = (_outs[2] || '').trim();
+const _detectedTs      = (_outs[3] || '').trim();
+const _deployExists    = (_outs[4] || '').trim() === 'YES';
+const _playbookExists  = (_outs[5] || '').trim() === 'YES';
+
+if (!_detectedRepo || !_detectedBranch) {
+  log('ERROR: setup-shell failed -- could not detect repo root or branch');
+  return { error: 'setup failed' };
+}
+
+// Phase 2: free-form setup steps (permissions merge, calibration, transcript dir).
+// maxTurns: 20 backstop prevents a runaway agent from stalling indefinitely.
 const setup = await dispatch(
-  `Sprint workspace setup.\n\n` +
-  `Step 1: Get repo root.\n` +
-  `  Run: git rev-parse --show-toplevel\n\n` +
-  (branch
-    ? `Step 2: Assert sprint branch "${branch}".\n` +
-      `  - Already on "${branch}": do nothing.\n` +
-      `  - Exists locally: git checkout "${branch}"\n` +
-      `  - Exists on origin: git checkout --track origin/"${branch}"\n` +
-      `  - Otherwise: git checkout -b "${branch}"\n\n`
-    : `Step 2: Detect current branch.\n` +
-      `  Run: git rev-parse --abbrev-ref HEAD\n` +
-      `  Use this as the sprint branch. Do NOT switch or create any branch.\n\n`) +
-  `Step 3: Capture start timestamp.\n` +
-  `  Run: date +%Y%m%d_%H%M%S\n` +
-  `  Return the output as startedAt (e.g. "20260620_143022").\n\n` +
-  `Step 4: Check for required project files.\n` +
-  `  Run: test -f deploy.md && echo YES || echo NO   -> deployMdExists\n` +
-  `  Run: test -f integ-test-playbook.md && echo YES || echo NO  -> playbookExists\n\n` +
+  `Sprint workspace setup (Phase 2 -- deterministic steps already done).\n\n` +
+  `Pre-known values (do NOT re-run these commands):\n` +
+  `  repo:           ${_detectedRepo}\n` +
+  `  branch:         ${_detectedBranch}\n` +
+  `  startedAt:      ${_detectedTs}\n` +
+  `  deployMdExists: ${_deployExists}\n` +
+  `  playbookExists: ${_playbookExists}\n\n` +
+  `Your job is only Steps 5-7 below. Return ALL fields in your schema response,\n` +
+  `including the pre-known values above.\n\n` +
   `Step 5: Merge deploy permissions into .claude/settings.json.\n` +
   `  For each of deploy.md and integ-test-playbook.md that exists:\n` +
   `    a. Read the file and extract lines under the "## Permissions" section\n` +
@@ -940,7 +969,7 @@ const setup = await dispatch(
   `  Find the entry whose slug matches the repo path (e.g. repo=/c/foo/bar -> C--foo-bar).\n` +
   `  If found, return the full path as transcriptDir. If not found, return an empty string.\n\n` +
   `Return repo (absolute path), branch (confirmed), deployMdExists, playbookExists, startedAt, calibrationRaw, transcriptDir.`,
-  { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA }
+  { model: MODEL_HAIKU, label: 'setup', phase: 'Plan', schema: SETUP_SCHEMA, maxTurns: 20 }
 );
 
 if (!setup || !setup.repo || !setup.branch) {
