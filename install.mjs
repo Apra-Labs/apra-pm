@@ -54,6 +54,7 @@ function requiredPermissions(cfg) {
 // Additional permissions specific to Claude Code (not understood by other providers).
 function claudeOnlyPermissions() {
   return [
+    'Bash(*)',               // required for fire-and-forget agents (ke2 appendNewEntries, 3rq commitFeedback)
     'Skill(auto-sprint)',    // suppress "Use skill 'auto-sprint'?" prompt
     'Workflow(auto-sprint)', // suppress "Run a dynamic workflow?" prompt
   ];
@@ -256,6 +257,10 @@ function main() {
     added = mergePermissions(settingsFile, perms);
   }
   console.log(`  [3/4] perms   -> ${settingsFile} (${added} added)`);
+
+  if (args.llm === 'claude') {
+    console.log('        Bash(*) required for fire-and-forget agents (ke2 appendNewEntries, 3rq commitFeedback)');
+  }
 
   // 4) cost.js -- extract the PURE_FUNCTIONS_BEGIN/END block from auto-sprint.js
   //    and write it as a self-contained CommonJS module alongside the skill files,
