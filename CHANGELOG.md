@@ -1,5 +1,33 @@
 # Changelog
 
+## feature/enhance_parallelism -- 2026-06-26 (cycle 4)
+
+**Sprint goal:** CI-pipeline dedup guard (apra-pm-gtv). Goal met -- all P1/P2 issues closed.
+
+**What was implemented:**
+
+- `auto-sprint.js` (`not_configured` branch, ~line 1980): runs `bd search "Add CI pipeline" --status=open --json` before `bd create`. Skips creation and logs the existing id when an open match is found. Still creates when only closed matches exist, so a resolved prior CI task never suppresses a fresh one.
+- `test/ci-watcher.test.mjs`: new tests assert search-before-create ordering, `--status=open` scoping, and the already-exists branch behaviour.
+- Test suite: 284 pass, 0 fail.
+
+**Carried forward:** none.
+
+#### Sprint cost analysis
+Calibration: historical (3 sprints)   Cycles: estimated 1.5, actual 1
+
+| Role       | Est tokens | Act tokens |   D%   | Est USD  | Act USD  |
+|------------|------------|------------|-------|----------|----------|
+| doer       |     18,036 |      7,494 |  -58% |   $0.271 |   $0.112 |
+| reviewer   |      4,995 |      9,202 |  +84% |   $0.075 |   $0.138 |
+| overhead   |      7,150 |     55,810 | +681% |   $0.121 |   $0.844 |
+| TOTAL      |     30,181 |     72,506 | +140% |   $0.466 |   $1.095 |
+True-cost estimate (output x 4x): $1.865
+
+Outliers (>200% variance): overhead
+Calibration failures (>500%): overhead
+
+---
+
 ## feature/enhance_parallelism -- 2026-06-26 (cycle 3)
 
 **Sprint goal:** Harvest auto bd dolt push (apra-pm-6pw) and Sprint Execution Summary in .analysis.md (apra-pm-2wz). Goal not met -- root feature issues remain open per sprint convention; all implementation and test subtasks (6pw.1.1, 6pw.1.2, 2wz.1.1, 2wz.1.2, 2wz.1.3) are closed and work is releasable.

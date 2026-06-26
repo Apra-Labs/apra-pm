@@ -92,6 +92,14 @@ session labels carry the same task-id suffix for searchability.
 open issues whose id is in the sprint's root set count as blockers. Unrelated
 open P1 issues anywhere in the beads database do not prevent `goalMet`.
 
+### CI pipeline task dedup guard
+
+When no CI is configured for a project, the workflow creates a `Add CI pipeline
+to project` beads task. Before creating it, the workflow searches for an open
+task with that name. If one already exists it is reused; a duplicate is never
+filed. A previously closed task does not suppress creation of a new one -- the
+guard is scoped to open tasks only.
+
 See `docs/sprint-workflow.md` for the full user guide and `docs/dispatch-patterns.md`
 for the architectural decisions governing agent dispatch, parallelism, and
 develop-loop resilience.
