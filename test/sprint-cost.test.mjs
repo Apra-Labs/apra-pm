@@ -19,8 +19,9 @@ const {
   computeUpdatedCalibration,
   accumulateBucketTokens,
   buildSprintSummary,
+  buildExecutionSummary,
   // eslint-disable-next-line no-new-func
-} = new Function(`${match[1]}; return { MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU, DEFAULT_CALIBRATION, reviewerModelFor, computeSprintQuote, computeSprintAnalysis, computeUpdatedCalibration, accumulateBucketTokens, buildSprintSummary };`)();
+} = new Function(`${match[1]}; return { MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU, DEFAULT_CALIBRATION, reviewerModelFor, computeSprintQuote, computeSprintAnalysis, computeUpdatedCalibration, accumulateBucketTokens, buildSprintSummary, buildExecutionSummary };`)();
 
 // -- reviewerModelFor ----------------------------------------------------------
 
@@ -538,4 +539,73 @@ test('buildSprintSummary: null analysis returns graceful summary', () => {
   });
   assert.ok(typeof summaryText === 'string', 'summaryText must be a string even with null inputs');
   assert.ok(summaryText.includes('# Sprint summary'), 'must include sprint summary header');
+});
+
+// -- buildExecutionSummary -----------------------------------------------------
+
+const BES_LOG = [
+  { cycle: 1, phase: 'Plan',    label: 'plan-commit-c1',   model: MODEL_OPUS,   outTokens: 1200, costUsd: 0.018, ts: '2026-06-26T10:00:00Z' },
+  { cycle: 1, phase: 'Develop', label: 'iter-c1-i1 BD-1',  model: MODEL_SONNET, outTokens: 3000, costUsd: 0.045, ts: '2026-06-26T10:05:00Z' },
+  { cycle: 1, phase: 'Develop', label: 'iter-c1-i2 BD-1',  model: MODEL_SONNET, outTokens: 2500, costUsd: 0.037, ts: '2026-06-26T10:12:00Z' },
+  { cycle: 1, phase: 'Test',    label: 'CHANGES NEEDED',   model: MODEL_SONNET, outTokens:  800, costUsd: 0.012, ts: '2026-06-26T10:20:00Z' },
+  { cycle: 1, phase: 'Harvest', label: 'reset-orphans',    model: MODEL_HAIKU,  outTokens:  400, costUsd: 0.001, ts: '2026-06-26T10:30:00Z' },
+];
+
+test('buildExecutionSummary: returns markdown with required sections', () => {
+  const { summaryText } = buildExecutionSummary(BES_LOG, {
+    cycleCount: 2, goalMet: true, goal: 'ship', tasksOpen: 0,
+    openIssueIds: [], startedAt: '20260626_100000',
+  });
+  assert.ok(typeof summaryText === 'string', 'summaryText must be a string');
+  assert.ok(summaryText.includes('Sprint Execution Summary'), 'must include section title');
+  assert.ok(summaryText.includes('Per-phase breakdown'), 'must include per-phase breakdown');
+  assert.ok(summaryText.includes('**Cycles:** 2'), 'must include cycle count');
+  // per-phase summed outTokens for Develop = 3000 + 2500 = 5500
+  assert.ok(summaryText.includes('5500'), 'Develop phase must sum outTokens');
+  // cycle reasoning: 2 develop iterations + reviewer change + plan round
+  assert.ok(summaryText.includes('develop iteration'), 'must note develop iterations');
+});
+
+test('buildExecutionSummary: detects failures and retries', () => {
+  const { summaryText } = buildExecutionSummary(BES_LOG, {
+    cycleCount: 1, goalMet: true, goal: 'g', tasksOpen: 0, openIssueIds: [],
+  });
+  assert.ok(summaryText.includes('orphan reset'), 'must list orphan reset failure');
+  assert.match(summaryText, /develop iterations \(retries\)/, 'must flag multi-iteration retry');
+});
+
+test('buildExecutionSummary: timing best-effort with timestamps', () => {
+  const { summaryText } = buildExecutionSummary(BES_LOG, { cycleCount: 1, goalMet: true });
+  // Develop has 2 timestamped events 7 min apart -> ~420s span reported
+  assert.match(summaryText, /Develop: ~420s/, 'must compute Develop timing span from ts');
+});
+
+test('buildExecutionSummary: timing n/a when no timestamps', () => {
+  const noTs = BES_LOG.map(({ ts, ...rest }) => rest);
+  const { summaryText } = buildExecutionSummary(noTs, { cycleCount: 1, goalMet: true });
+  assert.match(summaryText, /n\/a \(no timestamps\)/, 'must emit n/a when ts missing');
+});
+
+test('buildExecutionSummary: goalMet=false lists risks', () => {
+  const { summaryText } = buildExecutionSummary(BES_LOG, {
+    cycleCount: 1, goalMet: false, goal: 'finish feature', tasksOpen: 2,
+    openIssueIds: ['BD-9', 'BD-10'],
+  });
+  assert.ok(summaryText.includes('Goal NOT met'), 'must flag goal not met');
+  assert.ok(summaryText.includes('finish feature'), 'must include the goal text');
+  assert.ok(summaryText.includes('BD-9') && summaryText.includes('BD-10'), 'must list open issue ids');
+  assert.ok(summaryText.includes('2 task(s) still open'), 'must include open task count');
+});
+
+test('buildExecutionSummary: empty log still returns valid section', () => {
+  const { summaryText } = buildExecutionSummary([], {
+    cycleCount: 0, goalMet: false, goal: '', tasksOpen: 0, openIssueIds: [],
+  });
+  assert.ok(typeof summaryText === 'string', 'must return a string for empty log');
+  assert.ok(summaryText.includes('Sprint Execution Summary'), 'must include section title');
+  assert.ok(summaryText.includes('Per-phase breakdown'), 'must include per-phase table');
+  // all phase rows present with zero counts
+  for (const ph of ['Plan', 'Develop', 'Test', 'Harvest']) {
+    assert.ok(summaryText.includes(`| ${ph} | 0 |`), `phase ${ph} row must show 0 dispatches`);
+  }
 });

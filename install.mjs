@@ -297,6 +297,7 @@ function main() {
         '    accumulateBucketTokens,',
         '    computeUpdatedCalibration,',
         '    buildSprintSummary,',
+        '    buildExecutionSummary,',
         '    reviewerModelFor,',
         '  };',
         '}',

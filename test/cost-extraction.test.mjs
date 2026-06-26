@@ -37,6 +37,7 @@ function extractCostJs(src) {
     '    accumulateBucketTokens,',
     '    computeUpdatedCalibration,',
     '    buildSprintSummary,',
+    '    buildExecutionSummary,',
     '    reviewerModelFor,',
     '  };',
     '}',
