@@ -114,6 +114,37 @@ test('ci-watcher.md: runs exist but SHA unmatched => pending, not not_configured
   );
 });
 
+// ---- (d) not_configured branch: dedup guard before CI task creation -----------
+
+test('not_configured branch: bd search appears before bd create for CI pipeline task', () => {
+  // The bd search (dedup check) must appear before the bd create dispatch.
+  const searchIdx = indexOf(src, 'bd search "Add CI pipeline"', 'bd search dedup call');
+  const createIdx = indexOf(src, 'bd create --title="Add CI pipeline to project"', 'bd create CI pipeline');
+  assert.ok(
+    searchIdx < createIdx,
+    'bd search dedup check must appear before bd create in the not_configured branch'
+  );
+});
+
+test('not_configured branch: bd search is scoped to open status only', () => {
+  // The search must use --status=open so closed CI issues do not suppress creation.
+  const searchIdx = indexOf(src, 'bd search "Add CI pipeline"', 'bd search dedup call');
+  // Look forward up to 200 chars for the --status flag.
+  const region = src.slice(searchIdx, searchIdx + 200);
+  assert.match(region, /--status=open/, 'bd search dedup must include --status=open to ignore closed issues');
+});
+
+test('not_configured branch: already-exists log and guarded create are present', () => {
+  // A conditional log must exist for the already-exists case so creation is skipped.
+  indexOf(src, 'already exists', 'already exists log/skip message');
+  // The bd create dispatch must be inside an else branch (guarded), not unconditional.
+  // Confirm there is a conditional block (} else {) between the search result check and create.
+  const searchIdx = indexOf(src, 'bd search "Add CI pipeline"', 'bd search dedup call');
+  const createIdx = indexOf(src, 'bd create --title="Add CI pipeline to project"', 'bd create CI pipeline');
+  const region = src.slice(searchIdx, createIdx);
+  assert.match(region, /\}\s*else\s*\{/, 'bd create must be inside an else block (guarded by dedup check)');
+});
+
 test('ci-watcher.md: at least one run (any status) must NOT yield not_configured', () => {
   // Confirm that the not_configured return is restricted to the zero-runs case only.
   // Scan for "not_configured" occurrences and confirm they appear only near "no runs" text.
