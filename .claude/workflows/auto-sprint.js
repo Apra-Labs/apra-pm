@@ -1314,7 +1314,8 @@ while (cycleCount < maxCycles) {
         `For each task:\n` +
         `  - Run: bd update <id> --claim\n` +
         `  - Implement the work described (code, tests, config -- whatever the task requires)\n` +
-        `  - Run: bd close <id> when the task is complete\n` +
+        `  - Run: bd close <id> immediately after verify and commit, BEFORE claiming the next task\n` +
+        `  - Closed tasks are durable even if the doer crashes mid-streak\n` +
         `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
         `Work all listed tasks then stop and return status "VERIFY".\n` +
         `Always return VERIFY -- never return anything else.`,
