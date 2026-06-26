@@ -1306,6 +1306,7 @@ while (cycleCount < maxCycles) {
     // Dispatch one doer per model streak; collect all worked task IDs for the reviewer.
     const workedIds = [];
     let streakAbort = false;
+    let doerNullReset = false;
 
     for (const streak of streakResult.streaks) {
       const doerLabel = `doer-c${cycleCount}-i${devIter}-${streak.model}`;
@@ -1331,9 +1332,19 @@ while (cycleCount < maxCycles) {
       );
 
       if (!doerResult) {
-        log(`Doer returned null (streak ${streak.model}) -- aborting`);
-        abortReason = 'doer null';
-        streakAbort = true;
+        log(`Doer returned null (streak ${streak.model}) -- resetting orphaned in_progress tasks and retrying`);
+        const _ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
+        const ipResult = await dispatchShell(
+          [`bd list --status=in_progress --type=task --json | ${_ipExtract}`],
+          { model: MODEL_HAIKU, label: `reset-orphans-c${cycleCount}-i${devIter}`, phase: 'Develop' }
+        );
+        const ipIds = (ipResult?.outputs?.[0] || '').trim().split(/\s+/).filter(Boolean);
+        if (ipIds.length > 0) {
+          const resetCmds = ipIds.map(id => `bd update ${id} --status=open`);
+          await dispatchShell(resetCmds, { model: MODEL_HAIKU, label: `reset-open-c${cycleCount}-i${devIter}`, phase: 'Develop' });
+          log(`Reset ${ipIds.length} in_progress task(s) to open: ${ipIds.join(', ')}`);
+        }
+        doerNullReset = true;
         break;
       }
 
@@ -1347,6 +1358,7 @@ while (cycleCount < maxCycles) {
     }
 
     devIter++;
+    if (doerNullReset) continue;
     if (streakAbort) break;
 
     // Reviewer tier matches the highest tier used across all streaks:
