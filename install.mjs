@@ -343,4 +343,9 @@ function main() {
   }
 }
 
-main();
+// Run main only when executed directly (not when imported by tests).
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main();
+}
+
+export { claudeOnlyPermissions, requiredPermissions, mergePermissions };
