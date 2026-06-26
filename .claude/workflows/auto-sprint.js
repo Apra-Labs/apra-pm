@@ -1336,18 +1336,17 @@ while (cycleCount < maxCycles) {
 
   if (abortReason) break;
 
-  // Push branch so CI can trigger, then record HEAD SHA.
-  await dispatch(
-    `Run: git push origin ${branch}\nIf the branch does not yet exist on origin, use: git push -u origin ${branch}`,
-    { model: MODEL_HAIKU, label: `push-c${cycleCount}`, phase: 'Develop' }
+  // Push branch so CI can trigger and record HEAD SHA in a single dispatchShell.
+  const pushShaResult = await dispatchShell(
+    [
+      `git push origin ${branch} 2>&1 || git push -u origin ${branch} 2>&1`,
+      `git rev-parse HEAD`,
+    ],
+    { model: MODEL_HAIKU, label: `push-sha-c${cycleCount}`, phase: 'Develop' }
   );
-
-  const shaAgent = await dispatch(
-    `Run: git rev-parse HEAD\nReturn the full SHA string.`,
-    { model: MODEL_HAIKU, label: `head-sha-c${cycleCount}`, phase: 'Develop',
-      schema: { type: 'object', required: ['sha'], properties: { sha: { type: 'string' } } } }
-  );
-  if (shaAgent && shaAgent.sha) headSha = shaAgent.sha;
+  if (pushShaResult && Array.isArray(pushShaResult.outputs) && pushShaResult.outputs[1]) {
+    headSha = pushShaResult.outputs[1].trim();
+  }
   log(`HEAD SHA: ${headSha}`);
 
   // ---------------------------------------------------------------- INTEGRATION TEST (skip if files missing)
