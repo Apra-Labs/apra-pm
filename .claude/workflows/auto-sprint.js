@@ -1811,6 +1811,11 @@ const tasksOpen = goalMet ? 0 : prevOpenIds.length;
 const sprintSummary = buildSprintSummary(sprintAnalysis, sprintQuote, calibration, {
   branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt: setup.startedAt,
 });
+// Append Sprint Execution Summary section -- emitted regardless of goalMet.
+const executionSummary = buildExecutionSummary(logEntries, {
+  cycleCount, goalMet, goal, tasksOpen, openIssueIds: prevOpenIds, startedAt: setup.startedAt,
+});
+sprintSummary.summaryText += '\n' + executionSummary.summaryText;
 log('Sprint summary:\n' + sprintSummary.summaryText);
 const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.analysis.md`;
 
