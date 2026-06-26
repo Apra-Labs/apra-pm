@@ -1598,7 +1598,20 @@ const harvestResult = await dispatch(
 );
 
 if (!harvestResult || harvestResult.status !== 'OK') {
-  log(`Harvest failed: ${(harvestResult && harvestResult.notes) || 'null'} -- skipping PR`);
+  log(`Harvest failed: ${(harvestResult && harvestResult.notes) || 'null'} -- writing analysis fallback`);
+  // JS fallback: write .analysis.md directly from in-memory analysisText so the artifact
+  // is preserved in branch history even when the harvester agent is killed or crashes.
+  const safeContent = sprintSummary.summaryText.replace(/'/g, "'\\''");
+  await dispatchShell(
+    [
+      `mkdir -p "${repo}/sprint-logs"`,
+      `printf '%s' '${safeContent}' > "${repo}/${analysisArtifactFile}"`,
+      `git -C "${repo}" add "${analysisArtifactFile}"`,
+      `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "chore: sprint-analysis fallback ${branch} ${setup.startedAt}"`,
+    ],
+    { model: MODEL_HAIKU, label: 'harvest-analysis-fallback', phase: 'Harvest' }
+  );
+  log(`Analysis artifact written via fallback: ${analysisArtifactFile}`);
   return { cycles: cycleCount, goalMet, goal, harvest: 'failed' };
 }
 
