@@ -52,8 +52,37 @@ Model prices used for estimation: haiku $5/M, sonnet $15/M, opus $25/M output to
 Sprint logs are durable per-branch outputs named
 `sprint-logs/<branch>-<yyyymmdd_hhmmss>.jsonl` and are never deleted.
 
+### Develop-loop resilience
+
+The develop loop includes three protections against doer context exhaustion:
+
+- **JIT task close** -- the doer closes each task immediately after committing
+  it, before claiming the next one. Completed work is always recorded even if
+  the session ends mid-streak.
+- **Streak token-ceiling** -- `truncateStreakToCeiling()` caps each streak to the
+  longest prefix whose estimated output tokens fits under
+  `calibration.doer_token_ceiling[tier]` (tunable per model tier in
+  `sprint-logs/calibration.json`).
+- **Null-return recovery** -- if the doer dispatch returns null, orphaned
+  in_progress tasks are reset to open and the loop retries instead of aborting.
+  The `MAX_DEV_ITER=20` bound still applies.
+
+### Develop-loop progress visibility
+
+The workflow logs structured entries at each develop iteration: task ids +
+estimated USD before the doer dispatch, ready-task count at iter entry, and
+reviewer verdict (APPROVED / CHANGES NEEDED) with task ids after review. Agent
+session labels carry the same task-id suffix for searchability.
+
+### Exit check scoped to sprint roots
+
+`parseBlockers()` accepts an optional `rootIds` argument. When provided, only
+open issues whose id is in the sprint's root set count as blockers. Unrelated
+open P1 issues anywhere in the beads database do not prevent `goalMet`.
+
 See `docs/sprint-workflow.md` for the full user guide and `docs/dispatch-patterns.md`
-for the architectural decisions governing agent dispatch and parallelism.
+for the architectural decisions governing agent dispatch, parallelism, and
+develop-loop resilience.
 
 ## pm skill (all providers)
 

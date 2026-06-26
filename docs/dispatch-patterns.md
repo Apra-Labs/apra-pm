@@ -150,3 +150,98 @@ Instead:
   branch, independent of harvester success.
 
 The analysis file path is `sprint-logs/<branch>-<timestamp>.analysis.md`.
+
+---
+
+## Develop loop: doer context-limit resilience
+
+Three mechanisms protect the develop loop against doer context exhaustion:
+
+### JIT task close
+
+The doer must call `bd close <id>` immediately after committing each task and
+**before** claiming the next one. This is encoded in `agents/doer.md` (step 7
+and Rules) and mirrored in the doer dispatch prompt in `auto-sprint.js`.
+Rationale: a doer that exhausts its context window mid-streak leaves no
+in-progress breadcrumbs for a partial streak; JIT close ensures every completed
+task is recorded before the session ends.
+
+### Streak token-ceiling truncation
+
+`truncateStreakToCeiling(streakIds, bucketById, calibration, tier)` returns the
+longest in-order prefix of a streak whose summed estimated output tokens stays
+at or under `calibration.doer_token_ceiling[tier]`. It always keeps at least one
+task. It is a no-op when no ceiling is configured for the tier.
+
+The ceiling is keyed by model tier (`cheap` / `standard` / `premium`), consistent
+with the `TIER_*` constants. Default values in `DEFAULT_CALIBRATION` and
+`sprint-logs/calibration.json`:
+
+| Tier     | Default ceiling (output tokens) |
+|----------|---------------------------------|
+| cheap    | 40,000                          |
+| standard | 80,000                          |
+| premium  | 150,000                         |
+
+**Calibration note:** the per-task estimate (`estFor`) uses
+`complexity_buckets.doer_tokens` (S=600 / M=1400 / L=2800 output tokens). With
+the standard ceiling at 80,000, truncation rarely fires for typical sprints. The
+ceiling is explicitly tunable in `calibration.json` per tier. If context-window
+exhaustion remains a problem in practice, lower the ceiling values or switch the
+estimate basis to total context tokens.
+
+### Null-return recovery
+
+When the doer dispatch returns `null` (crash, timeout, or forced termination), the
+workflow no longer aborts. Instead it:
+
+1. Dispatches a Haiku shell to list all `in_progress` tasks.
+2. Resets each to `open` via `bd update <id> --status=open`.
+3. Sets `doerNullReset = true` and continues to the next dev-loop iteration
+   (`if (doerNullReset) continue;` before the reviewer dispatch).
+
+The dev-loop counter (`devIter`) is incremented before the `continue`, so the
+MAX_DEV_ITER=20 bound is always respected and infinite loops are impossible.
+
+---
+
+## Develop loop: progress visibility
+
+### labelTaskIds helper
+
+`labelTaskIds(ids)` formats a task-id list for log messages and agent labels:
+- Up to 3 IDs are joined with spaces.
+- Four or more IDs become `<first3> +Nmore`.
+
+### Log call sites
+
+The develop loop emits three structured log entries per iteration:
+
+1. **Before doer dispatch** -- `Doer cX-iY: <ids> [model=... est=$...]` -- shows
+   which tasks the doer will work and the estimated USD cost.
+2. **At dev-iter entry** -- `Dev loop cX-iY: N ready task(s)` -- shows how many
+   tasks were ready at the start of this iteration.
+3. **After reviewer verdict** -- `Reviewer cX-iY: APPROVED/CHANGES NEEDED -- <ids>`.
+
+Agent labels for doer and reviewer sessions carry the same `<ids>` suffix
+(`doer-cX-iY: <ids>`, `reviewer-cX-iY: <ids>`) so session logs are searchable
+by task id.
+
+---
+
+## Exit check: scoped to sprint roots only
+
+`parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds)` accepts an
+optional `rootIds` array. When provided, an open issue is counted as a blocker
+only when its id appears in `rootIds` (the sprint's root goals), in addition to
+satisfying the subtree membership and priority-threshold tests.
+
+Both exit-check callsites pass `rootIds`:
+
+- `countBeadsBlockers` (line ~901) -- used by the cycle-end blocker count.
+- The inline exit-check dispatch (line ~1579) -- used by the goal-met decision.
+
+**Why this matters:** without scoping, a non-root P1 issue anywhere in the beads
+database would block `goalMet` even if the sprint never targeted it. The sprint
+should exit (goal met) once all its root goals and their subtrees are closed,
+regardless of unrelated open issues in the DB.

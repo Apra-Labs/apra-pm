@@ -1,5 +1,39 @@
 # Changelog
 
+## feature/enhance_parallelism -- 2026-06-26 (cycle 2)
+
+**Sprint goal:** Doer context-limit resilience, Develop-phase progress visibility, and exit-check scoping to sprint roots. 3 sprint goals targeted; goal was not met (root feature issues remain open per sprint convention -- subtasks all closed, work is releasable).
+
+**What was implemented:**
+
+- `agents/doer.md` + doer dispatch prompt: JIT task close -- doer must `bd close <id>` immediately after each commit, before claiming the next task.
+- `auto-sprint.js`: `truncateStreakToCeiling()` -- truncates a ready streak to the longest prefix whose summed estimated output tokens stays under `calibration.doer_token_ceiling[tier]`. Wired into the develop loop before each doer dispatch.
+- `sprint-logs/calibration.json` + `DEFAULT_CALIBRATION`: `doer_token_ceiling` map keyed by tier (`cheap: 40000`, `standard: 80000`, `premium: 150000`).
+- `auto-sprint.js`: doer-null recovery -- when doer returns null, orphaned in_progress tasks are reset to open and the loop retries (no abort). `MAX_DEV_ITER=20` bound prevents infinite loops.
+- `auto-sprint.js`: `labelTaskIds()` helper (<=3 ids, `+Nmore`); doer/reviewer agent labels carry task ids; structured log() calls before doer dispatch (ids + est USD), at iter entry (ready count), and after reviewer verdict (APPROVED/CHANGES NEEDED + ids).
+- `auto-sprint.js` + `parseBlockers()`: optional `rootIds` argument scopes exit-check open-issue counting to sprint roots only; both callsites updated.
+- 6 new test files; test suite: 243 pass, 0 fail.
+
+**Carried forward:** `apra-pm-99a` (root), `apra-pm-bdy` (root), `apra-pm-jf9` (root) -- open as feature roots per sprint convention; subtasks all closed.
+
+Reviewed feature/enhance_parallelism against the three sprint goals (apra-pm-99a, apra-pm-bdy, apra-pm-jf9). All implementation and test subtasks are closed; the three root features remain OPEN, which is correct for an early-ended sprint (roots are type=feature and are closed by the workflow's close-sprint-goals step at sprint end, never by the doer/reviewer). Test suite: 243 pass, 0 fail. The completed work is releasable and ready to harvest.
+
+#### Sprint cost analysis
+Calibration: historical (1 sprint)   Cycles: estimated 1.5, actual 2
+
+| Role       | Est tokens | Act tokens |   D%   | Est USD  | Act USD  |
+|------------|------------|------------|-------|----------|----------|
+| doer       |     20,400 |     56,496 | +177% |   $0.330 |   $0.891 |
+| reviewer   |      4,634 |     17,676 | +281% |   $0.079 |   $0.361 |
+| overhead   |      7,150 |    105,718 | +1379% |   $0.121 |   $1.433 |
+| TOTAL      |     32,184 |    179,890 | +459% |   $0.530 |   $2.684 |
+True-cost estimate (output x 4x): $2.119
+
+Outliers (>200% variance): reviewer, overhead
+Calibration failures (>500%): overhead
+
+---
+
 ## feature/enhance_parallelism -- 2026-06-26
 
 **Sprint goal:** Reduce workflow overhead by consolidating agent dispatches, introducing parallelism at cycle boundaries, and making write-only dispatches fire-and-forget. 12 sprint goals targeted; goal was not met (one P1 epic remains open -- `apra-pm-8aq` CI-watcher parent, subtasks closed).
