@@ -1061,11 +1061,26 @@ while (cycleCount < maxCycles) {
   cycleCostUsd = 0;
   log(`\n=== Cycle ${cycleCount}/${maxCycles} | goal: ${goal} ===`);
 
-  // ---------------------------------------------------------------- RESUME CHECK
+  // ---------------------------------------------------------------- RESUME CHECK + CYCLE CHECKPOINT
 
   phase('Plan');
 
-  const cycleState = await checkCycleState(rootIds);
+  // Write per-cycle checkpoint entry and check cycle state in parallel -- no data dependency.
+  // The cycle-checkpoint uses type='cycle-start' (distinct from the one-time type='meta' above).
+  const cycleCheckpointLine = JSON.stringify({
+    ts: sprintTs, type: 'cycle-start', cycle: cycleCount, branch,
+  });
+  const [, cycleState] = await Promise.all([
+    dispatch(
+      `Append (do NOT overwrite) the following line to ${sprintLogFile} (full path: "${repo}/${sprintLogFile}").\n` +
+      `If the file does not exist, create it. If the sprint-logs/ directory does not exist, create it first:\n` +
+      `  mkdir -p "${repo}/sprint-logs"\n\n` +
+      `Line:\n${cycleCheckpointLine}\n\n` +
+      `Do not commit, push, or modify any other file. Write the line to disk and stop.`,
+      { model: MODEL_HAIKU, label: `cycle-meta-c${cycleCount}`, phase: 'Plan' }
+    ),
+    checkCycleState(rootIds),
+  ]);
   log(`Cycle state: planDone=${cycleState.planDone} inProgress=[${cycleState.inProgressIds.join(', ')}]`);
 
   // Reset any tasks orphaned in_progress from a previous crashed run.
