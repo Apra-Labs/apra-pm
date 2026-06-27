@@ -30,8 +30,8 @@ For each ready task:
    - Run the linter (e.g. `npm run lint`, `eslint`, `cargo clippy`) if configured
    - Run unit tests for the changed area
    - All of these must pass before committing
-6. **Commit**: one commit per task, with a message referencing the beads ID
-   `git commit -m "feat: <description> (BD-<N>)"`
+6. **Commit**: one commit per task, describing what changed
+   `git commit -m "feat: <description>"`
 7. **Close immediately**: `bd close <id>` -- this must run BEFORE claiming the next task. Closed tasks are durable even if the doer dies mid-streak.
 
 Then move to the next ready task.

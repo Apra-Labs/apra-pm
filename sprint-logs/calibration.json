@@ -55,8 +55,8 @@
   },
   "fixed_overhead_tokens": {
     "_doc": "Estimated output tokens for agents that run once per sprint regardless of task count. 'log_flush_per_cycle' is multiplied by the expected cycle count. Keys use underscores; the role lookup strips underscores to match role_models keys.",
-    "setup": 200,
-    "planner": 2000,
+    "setup": 3500,
+    "planner": 20000,
     "plan_reviewer": 1500,
     "harvester": 3000,
     "ci_watcher": 300,
