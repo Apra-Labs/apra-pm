@@ -16,7 +16,7 @@ gh run list --branch <branch> --limit 5 --json databaseId,status,conclusion,head
 
 ## Step 2 -- Interpret the result
 
-**No runs returned**: CI is not configured for this project.
+**No runs returned**: CI has never been triggered on this branch.
 Return `status: "not_configured"`.
 
 **Run found for the expected HEAD SHA with conclusion "success"**:
@@ -36,7 +36,7 @@ If still running after 10 minutes: `status: "pending"` with notes.
 
 **No run found for the expected HEAD SHA but older runs exist**:
 CI may not have triggered for the latest push. Wait 60 seconds and check once more.
-If still absent: `status: "not_configured"` with notes explaining what was found.
+If still absent: `status: "pending"` with notes explaining what was found.
 
 ## Rules
 

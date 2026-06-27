@@ -327,8 +327,15 @@ on the planner-assigned model.
 ## CI integration
 
 The workflow records the git HEAD SHA at the end of the develop phase. CI is
-expected to trigger automatically from the push. Before harvest, the ci-watcher
-polls until CI reports green or red.
+expected to trigger automatically from the push. After the PR is created,
+the ci-watcher polls `gh run list --pr N` until CI reports green or red and
+annotates the PR with the result if CI is not green.
+
+The ci-watcher runs after PR creation because CI run queries require a PR
+number. If runs exist for the branch but none match the current HEAD SHA,
+the watcher classifies the result as `pending` (CI is in progress), not
+`not_configured`. `not_configured` is reserved for the case where no CI
+runs exist at all for the PR.
 
 If CI is not configured, a P2 beads task `Add CI pipeline to project` is
 created and enters the normal develop loop in the next cycle.
@@ -391,10 +398,15 @@ context size.
 When the sprint goal is met:
 
 - All targeted features are closed in beads
+- Beads state is synced to the Dolt remote via `bd dolt push` (non-fatal -- a
+  missing remote logs a warning but does not abort harvest)
 - A reviewed pull request is open against `base_branch`
 - `docs/` is updated with architecture decisions and feature documentation
 - `CHANGELOG.md` has a new entry summarising the sprint
 - `sprint-logs/<branch>.jsonl` is committed to the branch with per-dispatch cost data
+- `sprint-logs/<branch>-<timestamp>.analysis.md` is written with a Sprint Execution
+  Summary: cycles, per-phase token/cost/dispatch table, failures/retries, and
+  remaining risks at close
 - A cost summary table is printed in the workflow output
 
 If the sprint exits via `max_cycles` without meeting the goal:

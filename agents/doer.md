@@ -32,7 +32,7 @@ For each ready task:
    - All of these must pass before committing
 6. **Commit**: one commit per task, with a message referencing the beads ID
    `git commit -m "feat: <description> (BD-<N>)"`
-7. **Close**: `bd close <id>`
+7. **Close immediately**: `bd close <id>` -- this must run BEFORE claiming the next task. Closed tasks are durable even if the doer dies mid-streak.
 
 Then move to the next ready task.
 
@@ -64,6 +64,7 @@ Estimate input as total tokens you received; output as total tokens you generate
 ## Rules
 
 - ONE task at a time; commit after each
+- **Close each task immediately after commit, BEFORE claiming the next one** -- closed tasks persist even if the doer crashes
 - NEVER close type=feature or type=bug issues
 - NEVER skip a task -- work them in dependency order
 - After every commit: run fast/unit tests; fix before moving to the next task

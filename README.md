@@ -30,8 +30,8 @@ while (open issues above goal threshold > 0 AND cycles < max):
   Teardown   -- deployer resets the test environment
   Exit check -- beads query: are open issues above threshold? same set as last cycle?
 
-CI check (haiku, non-blocking): polls after Develop; gates before Harvest
-Harvest (once): harvester updates docs/CHANGELOG and raises PR
+CI check (haiku, non-blocking): polls after PR is created; annotates PR when not green
+Harvest (once): harvester writes sprint analysis, updates docs/CHANGELOG, raises PR
 ```
 
 ### Cost estimation and calibration
@@ -52,7 +52,57 @@ Model prices used for estimation: haiku $5/M, sonnet $15/M, opus $25/M output to
 Sprint logs are durable per-branch outputs named
 `sprint-logs/<branch>-<yyyymmdd_hhmmss>.jsonl` and are never deleted.
 
-See `docs/sprint-workflow.md` for the full user guide.
+### Harvest: dolt push and execution summary
+
+After the beads export/cleanup step and before PR creation, the Harvest phase
+automatically runs `bd dolt push` to sync the Dolt remote. Failure is non-fatal
+-- a missing remote or network error logs a warning and harvest continues.
+
+The sprint analysis artifact (`sprint-logs/<branch>-<timestamp>.analysis.md`)
+now includes a **Sprint Execution Summary** section: cycles run (with develop
+iteration count, reviewer CHANGES NEEDED rounds, and plan re-rounds), per-phase
+dispatch/token/cost breakdown, failures/retries, and remaining risks at close.
+The summary is generated even when `goalMet=false`.
+
+### Develop-loop resilience
+
+The develop loop includes three protections against doer context exhaustion:
+
+- **JIT task close** -- the doer closes each task immediately after committing
+  it, before claiming the next one. Completed work is always recorded even if
+  the session ends mid-streak.
+- **Streak token-ceiling** -- `truncateStreakToCeiling()` caps each streak to the
+  longest prefix whose estimated output tokens fits under
+  `calibration.doer_token_ceiling[tier]` (tunable per model tier in
+  `sprint-logs/calibration.json`).
+- **Null-return recovery** -- if the doer dispatch returns null, orphaned
+  in_progress tasks are reset to open and the loop retries instead of aborting.
+  The `MAX_DEV_ITER=20` bound still applies.
+
+### Develop-loop progress visibility
+
+The workflow logs structured entries at each develop iteration: task ids +
+estimated USD before the doer dispatch, ready-task count at iter entry, and
+reviewer verdict (APPROVED / CHANGES NEEDED) with task ids after review. Agent
+session labels carry the same task-id suffix for searchability.
+
+### Exit check scoped to sprint roots
+
+`parseBlockers()` accepts an optional `rootIds` argument. When provided, only
+open issues whose id is in the sprint's root set count as blockers. Unrelated
+open P1 issues anywhere in the beads database do not prevent `goalMet`.
+
+### CI pipeline task dedup guard
+
+When no CI is configured for a project, the workflow creates a `Add CI pipeline
+to project` beads task. Before creating it, the workflow searches for an open
+task with that name. If one already exists it is reused; a duplicate is never
+filed. A previously closed task does not suppress creation of a new one -- the
+guard is scoped to open tasks only.
+
+See `docs/sprint-workflow.md` for the full user guide and `docs/dispatch-patterns.md`
+for the architectural decisions governing agent dispatch, parallelism, and
+develop-loop resilience.
 
 ## pm skill (all providers)
 
@@ -70,7 +120,7 @@ test/                    sprint-cost.test.mjs -- 45 unit tests (npm test)
 sprint-logs/             calibration.json + per-sprint JSONL cost logs (durable)
 install.mjs              installer: copies skill + agents + workflow into provider config dir
 e2e/                     end-to-end suite: drive the skill headless on the toy repo
-docs/                    sprint-workflow.md user guide + design intent
+docs/                    sprint-workflow.md user guide + design intent; dispatch-patterns.md
 .githooks/               pre-commit (ASCII-only guard)
 ```
 
