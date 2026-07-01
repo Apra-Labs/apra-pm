@@ -1,6 +1,6 @@
 {
   "name": "apra-pm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Provider-agnostic Project Manager skill: one orchestrator session drives planner/plan-reviewer/doer/reviewer subagents across parallel git worktrees, with a planner-chosen model per task. No MCP, no server.",
   "type": "module",
