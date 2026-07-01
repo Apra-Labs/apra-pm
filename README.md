@@ -113,9 +113,12 @@ See `skills/pm/SKILL.md` and its sub-docs for the full workflow.
 
 When running in fleet mode, the pm skill selects members by tags
 (`tags: ['doer']` / `tags: ['reviewer']`) rather than the legacy `role`
-parameter. `compose_permissions` must be called before every fleet dispatch,
-and a tag switch always requires a fresh dispatch (`resume=false`). See
-`docs/pm-tag-dispatch.md` for the full design and invariants.
+parameter. Multi-tag queries narrow selection by capability (e.g.
+`list_members(tags: ['reviewer', 'bitbucket'])`); fall back to the single-tag
+query when no member matches. `compose_permissions` must be called before every
+fleet dispatch, and a tag switch always requires a fresh dispatch
+(`resume=false`). See `docs/pm-tag-dispatch.md` for the full design and
+invariants.
 
 ## Layout
 

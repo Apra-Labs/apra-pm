@@ -65,12 +65,51 @@ are not dispatch parameters; they must be preserved.
 
 ---
 
+## Member selection: tag queries
+
+Fleet members must be selected with the `list_members(tags: [...])` tool, never
+by role name, display name, or naming convention.
+
+### Basic queries
+
+```
+list_members(tags: ['doer'])      # all members tagged doer
+list_members(tags: ['reviewer'])  # all members tagged reviewer
+```
+
+Pick the first available result (or the preferred one when multiple match).
+Re-run the query when switching from doer to reviewer -- do not cache results
+across tag switches.
+
+### Multi-tag queries for capability-based dispatch
+
+When a task requires a specific capability, narrow the query with additional tags:
+
+```
+list_members(tags: ['reviewer', 'bitbucket'])  # reviewer with Bitbucket access
+list_members(tags: ['doer', 'python'])          # doer with Python capability
+list_members(tags: ['doer', 'rust'])            # doer with Rust capability
+```
+
+Multi-tag queries return members that carry ALL listed tags. If no member matches
+a narrow query, fall back to the single-tag query and note the missing capability
+in the dispatch prompt.
+
+---
+
 ## Scope of the tag-based migration
 
-The migration is documentation-only for the in-repo skill files. The cross-repo
-work (updating fleet Phase 2 to emit `tags` instead of `role` in the member
-registry) is tracked under `apra-pm-136` and `apra-pm-jnq` and requires changes
-to the `apra-fleet` repo. That work is NOT included in this sprint.
+The migration covers the in-repo pm skill files. All sprint issues are closed:
+
+| Issue | Phase | Status |
+|-------|-------|--------|
+| apra-pm-136 | Phase 4a: SKILL.md R9 + fleet-addendum permissions | closed |
+| apra-pm-jnq | Phase 4b: doer-reviewer-loop.md dispatch references | closed |
+| apra-pm-g6q | Phase 5: Member selection section in SKILL.md | closed |
+
+Cross-repo work (updating fleet Phase 2 to emit `tags` instead of `role` in the
+member registry) requires changes to the `apra-fleet` repo and is tracked
+separately outside this sprint.
 
 The test suite (`test/skill-pm-tags-dispatch.test.mjs`) covers:
 
