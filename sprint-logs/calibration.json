@@ -81,10 +81,10 @@
   "historical": {
     "_doc": "Written by harvester after each sprint. Contains actual per-role output token averages from sprint-log JSONL files. Used by auto-sprint.js computeSprintQuote() to improve future estimates. Do not edit manually.",
     "max_sprints_in_sample": 5,
-    "sprints_sampled": 4,
-    "last_updated": "2026-06-26",
-    "cycle_avg": 1.75,
-    "reviewer_ratio_avg": 0.5146964994316723,
+    "sprints_sampled": 5,
+    "last_updated": "2026-07-01",
+    "cycle_avg": 1.8,
+    "reviewer_ratio_avg": 0.5167662352712078,
     "bucket_avg_tokens": {
       "S": 3121.25,
       "M": 5278.441666666667,
@@ -92,16 +92,16 @@
     },
     "roles": {
       "setup": {
-        "avg_output_tokens": 3568.75,
-        "sample_n": 4
+        "avg_output_tokens": 3539.6,
+        "sample_n": 5
       },
       "sprint-meta": {
-        "avg_output_tokens": 799.5,
-        "sample_n": 4
+        "avg_output_tokens": 766,
+        "sample_n": 5
       },
       "cycle-state": {
-        "avg_output_tokens": 2601.75,
-        "sample_n": 7
+        "avg_output_tokens": 2665.8,
+        "sample_n": 9
       },
       "planner": {
         "avg_output_tokens": 20134.875,
@@ -120,20 +120,20 @@
         "sample_n": 5
       },
       "ready-streaks": {
-        "avg_output_tokens": 2410.304166666667,
-        "sample_n": 20
+        "avg_output_tokens": 2302.4833333333336,
+        "sample_n": 25
       },
       "doer": {
-        "avg_output_tokens": 12212.320833333333,
-        "sample_n": 18
+        "avg_output_tokens": 11208.59,
+        "sample_n": 21
       },
       "reviewer": {
-        "avg_output_tokens": 5331.458333333333,
-        "sample_n": 13
+        "avg_output_tokens": 5020.566666666667,
+        "sample_n": 16
       },
       "log-append-iter": {
-        "avg_output_tokens": 2053.8749999999995,
-        "sample_n": 13
+        "avg_output_tokens": 2090.033333333333,
+        "sample_n": 16
       },
       "push": {
         "avg_output_tokens": 312.5,
@@ -148,8 +148,8 @@
         "sample_n": 2
       },
       "log-append-end": {
-        "avg_output_tokens": 1809.625,
-        "sample_n": 7
+        "avg_output_tokens": 1827.1,
+        "sample_n": 9
       },
       "ci-watcher": {
         "avg_output_tokens": 752,
@@ -160,24 +160,28 @@
         "sample_n": 1
       },
       "final-reviewer": {
-        "avg_output_tokens": 9871.5,
-        "sample_n": 4
+        "avg_output_tokens": 9162,
+        "sample_n": 5
       },
       "setup-shell": {
         "avg_output_tokens": 1149.75,
         "sample_n": 3
       },
       "cycle-meta": {
-        "avg_output_tokens": 1725.375,
-        "sample_n": 5
+        "avg_output_tokens": 1792.2,
+        "sample_n": 7
       },
       "push-sha": {
-        "avg_output_tokens": 510.625,
-        "sample_n": 5
+        "avg_output_tokens": 506.1,
+        "sample_n": 7
       },
       "exit-check": {
-        "avg_output_tokens": 1408.125,
-        "sample_n": 5
+        "avg_output_tokens": 1360.8,
+        "sample_n": 7
+      },
+      "feedback-write-reviewer": {
+        "avg_output_tokens": 1349,
+        "sample_n": 1
       }
     }
   }
