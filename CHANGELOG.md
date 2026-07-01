@@ -1,5 +1,36 @@
 # Changelog
 
+## feat/pm-tag-dispatch -- 2026-07-01 (cycles 2)
+
+**Sprint goal:** Tag-based fleet member selection in pm skill docs (apra-pm-136 Phase 4a, apra-pm-jnq Phase 4b). Goal NOT met (parent issues remain open pending cross-repo apra-fleet Phase 2); all in-repo implementation and test subtasks are closed and the work is releasable.
+
+**What was implemented:**
+
+- `skills/pm/SKILL.md` R9: member selection now specifies `tags: ['doer']` / `tags: ['reviewer']` as the canonical interface. Backward-compatibility note retained for the legacy `role` param during the fleet transition period.
+- `skills/pm/fleet-addendum.md`: Permissions section and Doer-reviewer pairing section updated to tag-based selection throughout.
+- `skills/pm/doer-reviewer-loop.md`: Continuity, resume rules, and safeguards updated; the resume table now includes an explicit "Tag switch" row (`resume=false` required across any tag change).
+- `test/skill-pm-tags-dispatch.test.mjs`: 16 new assertions covering tags-present, role-absent in dispatch/permission contexts, `compose_permissions`-before-dispatch, preserved git identities and section headings, and the tag-switch resume rule.
+- Test suite: 305 pass, 0 fail. No build or lint scripts configured (N/A).
+- `docs/pm-tag-dispatch.md`: new durable design doc capturing invariants, scope of migration, and what future contributors must preserve.
+
+**Carried forward:** apra-pm-136 and apra-pm-jnq (parent issues, blocked on cross-repo apra-fleet Phase 2); apra-pm-g6q Phase 5 documentation open. Per-phase timing in sprint execution summaries still degrades to "n/a" (known gap from prior sprint).
+
+#### Sprint cost analysis
+Calibration: none   Cycles: estimated 1.5, actual 2
+
+| Role       | Est tokens | Act tokens |   D%   | Est USD  | Act USD  |
+|------------|------------|------------|-------|----------|----------|
+| doer       |          0 |     21,581 |   n/a |   $0.000 |   $0.108 |
+| reviewer   |          0 |     11,331 |   n/a |   $0.000 |   $0.170 |
+| overhead   |     28,450 |     44,864 |  +58% |   $0.587 |   $0.351 |
+| TOTAL      |     28,450 |     77,776 | +173% |   $0.587 |   $0.628 |
+True-cost estimate (output x 4x): $2.349
+
+Outliers (>200% variance): none
+Calibration failures (>500%): none
+
+---
+
 ## feature/enhance_parallelism -- 2026-06-26 (cycle 4)
 
 **Sprint goal:** CI-pipeline dedup guard (apra-pm-gtv). Goal met -- all P1/P2 issues closed.
