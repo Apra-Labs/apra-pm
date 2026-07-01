@@ -83,8 +83,8 @@
     "max_sprints_in_sample": 5,
     "sprints_sampled": 5,
     "last_updated": "2026-07-01",
-    "cycle_avg": 1.8,
-    "reviewer_ratio_avg": 0.5167662352712078,
+    "cycle_avg": 1.64,
+    "reviewer_ratio_avg": 0.6920293404182241,
     "bucket_avg_tokens": {
       "S": 3121.25,
       "M": 5278.441666666667,
@@ -92,16 +92,16 @@
     },
     "roles": {
       "setup": {
-        "avg_output_tokens": 3539.6,
-        "sample_n": 5
+        "avg_output_tokens": 3606.28,
+        "sample_n": 6
       },
       "sprint-meta": {
-        "avg_output_tokens": 766,
-        "sample_n": 5
+        "avg_output_tokens": 765.8,
+        "sample_n": 6
       },
       "cycle-state": {
-        "avg_output_tokens": 2665.8,
-        "sample_n": 9
+        "avg_output_tokens": 2421.84,
+        "sample_n": 10
       },
       "planner": {
         "avg_output_tokens": 20134.875,
@@ -120,20 +120,20 @@
         "sample_n": 5
       },
       "ready-streaks": {
-        "avg_output_tokens": 2302.4833333333336,
-        "sample_n": 25
+        "avg_output_tokens": 2134.8866666666668,
+        "sample_n": 27
       },
       "doer": {
-        "avg_output_tokens": 11208.59,
-        "sample_n": 21
+        "avg_output_tokens": 9857.272,
+        "sample_n": 22
       },
       "reviewer": {
-        "avg_output_tokens": 5020.566666666667,
-        "sample_n": 16
+        "avg_output_tokens": 5256.8533333333335,
+        "sample_n": 17
       },
       "log-append-iter": {
-        "avg_output_tokens": 2090.033333333333,
-        "sample_n": 16
+        "avg_output_tokens": 2393.2266666666665,
+        "sample_n": 17
       },
       "push": {
         "avg_output_tokens": 312.5,
@@ -148,8 +148,8 @@
         "sample_n": 2
       },
       "log-append-end": {
-        "avg_output_tokens": 1827.1,
-        "sample_n": 9
+        "avg_output_tokens": 1900.28,
+        "sample_n": 10
       },
       "ci-watcher": {
         "avg_output_tokens": 752,
@@ -160,24 +160,24 @@
         "sample_n": 1
       },
       "final-reviewer": {
-        "avg_output_tokens": 9162,
-        "sample_n": 5
+        "avg_output_tokens": 9326,
+        "sample_n": 6
       },
       "setup-shell": {
-        "avg_output_tokens": 1149.75,
-        "sample_n": 3
+        "avg_output_tokens": 1170.8,
+        "sample_n": 4
       },
       "cycle-meta": {
-        "avg_output_tokens": 1792.2,
-        "sample_n": 7
+        "avg_output_tokens": 1661.7599999999998,
+        "sample_n": 8
       },
       "push-sha": {
-        "avg_output_tokens": 506.1,
-        "sample_n": 7
+        "avg_output_tokens": 719.28,
+        "sample_n": 8
       },
       "exit-check": {
-        "avg_output_tokens": 1360.8,
-        "sample_n": 7
+        "avg_output_tokens": 1308.24,
+        "sample_n": 8
       },
       "feedback-write-reviewer": {
         "avg_output_tokens": 1349,
