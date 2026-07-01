@@ -245,14 +245,14 @@ updates itself -- the reviewer is a pure reader of beads:
 Each dispatch is a fresh subagent run; continuity comes from the files it reads.
 Two ways to continue:
 
-- **Default: fresh dispatch.** Dispatch a new agent of the right role; it
+- **Default: fresh dispatch.** Dispatch a new agent with the right tags (tags: ['doer'] / tags: ['reviewer']); it
   reconstructs context from beads (`bd ready`, `bd show <id>`), `feedback.md`, and
-  `git log`. This is robust and the right choice across phase boundaries and role
+  `git log`. This is robust and the right choice across phase boundaries and tag
   switches -- the agents begin with a context-recovery `git log` and `bd` query.
-- **Tight iteration: continue the same agent.** For a quick same-worktree, same-role
+- **Tight iteration: continue the same agent.** For a quick same-worktree, same-tag
   turn -- e.g. the doer addressing review findings it just produced context for --
   continue the SAME agent instance, which keeps its context. Use this within one
-  worktree and one role; switch roles with a fresh dispatch.
+  worktree and one tag; switch tags with a fresh dispatch.
 
 ## Resume rules
 
@@ -277,18 +277,18 @@ agent's in-session context for a tight follow-up turn.
 | Plan revision (any feedback iteration) | `true` |
 | Initial review dispatch | `false` |
 | Re-review after CHANGES NEEDED + doer fixes | `true` |
-| Role switch (doer -> reviewer, or reviewer -> doer) | `false` |
+| Tag switch (tags: ['doer'] -> tags: ['reviewer'], or vice versa) | `false` |
 | After stop_prompt cancellation (fleet mode) | `false` -- session state unreliable after kill; start fresh |
 | After session timed out mid-grant (fleet mode) | `true` -- fleet auto-recovers but member restarts without prior context |
 
-A role switch always requires sending the new context (context file or inline
-prompt). Never resume across a role switch.
+A tag switch always requires sending the new context (context file or inline
+prompt). Never resume across a tag switch.
 
 ## Safeguards
 
 | Safeguard            | Trigger                          | Orchestrator action                                              | Limit            |
 |----------------------|----------------------------------|------------------------------------------------------------------|------------------|
-| Dispatch retry       | Agent errors or returns nothing  | Re-dispatch the same role fresh; after 3 fails, pause + flag user | 3 per dispatch   |
+| Dispatch retry       | Agent errors or returns nothing  | Re-dispatch the same tag fresh; after 3 fails, pause + flag user | 3 per dispatch   |
 | Doer-reviewer cycle  | Reviewer lists task in `reopenIds`; orchestrator reopens it | Doer fixes, re-review; if 3 cycles leave it open, pause + flag | 3 cycles/task    |
 | Zero progress        | Two fresh dispatches, no commits | Escalate to a stronger model; still stuck after the strongest => flag | 2 per model  |
 | Blocked task         | Doer left a task open with a `blocked:` note | Read the blocker note (bd show <id>); resolve if mechanical, else flag user | --        |
