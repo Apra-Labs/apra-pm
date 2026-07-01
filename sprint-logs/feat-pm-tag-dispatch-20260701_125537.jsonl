@@ -1,0 +1,14 @@
+{"ts":"2026-07-01T12:55:37Z","type":"meta","branch":"feat/pm-tag-dispatch","startedAt":"20260701_125537","roots":["apra-pm-g6q"],"goal":"P2","transcriptDir":"C:\Users\akhil\.claude\projects\C--akhil-git-apra-pm"}
+{"ts":"2026-07-01T12:55:37Z","type":"cycle-start","cycle":1,"branch":"feat/pm-tag-dispatch"}
+{"ts":"2026-07-01T13:03:20-0400","cycle":"setup","phase":"Plan","label":"setup-shell","model":"cheap","context":"","outTokens":1255,"costUsd":0.0063}
+{"ts":"2026-07-01T13:03:20-0400","cycle":"setup","phase":"Plan","label":"setup","model":"cheap","context":"","outTokens":3873,"costUsd":0.0194}
+{"ts":"2026-07-01T13:03:20-0400","cycle":"setup","phase":"Plan","label":"sprint-meta","model":"cheap","context":"","outTokens":765,"costUsd":0.0038}
+{"ts":"2026-07-01T13:03:20-0400","cycle":1,"phase":"Plan","label":"cycle-meta-c1","model":"cheap","context":"","outTokens":1140,"costUsd":0.0057}
+{"ts":"2026-07-01T13:03:20-0400","cycle":1,"phase":"Plan","label":"cycle-state","model":"cheap","context":"","outTokens":1446,"costUsd":0.0072}
+{"ts":"2026-07-01T13:03:20-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":754,"costUsd":0.0038}
+{"ts":"2026-07-01T13:03:20-0400","cycle":1,"phase":"Develop","label":"doer-c1-i0: apra-pm-g6q","model":"standard","context":"tasks apra-pm-g6q","outTokens":4452,"costUsd":0.0668}
+{"ts":"2026-07-01T13:03:20-0400","cycle":1,"phase":"Develop","label":"reviewer-c1-i1: apra-pm-g6q","model":"standard","context":"reviewing tasks apra-pm-g6q","outTokens":6202,"costUsd":0.093}
+{"ts":"2026-07-01T13:04:12-0400","cycle":1,"phase":"Develop","label":"ready-streaks","model":"cheap","context":"","outTokens":2175,"costUsd":0.0109}
+{"ts":"2026-07-01T13:04:12-0400","cycle":1,"phase":"Develop","label":"log-append-iter-c1-i1","model":"cheap","context":"8 new entries","outTokens":3606,"costUsd":0.018}
+{"ts":"2026-07-01T13:04:12-0400","cycle":1,"phase":"Develop","label":"push-sha-c1","model":"cheap","context":"","outTokens":1572,"costUsd":0.0079}
+{"ts":"2026-07-01T13:04:12-0400","cycle":1,"phase":"Develop","label":"exit-check","model":"cheap","context":"","outTokens":1098,"costUsd":0.0055}

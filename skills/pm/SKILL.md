@@ -244,7 +244,10 @@ R8. **[Fleet mode]** When executing a sequence of fleet calls (send_files,
 R9. **[Fleet mode]** For unattended execution, use `update_member(unattended=
     'auto')` for safer auto-approval or `update_member(unattended='dangerous')`
     for full permission bypass. Always compose and deliver permissions via
-    `compose_permissions` before dispatch (see `fleet-addendum.md`).
+    `compose_permissions` before dispatch, selecting members by tags (tags: ['doer'] /
+    tags: ['reviewer']). Never select members by role name or naming convention --
+    use tag queries exclusively (see Member selection below).
+    See `fleet-addendum.md`.
 R10. During a sprint, every doer/reviewer turn updates beads (claim/close/reopen)
      and commits its code and feedback.md to the branch -- these carry the living
      state of the sprint. Only the agent context file stays uncommitted.
@@ -259,6 +262,44 @@ R14. Always read referenced sub-documents before executing PM commands.
 Rules marked **[Fleet mode]** apply only when running with fleet members. In
 local subagent mode they are skipped or adapted (see `fleet-addendum.md` for
 the fleet-specific execution model).
+
+## Member selection (fleet mode)
+
+Always select fleet members by tag query -- never by role name, display name, or
+any naming convention. The `list_members` tool accepts a `tags` filter that
+returns only members carrying all of the listed tags.
+
+### Basic tag queries
+
+```
+list_members(tags: ['doer'])      # all members tagged doer
+list_members(tags: ['reviewer'])  # all members tagged reviewer
+```
+
+Pick the first available result (or the preferred one if multiple match), then
+dispatch to it. Rerun the query when switching from doer to reviewer roles -- do
+not cache results across tag switches.
+
+### Multi-tag queries for capability-based dispatch
+
+When a task requires a specific capability (e.g. a particular VCS platform,
+language, or environment), narrow the query with additional tags:
+
+```
+list_members(tags: ['reviewer', 'bitbucket'])  # reviewer with Bitbucket access
+list_members(tags: ['doer', 'python'])          # doer with Python capability
+list_members(tags: ['doer', 'rust'])            # doer with Rust capability
+```
+
+Multi-tag queries return members that carry ALL listed tags. If no member
+matches a narrow query, fall back to the single-tag query (`tags: ['doer']` /
+`tags: ['reviewer']`) and note the missing capability in the dispatch prompt.
+
+### compose_permissions and permissions delivery
+
+After selecting a member with `list_members`, compose and deliver permissions
+via `compose_permissions` using the same tag set before every dispatch. See
+`fleet-addendum.md` for the full permissions workflow.
 
 ## Secrets and credentials (fleet mode)
 

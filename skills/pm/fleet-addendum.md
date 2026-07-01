@@ -21,9 +21,10 @@ mode.
 ## Permissions
 
 Compose and deliver permissions per the fleet skill permissions.md for each
-member's role before dispatch. Recompose when switching roles (doer to reviewer
-or vice versa). Each provider gets its native permission config --
-compose_permissions handles the format automatically.
+member using tag-based selection: tags: ['doer'] for doer members, tags: ['reviewer']
+for reviewer members. Recompose when switching tags (doer to reviewer or vice versa).
+Each provider gets its native permission config -- compose_permissions handles the
+format automatically.
 
 Call compose_permissions before EVERY dispatch regardless of unattended mode.
 
@@ -66,7 +67,8 @@ background orchestration sub-task within the PM's own session.
 1. Record pair in status.md. Multiple pairs per project is normal.
 2. Override icons via update_member -- doer gets circle, reviewer gets square,
    same color.
-3. Compose and deliver permissions for each member's role.
+3. Compose and deliver permissions for each member using tag-based selection:
+   tags: ['doer'] for the doer, tags: ['reviewer'] for the reviewer.
 4. Send the role-specific agent context file via send_files before dispatch.
 
 ## Agent context file delivery
