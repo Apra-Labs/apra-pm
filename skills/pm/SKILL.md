@@ -244,7 +244,9 @@ R8. **[Fleet mode]** When executing a sequence of fleet calls (send_files,
 R9. **[Fleet mode]** For unattended execution, use `update_member(unattended=
     'auto')` for safer auto-approval or `update_member(unattended='dangerous')`
     for full permission bypass. Always compose and deliver permissions via
-    `compose_permissions` before dispatch (see `fleet-addendum.md`).
+    `compose_permissions` before dispatch, selecting members by tags (tags: ['doer'] /
+    tags: ['reviewer']) rather than role. (Legacy role param still works during transition.)
+    See `fleet-addendum.md`.
 R10. During a sprint, every doer/reviewer turn updates beads (claim/close/reopen)
      and commits its code and feedback.md to the branch -- these carry the living
      state of the sprint. Only the agent context file stays uncommitted.
