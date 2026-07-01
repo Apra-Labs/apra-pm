@@ -109,6 +109,16 @@ test('doer-reviewer-loop.md preserves git identity pm-reviewer', () => {
     'doer-reviewer-loop.md must contain git identity pm-reviewer');
 });
 
+test('doer-reviewer-loop.md preserves git identity pm-planner', () => {
+  assert.match(doerReviewerLoopMd, /pm-planner/,
+    'doer-reviewer-loop.md must contain git identity pm-planner');
+});
+
+test('doer-reviewer-loop.md preserves git identity pm-plan-reviewer', () => {
+  assert.match(doerReviewerLoopMd, /pm-plan-reviewer/,
+    'doer-reviewer-loop.md must contain git identity pm-plan-reviewer');
+});
+
 // Test 14: Per-role prompt templates section and headings are intact
 test('doer-reviewer-loop.md preserves "Per-role prompt templates" section heading', () => {
   assert.match(doerReviewerLoopMd, /Per-role prompt templates/,
