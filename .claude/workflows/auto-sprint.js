@@ -97,11 +97,13 @@ const TIER_CHEAP    = 'cheap';
 const TIER_STANDARD = 'standard';
 const TIER_PREMIUM  = 'premium';
 
-// Claude model IDs -- change here only, nowhere else in this file.
+// Bare model-family aliases -- agent()/CLI dispatch resolves these to the
+// current generation automatically, so this never goes stale as Anthropic
+// ships new models. Do not pin to a dated model ID here.
 const TIER_TO_MODEL = {
-  [TIER_CHEAP]:    'claude-haiku-4-5',
-  [TIER_STANDARD]: 'claude-sonnet-4-6',
-  [TIER_PREMIUM]:  'claude-opus-4-8',
+  [TIER_CHEAP]:    'haiku',
+  [TIER_STANDARD]: 'sonnet',
+  [TIER_PREMIUM]:  'opus',
 };
 
 // Legacy aliases kept so existing dispatch call-sites (model: MODEL_OPUS etc.) are unchanged.
