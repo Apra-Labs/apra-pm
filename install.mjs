@@ -148,13 +148,85 @@ function mergePermissions(settingsFile, perms) {
   return added;
 }
 
+// Fallback list of agent basenames installed by this script, used only when
+// agentsSrc (the apra-pm repo's agents/ dir) is not available at uninstall
+// time -- keeps uninstall correct even if it is ever run from outside a repo
+// checkout. Keep in sync with agents/*.md.
+const KNOWN_AGENT_FILES = [
+  'planner.md', 'plan-reviewer.md', 'doer.md', 'reviewer.md',
+  'deployer.md', 'integ-test-runner.md', 'ci-watcher.md', 'harvester.md',
+];
+
+// --- uninstall ---------------------------------------------------------------
+// Removes exactly what install() would have added for this provider, and
+// nothing else:
+//   - the whole <configDir>/skills/pm/ directory (including cost.js)
+//   - only the agent files this installer writes (agents/*.md by name), so any
+//     of a user's own agents living in the same directory survive
+//   - only the permission strings install() would have merged in, leaving any
+//     permissions the user configured themselves untouched
+//   - for Claude, the native auto-sprint workflow file it copied in
+// Safe to call even if nothing was ever installed (each step is a no-op then).
+function uninstall(cfg, agentsSrc) {
+  const skillDest = path.join(cfg.configDir, 'skills', 'pm');
+  const agentsDest = path.join(cfg.configDir, 'agents');
+  const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
+
+  const removed = { skill: false, agents: [], permsRemoved: 0, workflow: false };
+
+  // 1) skill directory
+  if (fs.existsSync(skillDest)) {
+    fs.rmSync(skillDest, { recursive: true, force: true });
+    removed.skill = true;
+  }
+
+  // 2) agents -- remove only the files install() writes, by name.
+  const agentNames = fs.existsSync(agentsSrc)
+    ? fs.readdirSync(agentsSrc).filter((f) => f.endsWith('.md'))
+    : KNOWN_AGENT_FILES;
+  if (fs.existsSync(agentsDest)) {
+    for (const a of agentNames) {
+      const p = path.join(agentsDest, a);
+      if (fs.existsSync(p)) {
+        fs.rmSync(p, { force: true });
+        removed.agents.push(a);
+      }
+    }
+  }
+
+  // 3) permissions -- drop exactly the entries install() would have added.
+  if (fs.existsSync(settingsFile)) {
+    const settings = readJson(settingsFile);
+    if (settings.permissions && Array.isArray(settings.permissions.allow)) {
+      const installedPerms = new Set(requiredPermissions(cfg));
+      if (cfg.name === 'Claude') for (const p of claudeOnlyPermissions()) installedPerms.add(p);
+      const before = settings.permissions.allow.length;
+      settings.permissions.allow = settings.permissions.allow.filter((p) => !installedPerms.has(p));
+      removed.permsRemoved = before - settings.permissions.allow.length;
+      writeJson(settingsFile, settings);
+    }
+  }
+
+  // 4) claude-only: the native /auto-sprint workflow file
+  if (cfg.name === 'Claude') {
+    const workflowDest = path.join(cfg.configDir, 'workflows', 'auto-sprint.js');
+    if (fs.existsSync(workflowDest)) {
+      fs.rmSync(workflowDest, { force: true });
+      removed.workflow = true;
+    }
+  }
+
+  return removed;
+}
+
 // --- main ------------------------------------------------------------------
 function parseArgs(argv) {
-  const args = { llm: 'claude', force: false, help: false };
+  const args = { llm: 'claude', force: false, help: false, uninstall: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--force') args.force = true;
+    else if (a === '--uninstall') args.uninstall = true;
     else if (a === '--llm') args.llm = argv[++i];
     else if (a.startsWith('--llm=')) args.llm = a.split('=')[1];
     else throw new Error(`unknown argument "${a}" (try --help)`);
@@ -173,6 +245,8 @@ Usage:
 Options:
   --llm <provider>   claude (default) | gemini | agy | opencode
   --force            reinstall even if already present
+  --uninstall        remove everything a prior install added (skill, agents,
+                     auto-sprint workflow, and the permissions it merged in)
   --help             show this help
 
 What it installs:
@@ -205,8 +279,23 @@ function main() {
   try { cfg = providerConfig(args.llm); }
   catch (e) { console.error(`error: ${e.message}`); process.exit(2); }
 
-  const skillSrc = path.join(ROOT, 'skills', 'pm');
   const agentsSrc = path.join(ROOT, 'agents');
+
+  if (args.uninstall) {
+    console.log(`Uninstalling pm for ${cfg.name} ...`);
+    const removed = uninstall(cfg, agentsSrc);
+    console.log(`  skill        -> ${removed.skill ? 'removed' : 'not found (nothing to do)'}`);
+    console.log(`  agents       -> ${removed.agents.length} removed${removed.agents.length ? ` (${removed.agents.join(', ')})` : ''}`);
+    console.log(`  permissions  -> ${removed.permsRemoved} removed`);
+    if (cfg.name === 'Claude') {
+      console.log(`  workflow     -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);
+    }
+    console.log('');
+    console.log('pm uninstalled.');
+    return;
+  }
+
+  const skillSrc = path.join(ROOT, 'skills', 'pm');
   if (!fs.existsSync(skillSrc) || !fs.existsSync(agentsSrc)) {
     console.error('error: run this from the apra-pm repo root (skills/ and agents/ not found)');
     process.exit(1);
@@ -349,4 +438,4 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   main();
 }
 
-export { claudeOnlyPermissions, requiredPermissions, mergePermissions };
+export { claudeOnlyPermissions, requiredPermissions, mergePermissions, uninstall, providerConfig };

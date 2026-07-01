@@ -15,11 +15,18 @@
 // cache) is captured per run and reported in the summary for cost-regression tracking.
 //
 // Usage:
-//   node e2e/run-e2e.mjs [--suite s1,s10] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr]
+//   node e2e/run-e2e.mjs [--suite s1,s10] [--provider claude|gemini|agy|opencode] [--timeout 1800] [--keep-pr] [--keep-install]
 //
 // Selection: default is all suites. --suite accepts comma-separated IDs (e.g. s1,s10)
 // and may be repeated. --provider filters by provider. The skill must be installed
 // first (node install.mjs --llm <provider>).
+//
+// Teardown: after each suite this runner uninstalls pm for that suite's provider
+// (node install.mjs --uninstall --llm <provider>) -- the skill, its agents, the
+// auto-sprint workflow file, and the permissions install() added are all removed,
+// so repeated e2e runs (and anything else on a shared/self-hosted runner) never
+// accumulate stale pm state. Pass --keep-install to skip this, e.g. when debugging
+// a failure locally and you want the installed skill left in place afterward.
 //
 // Auth: pushing the branch and opening the PR needs write access to the toy. Provide
 // it via GH_TOKEN / E2E_GH_TOKEN (wired into the push URL and gh), or rely on the
@@ -70,13 +77,14 @@ function which(bin) {
 }
 
 function parseArgs() {
-  const a = { suites: [], provider: null, timeout: 5400, keepPr: false };
+  const a = { suites: [], provider: null, timeout: 5400, keepPr: false, keepInstall: false };
   const v = process.argv.slice(2);
   for (let i = 0; i < v.length; i++) {
     if (v[i] === '--suite') a.suites.push(...v[++i].split(',').map((s) => s.trim()).filter(Boolean));
     else if (v[i] === '--provider') a.provider = v[++i];
     else if (v[i] === '--timeout') a.timeout = Number(v[++i]);
     else if (v[i] === '--keep-pr') a.keepPr = true;
+    else if (v[i] === '--keep-install') a.keepInstall = true;
     else { console.error(`unknown arg "${v[i]}"`); process.exit(2); }
   }
   return a;
@@ -134,6 +142,19 @@ function teardownPr(branch, token) {
   spawnSync('gh', ['pr', 'close', branch, '-R', OWNER_REPO, '--delete-branch'], { encoding: 'utf-8', env });
   // Drop the branch even if no PR was opened (failure before the pr step).
   spawnSync('gh', ['api', '-X', 'DELETE', `repos/${OWNER_REPO}/git/refs/heads/${branch}`], { encoding: 'utf-8', env });
+}
+
+// Uninstall pm for this suite's provider after the run -- skill, agents,
+// auto-sprint workflow, and the permissions install() merged in. Runs
+// install.mjs itself (rather than importing it) so this stays correct even
+// if the installer's internals change. Best effort: a failure here should not
+// fail the suite, since the run's own pass/fail was already decided by the
+// validation gates above.
+function teardownInstall(provider, repoRoot) {
+  const r = spawnSync('node', ['install.mjs', '--uninstall', '--llm', provider], { cwd: repoRoot, encoding: 'utf-8' });
+  if (r.status !== 0) {
+    console.log(`[teardown] pm uninstall for ${provider} failed (exit ${r.status}): ${(r.stderr || r.stdout || '').trim().slice(0, 200)}`);
+  }
 }
 
 function selectSuites(a) {
@@ -209,7 +230,7 @@ function runAgy(cmd, args, cwd, logPath, isDone, timeoutS) {
   return { timedOut: false };
 }
 
-function runSuite(suite, timeoutS, keepPr) {
+function runSuite(suite, timeoutS, keepPr, keepInstall) {
   const res = { id: suite.id, provider: suite.provider, status: '', notes: '', pr: null, telemetry: null, gates: null };
   res.os = process.platform;
   const { bin } = commandFor(suite.provider, '', suite.model);
@@ -288,6 +309,7 @@ function runSuite(suite, timeoutS, keepPr) {
   }
 
   if (!keepPr) teardownPr(branch, token);
+  if (!keepInstall) teardownInstall(suite.provider, path.join(E2E, '..'));
   return res;
 }
 
@@ -298,7 +320,7 @@ async function main() {
 
   const results = [];
   for (const s of suites) {
-    const r = runSuite(s, a.timeout, a.keepPr);
+    const r = runSuite(s, a.timeout, a.keepPr, a.keepInstall);
     console.log(`[${r.id}] ${r.status} -- ${r.notes}`);
     if (r.pr) console.log(`[${r.id}] commits: ${r.pr.commitsUrl}`);
     results.push(r);
