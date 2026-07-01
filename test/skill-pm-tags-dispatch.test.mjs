@@ -14,6 +14,11 @@ const fleetAddendumMd = readFileSync(
   'utf-8'
 );
 
+const doerReviewerLoopMd = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '../skills/pm/doer-reviewer-loop.md'),
+  'utf-8'
+);
+
 // Test 1: tags: ['doer'] appears in permission-composition guidance in SKILL.md
 test('SKILL.md R9 uses tags: [\'doer\'] for doer member permission selection', () => {
   assert.match(skillMd, /tags:\s*\[\s*['"]doer['"]\s*\]/,
@@ -69,4 +74,71 @@ test('fleet-addendum.md permission guidance must not contain role: doer or role:
 test('fleet-addendum.md states compose_permissions called before EVERY dispatch', () => {
   assert.match(fleetAddendumMd, /compose_permissions.*?before.*?EVERY.*?dispatch/is,
     'fleet-addendum.md must state compose_permissions is called before every dispatch');
+});
+
+// Phase 4b Tests: doer-reviewer-loop.md tag-based dispatch validation
+
+// Test 10: tags: ['doer'] appears in dispatch guidance in doer-reviewer-loop.md
+test('doer-reviewer-loop.md Continuity section uses tags: [\'doer\'] for doer dispatch', () => {
+  assert.match(doerReviewerLoopMd, /tags:\s*\[\s*['"]doer['"]\s*\]/,
+    'doer-reviewer-loop.md must contain tags: [\'doer\'] in dispatch/continuity guidance');
+});
+
+// Test 11: tags: ['reviewer'] appears in dispatch guidance in doer-reviewer-loop.md
+test('doer-reviewer-loop.md Continuity section uses tags: [\'reviewer\'] for reviewer dispatch', () => {
+  assert.match(doerReviewerLoopMd, /tags:\s*\[\s*['"]reviewer['"]\s*\]/,
+    'doer-reviewer-loop.md must contain tags: [\'reviewer\'] in dispatch/continuity guidance');
+});
+
+// Test 12: No role-based dispatch wording in doer-reviewer-loop.md
+test('doer-reviewer-loop.md dispatch guidance must not contain role: doer or role: reviewer', () => {
+  // Look for "dispatch" followed by "role: doer" or "role: reviewer" in dispatch context
+  const roleBasedDispatch = /dispatch.*?role:\s*['"]?(doer|reviewer)/is;
+  assert.doesNotMatch(doerReviewerLoopMd, roleBasedDispatch,
+    'doer-reviewer-loop.md must not use role-based dispatch wording');
+});
+
+// Test 13: Git identities pm-doer and pm-reviewer preserved in doer-reviewer-loop.md
+test('doer-reviewer-loop.md preserves git identity pm-doer', () => {
+  assert.match(doerReviewerLoopMd, /pm-doer/,
+    'doer-reviewer-loop.md must contain git identity pm-doer');
+});
+
+test('doer-reviewer-loop.md preserves git identity pm-reviewer', () => {
+  assert.match(doerReviewerLoopMd, /pm-reviewer/,
+    'doer-reviewer-loop.md must contain git identity pm-reviewer');
+});
+
+// Test 14: Per-role prompt templates section and headings are intact
+test('doer-reviewer-loop.md preserves "Per-role prompt templates" section heading', () => {
+  assert.match(doerReviewerLoopMd, /Per-role prompt templates/,
+    'doer-reviewer-loop.md must contain "Per-role prompt templates" section');
+});
+
+test('doer-reviewer-loop.md preserves planner/plan-reviewer/doer/reviewer template headings', () => {
+  assert.match(doerReviewerLoopMd, /### planner/,
+    'doer-reviewer-loop.md must contain planner template section');
+  assert.match(doerReviewerLoopMd, /### plan-reviewer/,
+    'doer-reviewer-loop.md must contain plan-reviewer template section');
+  assert.match(doerReviewerLoopMd, /### doer/,
+    'doer-reviewer-loop.md must contain doer template section');
+  assert.match(doerReviewerLoopMd, /### reviewer/,
+    'doer-reviewer-loop.md must contain reviewer template section');
+});
+
+// Test 15: Loop structure and section headings are intact
+test('doer-reviewer-loop.md preserves "The loop (the Develop phase of one cycle)" section', () => {
+  assert.match(doerReviewerLoopMd, /The loop \(the Develop phase of one cycle\)/,
+    'doer-reviewer-loop.md must contain "The loop" section');
+});
+
+test('doer-reviewer-loop.md preserves doer-reviewer cycle safeguard table', () => {
+  assert.match(doerReviewerLoopMd, /Doer-reviewer cycle/,
+    'doer-reviewer-loop.md must contain doer-reviewer cycle safeguard');
+});
+
+// Test 16: Tag switch resume rule is documented
+test('doer-reviewer-loop.md documents tag switch requires fresh dispatch', () => {
+  assert.match(doerReviewerLoopMd, /Tag switch.*?tags.*?\['doer'\].*?\['reviewer'\]/is,
+    'doer-reviewer-loop.md must document tag switch requires fresh dispatch');
 });
