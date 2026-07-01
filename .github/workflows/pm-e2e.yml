@@ -182,3 +182,13 @@ jobs:
           name: pm-e2e-${{ inputs.suite }}
           path: e2e-results/
           if-no-files-found: ignore
+
+      # Safety net: run-e2e.mjs already uninstalls pm after each suite (see
+      # teardownInstall() in e2e/run-e2e.mjs). This step only catches the case
+      # where the script itself crashed or was killed by timeout-minutes before
+      # reaching that teardown, so runners never carry stale pm state (skill,
+      # agents, auto-sprint workflow, permissions) into the next e2e run.
+      - name: Uninstall pm skill (teardown safety net)
+        if: always()
+        shell: bash
+        run: node install.mjs --uninstall --llm "${{ steps.prov.outputs.provider }}" || true
