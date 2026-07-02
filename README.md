@@ -1,5 +1,14 @@
 # apra-pm
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Apra-Labs/apra-pm)
+
+New here? Ask [DeepWiki](https://deepwiki.com/Apra-Labs/apra-pm) a question in
+plain language -- "how does the develop loop decide when to stop", "what does
+plan-reviewer check before approving", "how is cost calibration computed" --
+and get an answer backed by an indexed, cross-file map of this repo. It is
+usually faster than reading through `auto-sprint.js` and the agent files
+yourself, especially for a first pass before diving into the code below.
+
 A project management package for AI coding harnesses. It ships two complementary
 surfaces that share the same eight agents:
 
