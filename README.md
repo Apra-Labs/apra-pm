@@ -1,5 +1,7 @@
 # apra-pm
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Apra-Labs/apra-pm)
+
 A project management package for AI coding harnesses. It ships two complementary
 surfaces that share the same eight agents:
 
