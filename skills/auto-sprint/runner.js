@@ -332,6 +332,7 @@ const STATUS_HTML = `<!DOCTYPE html>
       padding: 30px;
       background: var(--bg-glass);
       backdrop-filter: blur(12px);
+      overflow-y: auto;
     }
     .phase-list { list-style: none; }
     .phase-item {
@@ -371,7 +372,7 @@ const STATUS_HTML = `<!DOCTYPE html>
     }
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 20px;
       margin-bottom: 40px;
     }
@@ -410,29 +411,29 @@ const STATUS_HTML = `<!DOCTYPE html>
     .task-list {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 8px;
     }
     .task-item {
       background: var(--bg-glass);
       border: 1px solid var(--border);
       border-left: 3px solid var(--accent);
-      padding: 16px 20px;
+      padding: 12px 16px;
       border-radius: 8px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       animation: slideIn 0.3s ease;
     }
-    .task-item .task-name { font-weight: 600; font-size: 15px; }
-    .task-item .task-agent { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+    .task-item .task-name { font-weight: 600; font-size: 14px; }
+    .task-item .task-agent { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
     .task-item .task-status { 
-      font-size: 12px; 
-      padding: 4px 12px; 
+      font-size: 11px; 
+      padding: 4px 10px; 
       border-radius: 12px; 
       background: rgba(255,255,255,0.1); 
     }
     .task-item.running .task-status { background: var(--accent-glow); color: var(--accent); }
-    .task-item.done .task-status { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+    .task-item.done .task-status { background: rgba(16, 185, 129, 0.1); color: var(--success); border-left-color: var(--success); }
     
     .terminal {
       background: #000;
@@ -487,6 +488,10 @@ const STATUS_HTML = `<!DOCTYPE html>
         <li class="phase-item" data-phase="Test">Test</li>
         <li class="phase-item" data-phase="Harvest">Harvest</li>
       </ul>
+      <div class="section-title" style="margin-top: 40px; margin-bottom: 20px;">Task Activity</div>
+      <div class="task-list" id="task-list">
+        <!-- Tasks injected here grouped by phase -->
+      </div>
     </div>
     
     <div class="content-area">
@@ -506,15 +511,12 @@ const STATUS_HTML = `<!DOCTYPE html>
           <div class="stat-value" id="stat-cost" style="color: var(--success);">-</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Active Agent</div>
-          <div class="stat-value" id="stat-agent" style="font-size: 20px;">-</div>
+          <div class="stat-label">Calls / Tokens</div>
+          <div class="stat-value" id="stat-calls-tokens" style="font-size: 20px;">-</div>
         </div>
-      </div>
-      
-      <div class="tasks-section">
-        <div class="section-title">Recent Activity</div>
-        <div class="task-list" id="task-list">
-          <!-- Tasks injected here -->
+        <div class="stat-card">
+          <div class="stat-label">Active Agent</div>
+          <div class="stat-value" id="stat-agent" style="font-size: 18px;">-</div>
         </div>
       </div>
       
@@ -524,24 +526,8 @@ const STATUS_HTML = `<!DOCTYPE html>
   </div>
 
   <script>
+    const phases = ['setup', 'Plan', 'Develop', 'Test', 'Harvest', '?'];
     let lastLogCount = 0;
-    
-    function parseActivity(logs) {
-      const activities = [];
-      for (const log of logs) {
-        if (log.includes('dispatch: ')) {
-          const match = log.match(/dispatch: (.*?) \[(.*?)\]/);
-          if (match) {
-            activities.push({ name: match[1], agent: match[2], status: 'Running', type: 'dispatch' });
-          }
-        } else if (log.includes('returned status: ') || log.includes('Cycle state:') || log.includes('Plan approved') || log.includes('dispatch error') || log.includes('Cycle ') && log.includes('complete')) {
-          if (activities.length > 0) {
-            activities[activities.length - 1].status = 'Done';
-          }
-        }
-      }
-      return activities.slice(-4).reverse();
-    }
 
     async function poll() {
       try {
@@ -563,6 +549,11 @@ const STATUS_HTML = `<!DOCTYPE html>
         document.getElementById('stat-cost').textContent = '$' + (s.costUsd || 0).toFixed(4);
         document.getElementById('stat-agent').textContent = s.currentAgent || 'Idle';
         
+        const ledger = s.ledger || [];
+        const totalCalls = ledger.length;
+        const totalTokens = ledger.reduce((acc, l) => acc + (l.outTokens || 0), 0);
+        document.getElementById('stat-calls-tokens').textContent = totalCalls + ' / ' + totalTokens.toLocaleString();
+        
         const banner = document.getElementById('banner');
         if (s.goalMet) {
           banner.className = 'banner success';
@@ -574,18 +565,33 @@ const STATUS_HTML = `<!DOCTYPE html>
           banner.style.display = 'block';
         }
         
-        const activities = parseActivity(s.log || []);
         const taskList = document.getElementById('task-list');
-        if (!activities.length) {
-          taskList.innerHTML = '<div style="color:var(--text-muted);font-size:14px;padding:16px;">Waiting for tasks...</div>';
+        if (!ledger.length) {
+          taskList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>';
         } else {
-          taskList.innerHTML = activities.map(act => {
-            const isDone = act.status === 'Done';
-            return '<div class="task-item ' + (isDone ? 'done' : 'running') + '">' +
-                   '<div><div class="task-name">' + act.name + '</div>' +
-                   '<div class="task-agent">Agent: ' + act.agent + '</div></div>' +
-                   '<div class="task-status">' + act.status + '</div></div>';
-          }).join('');
+          const byPhase = {};
+          ledger.forEach((act, idx) => {
+             const phase = act.phase || '?';
+             if (!byPhase[phase]) byPhase[phase] = [];
+             // If it's the very last ledger entry, it's 'running' unless sprint is done
+             const isRunning = (idx === ledger.length - 1) && !s.goalMet && !s.abortReason;
+             byPhase[phase].push({ ...act, isRunning });
+          });
+          
+          let html = '';
+          for (const phase of phases) {
+            const acts = byPhase[phase];
+            if (acts && acts.length > 0) {
+               html += '<div style="margin-top: 12px; margin-bottom: 8px; font-weight: 600; font-size: 13px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">' + phase + '</div>';
+               acts.forEach(act => {
+                 html += '<div class="task-item ' + (act.isRunning ? 'running' : 'done') + '" style="margin-bottom: 8px;">' +
+                         '<div><div class="task-name">' + act.label + '</div>' +
+                         '<div class="task-agent">Agent: ' + act.model + ' | Tokens: ' + (act.outTokens || 0) + '</div></div>' +
+                         '<div class="task-status">C' + (act.cycle === 'setup' ? '0' : act.cycle) + '</div></div>';
+               });
+            }
+          }
+          taskList.innerHTML = html;
         }
         
         if (s.log && s.log.length !== lastLogCount) {
@@ -614,6 +620,7 @@ const STATUS_HTML = `<!DOCTYPE html>
   </script>
 </body>
 </html>`;
+
 
 
 // ---------------------------------------------------------------------------
@@ -990,7 +997,8 @@ process.on('uncaughtException', function(err) {
     _statusServer = http.createServer(function(req, res) {
       if (req.url === '/state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(_liveState));
+        const statePayload = Object.assign({}, _liveState, { ledger: dispatchLedger });
+        res.end(JSON.stringify(statePayload));
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/html' });
