@@ -138,3 +138,224 @@ function shellExtract(jsonStr, extractFn) {
     return null;
   }
 }
+// ---------------------------------------------------------------------------
+// Schema constants (ported from auto-sprint.js)
+// ---------------------------------------------------------------------------
+
+const REVIEW_SCHEMA = {
+  type: 'object', required: ['verdict', 'notes'],
+  properties: {
+    verdict: { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
+    notes:   { type: 'string' },
+  },
+};
+
+const PLAN_REVIEW_SCHEMA = {
+  type: 'object', required: ['verdict', 'notes', 'taskAssignments'],
+  properties: {
+    verdict:         { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
+    notes:           { type: 'string' },
+    taskAssignments: {
+      type: 'array',
+      items: {
+        type: 'object', required: ['id', 'bucket', 'model'],
+        properties: {
+          id:     { type: 'string' },
+          bucket: { type: 'string', enum: ['S', 'M', 'L'] },
+          model:  { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
+const SHELL_OUTPUTS_SCHEMA = {
+  type: 'object', required: ['outputs'],
+  properties: {
+    outputs: { type: 'array', items: { type: 'string' } },
+  },
+};
+
+const DOER_STATUS_SCHEMA = {
+  type: 'object', required: ['status'],
+  properties: {
+    status:  { type: 'string', enum: ['VERIFY'] },
+    notes:   { type: 'string' },
+  },
+};
+
+const HARVEST_SCHEMA = {
+  type: 'object', required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['OK', 'FAILED'] },
+    notes:  { type: 'string' },
+  },
+};
+
+const CI_SCHEMA = {
+  type: 'object', required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['green', 'red', 'not_configured', 'pending'] },
+    notes:  { type: 'string' },
+  },
+};
+
+const INTEG_RUN_SCHEMA = {
+  type: 'object', required: ['featuresClosed', 'issuesCreated', 'summary'],
+  properties: {
+    featuresClosed: { type: 'number' },
+    issuesCreated:  { type: 'number' },
+    summary:        { type: 'string' },
+  },
+};
+
+// TIER_TO_MODEL: provider-agnostic model family aliases.
+// Tier-to-actual-model resolution is fleet server-side; these aliases are used
+// only for the parseReadyStreaks normalisation pass (pre-migration model IDs).
+const TIER_TO_MODEL = {
+  [TIER_CHEAP]:    'haiku',
+  [TIER_STANDARD]: 'sonnet',
+  [TIER_PREMIUM]:  'opus',
+};
+
+// ---------------------------------------------------------------------------
+// SHELL_DISPATCH_PROMPT_HEADER (exact string from auto-sprint.js)
+// ---------------------------------------------------------------------------
+const SHELL_DISPATCH_PROMPT_HEADER =
+  `Run each command below EXACTLY ONCE, in order. Return each command's stdout ` +
+  `as one string element of outputs[] (same order; outputs.length must equal the ` +
+  `number of commands).\n` +
+  `Rules: do NOT summarize, reformat, interpret, or escape the output. Do NOT ` +
+  `re-run any command. Do NOT retry on empty or unexpected output -- an empty ` +
+  `string is a valid result; just return it. This is a single attempt: run, ` +
+  `capture, return, stop.\n\n`;
+
+// ---------------------------------------------------------------------------
+// Pure parsers (exact ports from auto-sprint.js)
+// ---------------------------------------------------------------------------
+
+function collectSubtreeIds(outputs, rootCount) {
+  const ids = new Set();
+  for (let i = 0; i < rootCount; i++) {
+    String(outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => ids.add(id));
+  }
+  return ids;
+}
+
+// parseBlockers: contract {count, ids} of open issues with priority<=threshold
+// inside the sprint-goal subtree.
+function parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds) {
+  if (!Array.isArray(outputs) || outputs.length < openListIdx + 1) return { count: 999, ids: [] };
+  const subtree = collectSubtreeIds(outputs, rootCount);
+  const rootSet = Array.isArray(rootIds) && rootIds.length > 0 ? new Set(rootIds) : null;
+  let ids = [];
+  try {
+    const open = JSON.parse(outputs[openListIdx]);
+    ids = Array.isArray(open)
+      ? open.filter(x => subtree.has(x.id) && (!rootSet || rootSet.has(x.id)) && x.p <= threshold).map(x => x.id)
+      : [];
+  } catch { ids = []; }
+  return { count: ids.length, ids };
+}
+
+// parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks by model.
+function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
+  if (!Array.isArray(outputs) || outputs.length < readyListIdx + 1) return { totalCount: 0, streaks: [] };
+  const subtree = collectSubtreeIds(outputs, rootCount);
+  let readyTasks = [];
+  try {
+    const all = JSON.parse(outputs[readyListIdx]);
+    readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
+  } catch { readyTasks = []; }
+
+  const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
+  const MODEL_TO_TIER = Object.fromEntries(Object.entries(TIER_TO_MODEL).map(([t, id]) => [id, t]));
+
+  const byModel = {};
+  for (const t of readyTasks) {
+    const rawModel = t.m || defaultModel;
+    let model = rawModel;
+    if (!KNOWN_TIERS.has(rawModel)) {
+      const tier = MODEL_TO_TIER[rawModel];
+      if (tier) {
+        model = tier;
+        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: pre-migration model '${rawModel}' normalised to tier '${model}'`);
+      } else {
+        model = defaultModel;
+        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: unrecognised model '${rawModel}', defaulting to '${defaultModel}'`);
+      }
+    }
+    if (!byModel[model]) byModel[model] = [];
+    byModel[model].push({ id: t.id, priority: t.p });
+  }
+  const streaks = Object.entries(byModel).map(([model, tasks]) => ({
+    model,
+    ids: tasks.slice().sort((a, b) => a.priority - b.priority).map(x => x.id),
+    _min: Math.min(...tasks.map(x => x.priority)),
+  })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
+
+  return { totalCount: readyTasks.length, streaks };
+}
+
+// parseCycleState: contract {planDone, inProgressIds}.
+function parseCycleState(outputs, rootCount) {
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { planDone: false, inProgressIds: [] };
+  const inProgressIds = String(outputs[rootCount] || '').trim().split(/\s+/).filter(Boolean);
+  const planDone = Array.from({ length: rootCount }).every((_, i) => {
+    try {
+      const issues = JSON.parse(outputs[i]);
+      if (!Array.isArray(issues)) return false;
+      const features = issues.filter(x => x.t === 'feature');
+      if (features.length === 0) return false;
+      const openFts = features.filter(x => x.s !== 'closed');
+      if (openFts.length === 0) return true;
+      const tasks = issues.filter(x => x.t === 'task');
+      if (tasks.length === 0) return false;
+      return tasks.every(x => x.d);
+    } catch { return false; }
+  });
+  return { planDone, inProgressIds };
+}
+
+// truncateStreakToCeiling: returns the longest in-order prefix of streakIds whose
+// summed estimated doer output tokens stays at/under calibration.doer_token_ceiling[tier].
+// Always returns at least one task. Never truncates when no ceiling is configured.
+function truncateStreakToCeiling(streakIds, bucketById, calibration, tier) {
+  if (!Array.isArray(streakIds) || streakIds.length === 0) return [];
+  const ceilings = (calibration && calibration.doer_token_ceiling) || {};
+  const ceiling  = ceilings[tier];
+  if (typeof ceiling !== 'number' || ceiling <= 0) return streakIds.slice();
+
+  const hist     = (calibration && calibration.historical) || {};
+  const buckets  = (calibration && calibration.complexity_buckets) || {};
+  const histToks = hist.bucket_avg_tokens || {};
+  const estFor = id => {
+    const bucket = bucketById ? bucketById[id] : undefined;
+    const h = histToks[bucket];
+    if (hist.sprints_sampled >= 1 && h != null) return Math.round(h);
+    const def = buckets[bucket] || buckets.M || { doer_tokens: 0 };
+    return def.doer_tokens || 0;
+  };
+
+  let sum = 0;
+  const kept = [];
+  for (const id of streakIds) {
+    const est = estFor(id);
+    if (kept.length > 0 && sum + est > ceiling) break;
+    kept.push(id);
+    sum += est;
+  }
+  return kept;
+}
+
+// approved: returns true if review has verdict === 'APPROVED'.
+function approved(review) {
+  return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
+}
+
+// labelTaskIds: returns up to 3 IDs joined by space; appends '+Nmore' when more than 3.
+function labelTaskIds(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return '';
+  if (ids.length <= 3) return ids.join(' ');
+  return ids.slice(0, 3).join(' ') + ` +${ids.length - 3}more`;
+}
