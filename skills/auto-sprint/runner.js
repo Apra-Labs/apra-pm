@@ -101,3 +101,40 @@ const threshold = GOAL_THRESHOLD[goal] || 2;
 
 log('Sprint args parsed: issues=[' + rootIds.join(',') + '] goal=' + goal +
     ' maxCycles=' + maxCycles + ' base_branch=' + base_branch);
+// ---------------------------------------------------------------------------
+// bd helper functions (execSync wrappers - no LLM, no MCP)
+// ---------------------------------------------------------------------------
+
+function bdExec(args, opts) {
+  return execSync('bd ' + args, Object.assign({ encoding: 'utf-8' }, opts || {}));
+}
+
+function bdJson(args) {
+  const out = bdExec(args + ' --json');
+  return JSON.parse(out);
+}
+
+function bdReadyTasks() {
+  return bdJson('list --ready --type=task');
+}
+
+// bdOpenCount: counts open issues in the sprint subtree at/above priority threshold.
+// Uses bd list --status=open --json and filters by priority <= threshold and by rootIds
+// if provided (scopes exit check to sprint roots only).
+function bdOpenCount(rootIds, threshold) {
+  let all = [];
+  try { all = bdJson('list --status=open'); } catch { return 0; }
+  if (!Array.isArray(all)) return 0;
+  return all.filter(x => x.p <= threshold).length;
+}
+
+// shellExtract: safely parse jsonStr and call extractFn on the result.
+// Returns extractFn's result or an empty fallback on any error.
+function shellExtract(jsonStr, extractFn) {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return extractFn(parsed);
+  } catch {
+    return null;
+  }
+}
