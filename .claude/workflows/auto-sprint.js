@@ -1802,9 +1802,13 @@ while (cycleCount < maxCycles) {
     if (streakResult.totalCount === 0) {
       // Distinguish genuine completion from a dependency DEADLOCK. If the sprint subtree
       // still has open issues at/above the goal threshold but NONE are ready on the FIRST
-      // develop iteration, the DAG is blocked (commonly backwards or parent-child edges) --
-      // this is the "'missing issues' when all P1s are dependency-blocked" failure. Surface
-      // it loudly with the blocked leaves rather than silently declaring develop complete.
+      // develop iteration, surface it loudly with the blocked leaves (the "'missing issues'
+      // when all P1s are dependency-blocked" failure). We HARD-ABORT only on the very first
+      // cycle -- when the initial plan produced no workable leaves at all -- because that is
+      // the true unrecoverable case. In LATER cycles a ready==0 first iteration is usually
+      // just "this cycle's leaves are done"; the multi-cycle re-plan / exit-check self-heals
+      // it, so we log the diagnostic but fall through instead of aborting (aborting there
+      // would skip harvest and lose the PR for work already completed).
       if (devIter === 0) {
         const _open = await countBeadsBlockers(threshold, rootIds);
         if (_open.count > 0) {
@@ -1812,9 +1816,14 @@ while (cycleCount < maxCycles) {
             [`bd list --status=open --type=task --json | node -e "const d=require('fs').readFileSync(0,'utf8');try{const a=JSON.parse(d).map(i=>({id:i.id,blocked_by:i.blocked_by||i.dependencies||[]}));process.stdout.write(JSON.stringify(a).slice(0,1200))}catch{process.stdout.write('[]')}"`],
             { model: MODEL_HAIKU, label: `deadlock-diag-c${cycleCount}`, phase: 'Develop' }
           );
-          log(`ERROR: DEADLOCK -- ${_open.count} open issue(s) at/above ${goal} in the sprint subtree but NONE are ready on the first develop iteration. The dependency DAG is blocked (commonly backwards or parent-child edges; note 'bd dep cycles' MISSES parent-child deadlocks -- inspect blocked_by on leaf tasks). Open leaf tasks + blocked_by: ${(_diag?.outputs?.[0] || '[]').trim()}`);
-          abortReason = 'deadlock: open issues but none ready';
-          break;
+          const _diagText = `${_open.count} open issue(s) at/above ${goal} in the sprint subtree but NONE are ready on the first develop iteration. The dependency DAG may be blocked (commonly backwards or parent-child edges; note 'bd dep cycles' MISSES parent-child deadlocks -- inspect blocked_by on leaf tasks). Open leaf tasks + blocked_by: ${(_diag?.outputs?.[0] || '[]').trim()}`;
+          if (cycleCount === 1) {
+            log(`ERROR: DEADLOCK (cycle 1 plan produced no workable leaves) -- ${_diagText}`);
+            abortReason = 'deadlock: plan produced open issues but no ready leaves';
+            break;
+          }
+          // Later cycle: diagnostic only -- let the normal exit-check / next-cycle re-plan decide.
+          log(`WARN: no ready leaves at cycle ${cycleCount} start though open issues remain -- ${_diagText}`);
         }
       }
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
