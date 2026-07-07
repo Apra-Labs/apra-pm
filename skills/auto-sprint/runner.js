@@ -22,8 +22,8 @@
 //   node runner.js '["BD-1","BD-2"]'
 //   node runner.js '{"issues":["BD-7"],"branch":"feat/x","goal":"P1"}'
 
-'use strict';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { execSync }  = require('node:child_process');
 const fs            = require('node:fs');
 const path          = require('node:path');
@@ -768,6 +768,7 @@ process.on('uncaughtException', function(err) {
     process.exit(1);
   }
 
+  const startedAt = _liveState.startedAt;
   log('Repo: ' + repo + ' | Branch: ' + branch);
   updateLiveState({ phase: 'setup', goal, rootIds, maxCycles, branch, startedAt });
 
@@ -793,7 +794,6 @@ process.on('uncaughtException', function(err) {
   }
 
   // Write start event to state file.
-  const startedAt = new Date().toISOString();
   writeSprintState(stateFileRel, {
     type: 'start', branch, goal, rootIds, startedAt,
   }, 'setup', 'start');
