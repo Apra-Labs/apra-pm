@@ -29,23 +29,43 @@ const fs            = require('node:fs');
 const path          = require('node:path');
 const os            = require('node:os');
 const process       = require('node:process');
+const http          = require('node:http');
 
 // ---------------------------------------------------------------------------
 // Fleet MCP client reference.
-// The apra-fleet MCP server exposes execute_prompt. In the AGY skill runtime
-// this runner is invoked as a subprocess; fleet calls are made via the MCP
-// tool interface exposed to the runner process. Since the runner is a plain
-// Node.js script (not an AGY agent), it delegates fleet calls through the
-// call_mcp_tool helper below using the apra-fleet server name directly.
 // ---------------------------------------------------------------------------
 const FLEET_SERVER  = 'apra-fleet';
 const FLEET_TOOL    = 'execute_prompt';
 
 // ---------------------------------------------------------------------------
+// Live state (shared by log(), updateLiveState(), and HTTP status server)
+// ---------------------------------------------------------------------------
+let _liveState = {
+  phase: 'starting', cycle: 0, maxCycles: 5, goal: '', rootIds: [],
+  startedAt: new Date().toISOString(), currentAgent: '', openCount: null,
+  goalMet: false, abortReason: '', costUsd: 0, phaseError: '', log: [],
+};
+
+function updateLiveState(patch) { Object.assign(_liveState, patch); }
+
+function safeWriteFile(fp, content, label) {
+  try {
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, content, 'utf-8');
+  } catch (e) {
+    if (typeof log === 'function') log('[WARN] Could not write ' + (label || fp) + ': ' + e.message);
+    else process.stderr.write('[WARN] ' + (label || fp) + ': ' + e.message + '\n');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
 function log(msg) {
-  process.stdout.write('[RUNNER] ' + new Date().toISOString() + ' ' + msg + '\n');
+  const line = '[RUNNER] ' + new Date().toISOString() + ' ' + msg;
+  process.stdout.write(line + '\n');
+  _liveState.log.push(line);
+  if (_liveState.log.length > 200) _liveState.log.shift();
 }
 
 // ---------------------------------------------------------------------------
@@ -106,12 +126,21 @@ log('Sprint args parsed: issues=[' + rootIds.join(',') + '] goal=' + goal +
 // ---------------------------------------------------------------------------
 
 function bdExec(args, opts) {
-  return execSync('bd ' + args, Object.assign({ encoding: 'utf-8' }, opts || {}));
+  opts = opts || {};
+  const fallback = opts.fallback !== undefined ? opts.fallback : '';
+  try {
+    return execSync('bd ' + args, Object.assign(
+      { encoding: 'utf-8', timeout: 30000 }, opts)).trim();
+  } catch (e) {
+    const firstArg = String(args).split(' ')[0];
+    log('[WARN] bd ' + firstArg + ' failed: ' + String(e.stderr || e.message || '').slice(0, 120));
+    return fallback;
+  }
 }
 
 function bdJson(args) {
   const out = bdExec(args + ' --json');
-  return JSON.parse(out);
+  try { return out ? JSON.parse(out) : []; } catch { return []; }
 }
 
 function bdReadyTasks() {
@@ -229,6 +258,92 @@ const SHELL_DISPATCH_PROMPT_HEADER =
   `re-run any command. Do NOT retry on empty or unexpected output -- an empty ` +
   `string is a valid result; just return it. This is a single attempt: run, ` +
   `capture, return, stop.\n\n`;
+
+// ---------------------------------------------------------------------------
+// STATUS_HTML: self-contained sprint dashboard (T3.6)
+// No external resources - pure HTML/CSS/JS, auto-polls /state every 3s.
+// ---------------------------------------------------------------------------
+const STATUS_HTML = [
+  '<!DOCTYPE html><html lang="en"><head>',
+  '<meta charset="UTF-8">',
+  '<meta name="viewport" content="width=device-width,initial-scale=1">',
+  '<title>auto-sprint dashboard</title>',
+  '<style>',
+  '*{box-sizing:border-box;margin:0;padding:0}',
+  'body{background:#0d1117;color:#c9d1d9;font-family:system-ui,-apple-system,sans-serif;padding:16px}',
+  'h1{font-size:18px;font-weight:600;margin-bottom:4px}',
+  'h2{font-size:13px;color:#8b949e;margin:12px 0 6px}',
+  '.header{display:flex;align-items:center;justify-content:space-between;',
+  '  padding:12px 16px;background:#161b22;border-radius:8px;',
+  '  border:1px solid #30363d;margin-bottom:12px}',
+  '.badge{padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600}',
+  '.phase-starting,.phase-setup{background:#21262d;color:#8b949e}',
+  '.phase-Plan{background:#1d4ed8;color:#dbeafe}',
+  '.phase-Develop{background:#166534;color:#dcfce7}',
+  '.phase-Test{background:#92400e;color:#fef3c7}',
+  '.phase-Harvest{background:#6b21a8;color:#f3e8ff}',
+  '.phase-ERROR,.phase-CRASHED{background:#7f1d1d;color:#fee2e2}',
+  '.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}',
+  '.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px}',
+  '.card-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}',
+  '.card-value{font-size:22px;font-weight:700;color:#e6edf3}',
+  '.card-value.green{color:#3fb950}.card-value.red{color:#f85149}',
+  '.card-value.muted{font-size:14px;color:#8b949e}',
+  '.log-box{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px;',
+  '  height:300px;overflow-y:auto;font-family:monospace;font-size:11px;',
+  '  line-height:1.5;color:#8b949e;white-space:pre-wrap;word-break:break-all}',
+  '.banner{padding:14px 18px;border-radius:8px;font-size:16px;font-weight:700;',
+  '  text-align:center;margin-bottom:12px}',
+  '.banner.green{background:#0d4429;border:1px solid #238636;color:#3fb950}',
+  '.banner.red{background:#4d1d1d;border:1px solid #f85149;color:#f85149}',
+  '.refresh{font-size:11px;color:#484f58;margin-top:8px}',
+  '</style></head><body>',
+  '<div id="app">',
+  '<div class="header">',
+  '<div><h1>auto-sprint</h1>',
+  '<div id="branch" style="font-size:12px;color:#8b949e">loading...</div></div>',
+  '<div id="phase-badge" class="badge phase-starting">starting</div>',
+  '</div>',
+  '<div id="banner" style="display:none"></div>',
+  '<div class="grid">',
+  '<div class="card"><div class="card-label">Cycle</div>',
+  '<div id="cycle" class="card-value">-</div></div>',
+  '<div class="card"><div class="card-label">Open Issues</div>',
+  '<div id="open" class="card-value">-</div></div>',
+  '<div class="card"><div class="card-label">Cost (USD)</div>',
+  '<div id="cost" class="card-value">-</div></div>',
+  '<div class="card"><div class="card-label">Current Agent</div>',
+  '<div id="agent" class="card-value muted">-</div></div>',
+  '</div>',
+  '<h2>Sprint Log (last 30 lines)</h2>',
+  '<div id="logbox" class="log-box"></div>',
+  '<div class="refresh" id="refresh"></div>',
+  '</div>',
+  '<script>',
+  'async function poll(){',
+  'try{',
+  'var r=await fetch("/state"),s=await r.json();',
+  'var pb=document.getElementById("phase-badge");',
+  'pb.textContent=s.phase||"?";pb.className="badge phase-"+(s.phase||"starting");',
+  'document.getElementById("branch").textContent="Branch: "+(s.branch||"?");',
+  'document.getElementById("cycle").textContent=(s.cycle||0)+"/"+(s.maxCycles||"?");',
+  'var oe=document.getElementById("open");',
+  'oe.textContent=s.openCount!=null?s.openCount:"-";',
+  'oe.className="card-value"+(s.goalMet?" green":"");',
+  'document.getElementById("cost").textContent="$"+(s.costUsd||0).toFixed(4);',
+  'document.getElementById("agent").textContent=s.currentAgent||"-";',
+  'var lb=document.getElementById("logbox");',
+  'var tail=(s.log||[]).slice(-30).join("\\n");',
+  'lb.textContent=tail;lb.scrollTop=lb.scrollHeight;',
+  'var bn=document.getElementById("banner");',
+  'if(s.goalMet){bn.className="banner green";bn.textContent="Sprint complete -- Goal MET!";bn.style.display="block";}',
+  'else if(s.abortReason){bn.className="banner red";bn.textContent="Sprint ended: "+s.abortReason;bn.style.display="block";}',
+  'document.getElementById("refresh").textContent="Last updated: "+new Date().toLocaleTimeString();',
+  '}catch(e){document.getElementById("refresh").textContent="Poll error: "+e.message;}',
+  '}',
+  'poll();setInterval(poll,3000);',
+  '<\/script></body></html>',
+].join('');
 
 // ---------------------------------------------------------------------------
 // Pure parsers (exact ports from auto-sprint.js)
@@ -382,6 +497,7 @@ async function dispatchFleet(memberName, prompt, opts) {
       JSON.stringify(schema, null, 2);
   }
 
+  updateLiveState({ currentAgent: label });
   log('dispatch: ' + label + ' [' + memberName + ']');
 
   const MAX_RETRIES = 3;
@@ -405,6 +521,7 @@ async function dispatchFleet(memberName, prompt, opts) {
     if (!schema) {
       // No schema needed -- record entry and return raw string.
       dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0 });
+      updateLiveState({ costUsd: dispatchLedger.reduce(function(s,e){return s+(e.costUsd||0);},0) });
       return raw;
     }
 
@@ -583,6 +700,47 @@ if (!buildSprintSummary) {
 (async function main() {
   // ---- Setup block ----
 
+  // ---- Process fault guards (T3.6) ----
+  process.on('unhandledRejection', function(reason) {
+    log('[FATAL] unhandledRejection: ' + String(reason));
+    updateLiveState({ phase: 'ERROR', abortReason: String(reason) });
+  });
+  process.on('uncaughtException', function(err) {
+    log('[FATAL] uncaughtException: ' + err.message);
+    updateLiveState({ phase: 'ERROR', abortReason: err.message });
+  });
+
+  // ---- Browser status server (T3.6) ----
+  const _statusPort = 3000 + Math.floor(Math.random() * 1000);
+  let _statusServer = null;
+  try {
+    _statusServer = http.createServer(function(req, res) {
+      if (req.url === '/state') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(_liveState));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(STATUS_HTML);
+    });
+    _statusServer.listen(_statusPort, '127.0.0.1', function() {
+      log('[STATUS] Sprint dashboard: http://127.0.0.1:' + _statusPort);
+      try {
+        const _openCmd = process.platform === 'win32'
+          ? 'start http://127.0.0.1:' + _statusPort
+          : process.platform === 'darwin'
+          ? 'open http://127.0.0.1:' + _statusPort
+          : 'xdg-open http://127.0.0.1:' + _statusPort;
+        execSync(_openCmd, { stdio: 'ignore', timeout: 5000 });
+      } catch {}
+    });
+    _statusServer.on('error', function(err) {
+      log('[WARN] Status server error: ' + err.message);
+    });
+  } catch (err) {
+    log('[WARN] Status server failed to start: ' + err.message);
+  }
+
   // Derive repo from git.
   let repo = '';
   try {
@@ -609,6 +767,7 @@ if (!buildSprintSummary) {
   }
 
   log('Repo: ' + repo + ' | Branch: ' + branch);
+  updateLiveState({ phase: 'setup', goal, rootIds, maxCycles, branch, startedAt });
 
   // Ensure sprint-logs/ directory exists.
   const sprintLogsDir = path.join(repo, 'sprint-logs');
@@ -677,6 +836,7 @@ if (!buildSprintSummary) {
   while (cycleCount < maxCycles) {
     cycleCount++;
     log('\n=== Cycle ' + cycleCount + '/' + maxCycles + ' | goal: ' + goal + ' ===');
+    updateLiveState({ phase: 'Plan', cycle: cycleCount });
 
     writeSprintState(stateFileRel, {
       type: 'cycle-start', cycle: cycleCount, branch, goal, rootIds, startedAt,
@@ -864,6 +1024,7 @@ if (!buildSprintSummary) {
     writeSprintState(stateFileRel, {
       type: 'checkpoint', cycle: cycleCount, phase: 'Plan', planApproved: true, branch, goal, rootIds, startedAt,
     }, 'Plan', 'state-c' + cycleCount + '-plan-done');
+    updateLiveState({ phase: 'Develop', cycle: cycleCount });
     // ---------------------------------------------------------------- DEVELOP
 
     // ---- phase_label for Develop phase
@@ -1045,6 +1206,7 @@ if (!buildSprintSummary) {
 
     if (abortReason) break;
 
+    updateLiveState({ phase: 'Test', cycle: cycleCount });
     // ---------------------------------------------------------------- TEST (T3.1)
 
     const _deployMdExists = fs.existsSync(path.join(repo, 'deploy.md'));
@@ -1130,6 +1292,7 @@ if (!buildSprintSummary) {
       _exitRaw && _exitRaw.outputs, rootIds.length, rootIds.length, threshold, rootIds);
     const openCount = _blockers.count;
     const currentOpenIds = (_blockers.ids || []).slice().sort();
+    updateLiveState({ openCount });
 
     log('Exit check cycle ' + cycleCount + ': ' + openCount +
         ' blocker(s) at/above ' + goal + ' -- IDs: [' + currentOpenIds.join(', ') + ']');
@@ -1166,9 +1329,11 @@ if (!buildSprintSummary) {
   }
 
   // ---------------------------------------------------------------- POST-LOOP
+  updateLiveState({ goalMet, abortReason });
   log('\n=== Sprint complete: cycles=' + cycleCount + ' goalMet=' + goalMet +
       ' abortReason=' + (abortReason || 'none') + ' ===');
 
+  updateLiveState({ phase: 'Harvest', cycle: cycleCount });
   // ---------------------------------------------------------------- HARVEST (T3.3)
 
   const finalReviewPrompt =
@@ -1387,6 +1552,15 @@ if (!buildSprintSummary) {
   log('  (input token cost not included -- see ' + stateFileRel + ' for per-dispatch detail)');
   log('================================================\n');
 
+  // Write HTML sprint report (T3.6).
+  const _htmlTs = startedAt.replace(/[:.]/g, '-');
+  const _htmlPath = path.join(repo, 'sprint-logs', safeBranch + '-' + _htmlTs + '.html');
+  safeWriteFile(_htmlPath, STATUS_HTML, 'HTML sprint report');
+  log('HTML report: ' + _htmlPath);
+
+  // Close browser status server.
+  try { if (_statusServer) _statusServer.close(); } catch {}
+
   clearSprintState(stateFileRel, 'state-clear-done');
 
   return {
@@ -1397,8 +1571,10 @@ if (!buildSprintSummary) {
     sprintCostUsd: parseFloat(sprintTotal.toFixed(4)),
   };
 
-})().catch(err => {
-  log('FATAL: ' + String(err));
+})().catch(function(err) {
+  log('[FATAL] Unhandled: ' + String(err));
+  updateLiveState({ phase: 'CRASHED', abortReason: String(err) });
+  try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
   process.exit(1);
 });
 
