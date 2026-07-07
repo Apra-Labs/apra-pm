@@ -19,9 +19,18 @@ test('setup dispatchShell is labeled "setup-shell" (source check)', () => {
 test('setup dispatchShell commands include git rev-parse --show-toplevel (repo root)', () => {
   const shellIdx = src.indexOf("label: 'setup-shell'");
   assert.ok(shellIdx >= 0, '"setup-shell" label must exist');
-  const region = src.slice(Math.max(0, shellIdx - 1200), shellIdx);
+  const region = src.slice(Math.max(0, shellIdx - 3000), shellIdx);
   assert.match(region, /git rev-parse --show-toplevel/,
     'setup dispatchShell must include "git rev-parse --show-toplevel" for repo root');
+});
+
+test('setup dispatchShell fetches and cuts a new branch from origin/<base_branch> (stale-main guard)', () => {
+  const shellIdx = src.indexOf("label: 'setup-shell'");
+  const region = src.slice(Math.max(0, shellIdx - 3000), shellIdx);
+  assert.match(region, /git fetch origin --quiet/,
+    'setup must git fetch before branching so the new sprint branch is off the latest base');
+  assert.match(region, /git checkout -b "\$\{branch\}" "origin\/\$\{base_branch\}"/,
+    'a new sprint branch must be created from origin/<base_branch>, not stale local HEAD');
 });
 
 test('setup dispatchShell commands include git checkout (branch handling)', () => {
@@ -54,14 +63,13 @@ test('setup dispatchShell commands include date +%Y%m%d_%H%M%S (startedAt timest
     'setup dispatchShell must capture startedAt timestamp with date +%Y%m%d_%H%M%S');
 });
 
-test('setup dispatchShell has exactly 6 command slots (output indices 0-5)', () => {
-  // The comments in source enumerate exactly 6 output indices.
+test('setup dispatchShell has 8 command slots (output indices 0-7, fetch at 1)', () => {
+  // The comments in source enumerate the output indices. After the stale-main guard
+  // (fetch at index 1) and the permission-precompute (index 7), there are 8 slots.
   const shellIdx = src.indexOf("label: 'setup-shell'");
-  const region = src.slice(Math.max(0, shellIdx - 1200), shellIdx);
-  // The setupShellCmds array literal must have 6 commands.
-  // Count the comment that enumerates indices 0-5 as an anchor.
-  assert.match(region, /0: repo root[\s\S]*1: branch checkout[\s\S]*2: confirmed branch[\s\S]*3: startedAt[\s\S]*4: deploy\.md[\s\S]*5: integ-test-playbook/,
-    'setup dispatchShell must have 6 output slots (0-5) as documented in comments');
+  const region = src.slice(Math.max(0, shellIdx - 3000), shellIdx);
+  assert.match(region, /0: repo root[\s\S]*1: fetch result[\s\S]*2: branch checkout[\s\S]*3: confirmed branch[\s\S]*4: startedAt[\s\S]*5: deploy\.md[\s\S]*6: integ-test-playbook[\s\S]*7: comma-joined list of permission/,
+    'setup dispatchShell must document output slots 0-7 with fetch at index 1');
 });
 
 // ---- setup Phase 2: free-form agent with maxTurns: 20 -----------------------

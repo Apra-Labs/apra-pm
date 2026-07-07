@@ -290,7 +290,7 @@ function runSuite(suite, timeoutS, keepPr, keepInstall) {
   // teardown, while the branch still exists on origin. The gates -- not any
   // self-reported checkpoint -- are the sole arbiter of success.
   res.pr = capturePr(branch, token);
-  const v = validateSprint({ repo, branch, pr: res.pr, minCommits: suite.minCommits, expectedIssues: suite.expectedIssues, excludeGates: suite.excludeGates });
+  const v = validateSprint({ repo, branch, pr: res.pr, minCommits: suite.minCommits, expectedIssues: suite.expectedIssues, excludeGates: suite.excludeGates, expectArgsSkill: suite.expectArgsSkill, logPath, provider: suite.provider });
   res.gates = v.gates;
 
   if (v.pass) {
