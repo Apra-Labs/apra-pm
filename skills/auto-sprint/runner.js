@@ -697,18 +697,20 @@ if (!buildSprintSummary) {
 // ---------------------------------------------------------------------------
 // Main async entry point
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Process fault guards (T3.7) - must be at module top-level
+// ---------------------------------------------------------------------------
+process.on('unhandledRejection', function(reason) {
+  log('[FATAL] unhandledRejection: ' + String(reason));
+  updateLiveState({ phase: 'ERROR', abortReason: String(reason) });
+});
+process.on('uncaughtException', function(err) {
+  log('[FATAL] uncaughtException: ' + err.message);
+  updateLiveState({ phase: 'ERROR', abortReason: err.message });
+});
+
 (async function main() {
   // ---- Setup block ----
-
-  // ---- Process fault guards (T3.6) ----
-  process.on('unhandledRejection', function(reason) {
-    log('[FATAL] unhandledRejection: ' + String(reason));
-    updateLiveState({ phase: 'ERROR', abortReason: String(reason) });
-  });
-  process.on('uncaughtException', function(err) {
-    log('[FATAL] uncaughtException: ' + err.message);
-    updateLiveState({ phase: 'ERROR', abortReason: err.message });
-  });
 
   // ---- Browser status server (T3.6) ----
   const _statusPort = 3000 + Math.floor(Math.random() * 1000);
@@ -833,7 +835,8 @@ if (!buildSprintSummary) {
   let prevOpenIds     = [];
 
   // ---- SPRINT LOOP ----
-  while (cycleCount < maxCycles) {
+  while (cycleCount < maxCycles && !goalMet && !abortReason) {
+    try {
     cycleCount++;
     log('\n=== Cycle ' + cycleCount + '/' + maxCycles + ' | goal: ' + goal + ' ===');
     updateLiveState({ phase: 'Plan', cycle: cycleCount });
@@ -1326,6 +1329,11 @@ if (!buildSprintSummary) {
 
     log('Cycle ' + cycleCount + ' complete -- ' + openCount +
         ' open issue(s) remain; starting cycle ' + (cycleCount + 1));
+    } catch (iterErr) {
+      log('[WARN] Cycle ' + cycleCount + ' threw unexpectedly: ' + String(iterErr).slice(0, 200) + ' -- attempting next cycle or aborting');
+      updateLiveState({ phaseError: 'cycle-' + cycleCount + ': ' + String(iterErr).slice(0, 120) });
+      if (cycleCount >= maxCycles) { abortReason = 'cycle-exception'; break; }
+    }
   }
 
   // ---------------------------------------------------------------- POST-LOOP
@@ -1375,12 +1383,8 @@ if (!buildSprintSummary) {
 
   // Write analysis artifact (sprint-logs/<branch>.analysis.md).
   const analysisFile = path.join(repo, 'sprint-logs', safeBranch + '.analysis.md');
-  try {
-    fs.writeFileSync(analysisFile, sprintSummary.summaryText || '', 'utf8');
-    log('Sprint analysis written to: ' + analysisFile);
-  } catch (err) {
-    log('WARN: could not write analysis file: ' + String(err).slice(0, 120));
-  }
+  safeWriteFile(analysisFile, sprintSummary.summaryText || '', 'analysis.md');
+  log('Sprint analysis written to: ' + analysisFile);
 
   const harvesterPrompt =
     'Repo: ' + repo + '\nBranch: ' + branch + '\nBase branch: ' + base_branch + '\n' +
@@ -1417,12 +1421,8 @@ if (!buildSprintSummary) {
 
   // Calibration update (pure JS then write file).
   const updatedCalibration = computeUpdatedCalibration(calibration, null, startedAt, taskAssignments, []);
-  try {
-    fs.writeFileSync(calibPath, JSON.stringify(updatedCalibration, null, 2), 'utf8');
-    log('Calibration updated: ' + calibPath);
-  } catch (err) {
-    log('WARN: could not write calibration: ' + String(err).slice(0, 120));
-  }
+  safeWriteFile(calibPath, JSON.stringify(updatedCalibration, null, 2) + '\n', 'calibration.json');
+  log('Calibration updated: ' + calibPath);
 
   // Dolt push (non-fatal).
   const doltPushPrompt =
@@ -1574,6 +1574,14 @@ if (!buildSprintSummary) {
 })().catch(function(err) {
   log('[FATAL] Unhandled: ' + String(err));
   updateLiveState({ phase: 'CRASHED', abortReason: String(err) });
+  try {
+    var _crashDir = (typeof repo !== 'undefined' && repo) ? path.join(repo, 'sprint-logs') : '.';
+    safeWriteFile(
+      path.join(_crashDir, 'crash-report.json'),
+      JSON.stringify({ crashed: true, error: String(err), ts: new Date().toISOString() }, null, 2),
+      'crash-report'
+    );
+  } catch {}
   try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
   process.exit(1);
 });
