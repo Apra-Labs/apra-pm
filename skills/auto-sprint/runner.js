@@ -359,3 +359,100 @@ function labelTaskIds(ids) {
   if (ids.length <= 3) return ids.join(' ');
   return ids.slice(0, 3).join(' ') + ` +${ids.length - 3}more`;
 }
+// ---------------------------------------------------------------------------
+// Fleet dispatch wrapper
+// ---------------------------------------------------------------------------
+
+// dispatchLedger: accumulates cost entries across all cycles.
+const dispatchLedger = [];
+
+// dispatchFleet: async wrapper around the apra-fleet execute_prompt MCP tool.
+// If opts.schema is set, appends a RESPOND WITH ONLY VALID JSON block and
+// retries up to 3 times on JSON parse failure.
+async function dispatchFleet(memberName, prompt, opts) {
+  opts = opts || {};
+  const schema = opts.schema || null;
+  const label  = opts.label  || memberName;
+  const phase  = opts.phase  || '?';
+  const cycle  = opts.cycle  != null ? opts.cycle : 'setup';
+
+  let fullPrompt = prompt;
+  if (schema) {
+    fullPrompt = prompt + '\n\nRESPOND WITH ONLY VALID JSON matching this schema:\n' +
+      JSON.stringify(schema, null, 2);
+  }
+
+  log('dispatch: ' + label + ' [' + memberName + ']');
+
+  const MAX_RETRIES = 3;
+  let lastRaw = '';
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    let raw = '';
+    try {
+      // Call the apra-fleet MCP execute_prompt tool via the MCP client.
+      // In the AGY skill runtime the runner is invoked by the AGY skill engine
+      // which exposes MCP tools. We use a synchronous child_process call to
+      // invoke the MCP via the AGY CLI's tool dispatch path.
+      // For schema responses: parse and return JSON; otherwise return raw string.
+      const result = await _fleetCall(memberName, fullPrompt, opts);
+      raw = typeof result === 'string' ? result : JSON.stringify(result);
+    } catch (err) {
+      log('dispatch error [' + label + '] attempt ' + attempt + ': ' + String(err).slice(0, 120));
+      raw = '';
+    }
+    lastRaw = raw;
+
+    if (!schema) {
+      // No schema needed -- record entry and return raw string.
+      dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0 });
+      return raw;
+    }
+
+    // Try to parse JSON response.
+    try {
+      // Strip markdown code fences if present.
+      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+      const parsed = JSON.parse(stripped);
+      dispatchLedger.push({ cycle, phase, label, model: memberName,
+        outTokens: Math.ceil(raw.length / 4), costUsd: 0 });
+      return parsed;
+    } catch {
+      if (attempt < MAX_RETRIES - 1) {
+        log('JSON parse failed [' + label + '] attempt ' + (attempt + 1) + ' -- retrying');
+      }
+    }
+  }
+
+  log('ERROR: JSON parse failed after ' + MAX_RETRIES + ' retries [' + label + ']. Raw: ' +
+    lastRaw.slice(0, 200));
+  dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0 });
+  return null;
+}
+
+// _fleetCall: low-level call to the apra-fleet MCP execute_prompt tool.
+// Uses the AGY MCP client interface available in the runner process context.
+// Falls back to a stub if the MCP interface is not available (for --check / tests).
+async function _fleetCall(memberName, prompt, opts) {
+  // In the AGY skill runtime, MCP tools are accessible via the global __mcp object
+  // injected by the skill engine. Check for it and use it if available.
+  if (typeof __mcp !== 'undefined' && __mcp && typeof __mcp.call === 'function') {
+    const result = await __mcp.call(FLEET_SERVER, FLEET_TOOL, {
+      member_name: memberName,
+      prompt:      prompt,
+    });
+    return (result && result.content && result.content[0] && result.content[0].text) || '';
+  }
+
+  // If no MCP client is injected, throw so dispatchFleet logs the error and retries.
+  throw new Error('No MCP client available -- ensure runner is invoked within AGY skill runtime');
+}
+
+// dispatchShellFleet: runs a set of shell commands via a fleet member.
+// Builds the prompt with SHELL_DISPATCH_PROMPT_HEADER + numbered commands,
+// dispatches with SHELL_OUTPUTS_SCHEMA, and returns the parsed result.
+async function dispatchShellFleet(cmds, memberName, opts) {
+  opts = opts || {};
+  const prompt = SHELL_DISPATCH_PROMPT_HEADER + cmds.map((c, i) => `${i + 1}. ${c}`).join('\n');
+  return await dispatchFleet(memberName, prompt,
+    Object.assign({}, opts, { schema: SHELL_OUTPUTS_SCHEMA }));
+}
