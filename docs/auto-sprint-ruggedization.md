@@ -1,6 +1,18 @@
 # Auto-Sprint Ruggedization -- Design & Implementation Spec
 
-Status: in progress. Branch: `ruggedize/auto-sprint-preflight-checkpoint`.
+Status: implemented. Branch: `ruggedize/auto-sprint-preflight-checkpoint`.
+
+Known limitation: the concurrency lock uses a branch-keyed state file whose mtime acts as a
+TTL heartbeat (`SPRINT_STATE_TTL_S = 3600`). It reliably blocks a *resume* that overlaps a
+still-live run (the observed git-corruption incident), but two brand-new launches fired at the
+exact same instant on the same branch can both pass the check before either writes the file
+(a TOCTOU window at t=0, before any file exists). Launches are manual, so this is acceptable;
+a hard mutex would need an atomic create (O_EXCL) which is a future refinement.
+
+Note on parallel sprints: this lock prevents ACCIDENTAL overlap on the SAME branch. Running
+two sprints DELIBERATELY on DIFFERENT branches still requires separate git worktrees, because
+one working tree cannot be checked out to two branches at once (confirmed the hard way during
+this very change, when another auto-sprint switched the shared checkout mid-edit).
 
 This spec ruggedizes `.claude/workflows/auto-sprint.js` against the recurring failure
 modes observed across projects (apra-pm, fleet-dashboard, apra-fleet). It is written so

@@ -1265,6 +1265,47 @@ async function checkCycleState(rootIds) {
   return parseCycleState(r?.outputs, rootIds.length);
 }
 
+// ---- sprint state file: concurrency lock + phase checkpoint / resume ----
+// A branch-keyed JSON file under sprint-logs/.state/ records the last good phase and
+// cycle so a crashed run resumes forward instead of restarting. Its mtime doubles as a
+// liveness lock: a file touched within SPRINT_STATE_TTL_S means another run is active.
+// All time/mtime math is done inside node subprocesses (Date.now() is banned in the
+// workflow script body, but fine inside `node -e`). Cross-platform: pure node fs, no stat(1).
+const SPRINT_STATE_TTL_S = 3600;
+function sprintStateFileFor(branchName) {
+  const safe = branchName.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'default';
+  return `sprint-logs/.state/${safe}.state.json`;
+}
+// Returns { exists, ageS, state }. ageS is the file's age in seconds (null when absent).
+async function readSprintState(stateFileRel, label) {
+  const script =
+    `node -e "` +
+    `const fs=require('fs');const p='${stateFileRel}';` +
+    `if(!fs.existsSync(p)){console.log(JSON.stringify({exists:false,ageS:null,state:null}));process.exit(0);}` +
+    `const age=Math.floor((Date.now()-fs.statSync(p).mtimeMs)/1000);` +
+    `let st=null;try{st=JSON.parse(fs.readFileSync(p,'utf8'));}catch(e){}` +
+    `console.log(JSON.stringify({exists:true,ageS:age,state:st}));` +
+    `"`;
+  const r = await dispatchShell([script], { model: MODEL_HAIKU, label: label || 'state-read', phase: 'Plan' });
+  try { return JSON.parse((r?.outputs?.[0] || '').trim()); } catch { return { exists: false, ageS: null, state: null }; }
+}
+// Writes the state object as JSON (base64-passed to avoid shell-quoting hazards).
+// Rewriting the file updates its mtime = lock heartbeat.
+async function writeSprintState(stateFileRel, stateObj, phaseName, label) {
+  const b64 = Buffer.from(JSON.stringify(stateObj), 'utf8').toString('base64');
+  const script =
+    `node -e "` +
+    `const fs=require('fs'),path=require('path');const p='${stateFileRel}';` +
+    `fs.mkdirSync(path.dirname(p),{recursive:true});` +
+    `fs.writeFileSync(p,Buffer.from('${b64}','base64').toString('utf8'));` +
+    `console.log('WROTE');` +
+    `"`;
+  await dispatchShell([script], { model: MODEL_HAIKU, label: label || 'state-write', phase: phaseName || 'Plan' });
+}
+async function clearSprintState(stateFileRel, label) {
+  await dispatchShell([`rm -f "${stateFileRel}"`], { model: MODEL_HAIKU, label: label || 'state-clear', phase: 'Harvest' });
+}
+
 // ------------------------------------------------------------------ STATE
 
 let cycleCount   = 0;
@@ -1408,6 +1449,25 @@ if (branch === 'main' || branch === 'master') {
   return { error: 'protected branch' };
 }
 
+// ---- CONCURRENCY LOCK + RESUME (branch-keyed state file) ----
+// Placed after setup so the confirmed branch name keys the state file. Every branch below
+// is a NO-OP when no state file exists -- a fresh run follows the exact prior code path.
+const stateFileRel = sprintStateFileFor(branch);
+const _priorState = await readSprintState(stateFileRel, 'state-read');
+let resuming = false;
+let effectiveStartedAt = setup.startedAt;
+if (_priorState.exists && typeof _priorState.ageS === 'number' && _priorState.ageS < SPRINT_STATE_TTL_S) {
+  log(`ERROR: preflight -- another auto-sprint run appears active on branch "${branch}" (state updated ${_priorState.ageS}s ago < ${SPRINT_STATE_TTL_S}s TTL). Refusing to start a second overlapping run (guards concurrent-checkout corruption). If the prior run truly crashed, wait out the TTL or delete ${repo}/${stateFileRel}.`);
+  return { error: 'preflight: sprint already running' };
+}
+if (_priorState.exists && _priorState.state) {
+  resuming = true;
+  const _rc = Number(_priorState.state.cycle) || 0;
+  if (_priorState.state.startedAt) effectiveStartedAt = _priorState.state.startedAt;  // keep log-file continuity
+  if (_rc > 0) cycleCount = _rc - 1;  // re-enter the loop at the crashed cycle (loop increments first)
+  log(`RESUME: stale state for "${branch}" (age ${_priorState.ageS}s, lastGoodPhase=${_priorState.state.phase || '?'}, cycle=${_rc}) -- resuming from cycle ${_rc} instead of restarting. Beads state (durable closed tasks, planDone detection, orphan reset) drives intra-cycle correctness; no junk issues are re-created.`);
+}
+
 // Parse calibration from the raw string the setup agent returned verbatim.
 // Deep-merge with DEFAULT_CALIBRATION so any missing/new field always has a valid value.
 // historical gets its own merge because it accumulates real sprint history on top of the zeros.
@@ -1451,11 +1511,20 @@ let taskAssignments = [];
 // Timestamp (yyyymmdd_hhmmss) is captured by the setup agent so it stays
 // stable across workflow resumes (Date.now() is banned in workflow scripts).
 const sprintLogBranch = branch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'default';
-const sprintLogFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.jsonl`;
+const sprintLogFile = `sprint-logs/${sprintLogBranch}-${effectiveStartedAt}.jsonl`;
 const integTestEnabled = setup.deployMdExists && setup.playbookExists;
 // startedAt "20260622_020952" -> ISO "2026-06-22T02:09:52Z" (pure string, no Date.now())
-const sprintTs = setup.startedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
+const sprintTs = effectiveStartedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
 let flushedCount = 0;  // how many dispatchLedger entries have been appended to sprintLogFile
+
+// Snapshot of the resolved setup, reused when writing phase checkpoints below.
+const _stateBase = {
+  schema_version: 1, branch, base_branch, rootIds,
+  startedAt: effectiveStartedAt, repo, transcriptDir: setup.transcriptDir || '',
+  integTestEnabled, calibrationRaw: setup.calibrationRaw || '',
+};
+// Acquire the lock / record the initial checkpoint now that setup has resolved.
+await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Plan', planApproved: false }, 'Plan', 'state-init');
 
 // Appends only the NEW (not yet flushed) ledger entries to the sprint log file.
 // Fire-and-forget: does NOT await, and does NOT commit or push.
@@ -1498,7 +1567,7 @@ log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles
 {
   const metaLine = JSON.stringify({
     ts: sprintTs, type: 'meta',
-    branch, startedAt: setup.startedAt,
+    branch, startedAt: effectiveStartedAt,
     roots: rootIds, goal,
     transcriptDir: setup.transcriptDir || '',
   });
@@ -1511,7 +1580,7 @@ log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles
     `Line:\n${metaLine}\n\n` +
     `Step 3: Commit and push:\n` +
     `  git -C "${repo}" add sprint-logs/\n` +
-    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-meta ${branch} ${setup.startedAt}"\n` +
+    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-meta ${branch} ${effectiveStartedAt}"\n` +
     `  git -C "${repo}" push origin ${branch}\n` +
     `Do not modify any other file. Return "OK" when done.`,
     { model: MODEL_HAIKU, label: 'sprint-meta', phase: 'Plan' }
@@ -1546,6 +1615,10 @@ while (cycleCount < maxCycles) {
     checkCycleState(rootIds),
   ]);
   log(`Cycle state: planDone=${cycleState.planDone} inProgress=[${cycleState.inProgressIds.join(', ')}]`);
+
+  // Phase checkpoint (heartbeat): record cycle + phase so a crash resumes here, and refresh
+  // the state-file mtime so the concurrency lock stays live through this cycle.
+  await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Plan', planApproved: cycleState.planDone }, 'Plan', `state-c${cycleCount}-plan`);
 
   // Reset any tasks orphaned in_progress from a previous crashed run.
   if (cycleState.inProgressIds.length > 0) {
@@ -1711,6 +1784,9 @@ while (cycleCount < maxCycles) {
 
   phase('Develop');
 
+  // Phase checkpoint (heartbeat): plan approved for this cycle, entering develop.
+  await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Develop', planApproved: true }, 'Develop', `state-c${cycleCount}-dev`);
+
   const MAX_DEV_ITER = 20;
   let devIter = 0;
   let devFeedback = '';
@@ -1718,6 +1794,23 @@ while (cycleCount < maxCycles) {
   while (devIter < MAX_DEV_ITER) {
     const streakResult = await getReadyStreaks(rootIds);
     if (streakResult.totalCount === 0) {
+      // Distinguish genuine completion from a dependency DEADLOCK. If the sprint subtree
+      // still has open issues at/above the goal threshold but NONE are ready on the FIRST
+      // develop iteration, the DAG is blocked (commonly backwards or parent-child edges) --
+      // this is the "'missing issues' when all P1s are dependency-blocked" failure. Surface
+      // it loudly with the blocked leaves rather than silently declaring develop complete.
+      if (devIter === 0) {
+        const _open = await countBeadsBlockers(threshold, rootIds);
+        if (_open.count > 0) {
+          const _diag = await dispatchShell(
+            [`bd list --status=open --type=task --json | node -e "const d=require('fs').readFileSync(0,'utf8');try{const a=JSON.parse(d).map(i=>({id:i.id,blocked_by:i.blocked_by||i.dependencies||[]}));process.stdout.write(JSON.stringify(a).slice(0,1200))}catch{process.stdout.write('[]')}"`],
+            { model: MODEL_HAIKU, label: `deadlock-diag-c${cycleCount}`, phase: 'Develop' }
+          );
+          log(`ERROR: DEADLOCK -- ${_open.count} open issue(s) at/above ${goal} in the sprint subtree but NONE are ready on the first develop iteration. The dependency DAG is blocked (commonly backwards or parent-child edges; note 'bd dep cycles' MISSES parent-child deadlocks -- inspect blocked_by on leaf tasks). Open leaf tasks + blocked_by: ${(_diag?.outputs?.[0] || '[]').trim()}`);
+          abortReason = 'deadlock: open issues but none ready';
+          break;
+        }
+      }
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
       break;
     }
@@ -2022,6 +2115,7 @@ log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);
 if (!approved(finalReview)) {
   const notes = (finalReview && finalReview.notes) || '';
   log(`Final review not approved -- aborting before harvest. Notes: ${notes.slice(0, 300)}`);
+  await clearSprintState(stateFileRel, 'state-clear-finalrejected');
   return { cycles: cycleCount, goalMet, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
 }
 
@@ -2039,15 +2133,15 @@ const tasksCompleted = goalMet
   : Math.max(0, (sprintQuote ? sprintQuote.tasks.length : 0) - prevOpenIds.length);
 const tasksOpen = goalMet ? 0 : prevOpenIds.length;
 const sprintSummary = buildSprintSummary(sprintAnalysis, sprintQuote, calibration, {
-  branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt: setup.startedAt,
+  branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt: effectiveStartedAt,
 });
 // Append Sprint Execution Summary section -- emitted regardless of goalMet.
 const executionSummary = buildExecutionSummary(logEntries, {
-  cycleCount, goalMet, goal, tasksOpen, openIssueIds: prevOpenIds, startedAt: setup.startedAt,
+  cycleCount, goalMet, goal, tasksOpen, openIssueIds: prevOpenIds, startedAt: effectiveStartedAt,
 });
 sprintSummary.summaryText += '\n' + executionSummary.summaryText;
 log('Sprint summary:\n' + sprintSummary.summaryText);
-const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.analysis.md`;
+const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${effectiveStartedAt}.analysis.md`;
 
 const harvestLabel = 'harvester';
 const harvestResult = await dispatch(
@@ -2079,11 +2173,12 @@ if (!harvestResult || harvestResult.status !== 'OK') {
       `mkdir -p "${repo}/sprint-logs"`,
       `printf '%s' '${safeContent}' > "${repo}/${analysisArtifactFile}"`,
       `git -C "${repo}" add "${analysisArtifactFile}"`,
-      `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "chore: sprint-analysis fallback ${branch} ${setup.startedAt}"`,
+      `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "chore: sprint-analysis fallback ${branch} ${effectiveStartedAt}"`,
     ],
     { model: MODEL_HAIKU, label: 'harvest-analysis-fallback', phase: 'Harvest' }
   );
   log(`Analysis artifact written via fallback: ${analysisArtifactFile}`);
+  await clearSprintState(stateFileRel, 'state-clear-harvestfailed');
   return { cycles: cycleCount, goalMet, goal, harvest: 'failed' };
 }
 
@@ -2093,7 +2188,7 @@ if (!harvestResult || harvestResult.status !== 'OK') {
 // The doer closes tasks; the original sprint-goal epics must be closed explicitly.
 // These have no data dependency between them, so run in parallel.
 
-const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt, taskAssignments, logEntries);
+const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, effectiveStartedAt, taskAssignments, logEntries);
 const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
 
 await parallel([
@@ -2273,4 +2368,7 @@ log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
 log(`  (input token cost not included -- see ${sprintLogFile} for per-dispatch detail)`);
 log('================================================\n');
 
+// Sprint completed cleanly -- release the concurrency lock so the next run starts fresh.
+// (An unclean crash skips this, leaving the state file for a resume.)
+await clearSprintState(stateFileRel, 'state-clear-done');
 return { cycles: cycleCount, goalMet, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
