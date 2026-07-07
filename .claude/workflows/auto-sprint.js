@@ -70,6 +70,16 @@ if (args) {
   }
 }
 
+// PREFLIGHT (arg schema) -- validate the parsed opts against the invocation contract
+// before doing any work. Fails loudly with the expected shape so a malformed launch
+// (e.g. args passed as a JSON string, missing issues, bad goal) is caught immediately
+// rather than surfacing as a confusing mid-run error. See docs/auto-sprint-ruggedization.md.
+const _argCheck = validateSprintArgs(opts, args);
+if (!_argCheck.ok) {
+  log(`ERROR: ${_argCheck.error} -- ${_argCheck.detail}`);
+  return { error: _argCheck.error };
+}
+
 let branch             = opts.branch           || '';   // empty = auto-detect in setup; reassigned after setup resolves
 const rawIssues        = opts.issues            || [];
 const rootIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
@@ -275,6 +285,14 @@ const DEFAULT_CALIBRATION = {
     cheap:    40000,
     standard: 80000,
     premium:  150000,
+  },
+  context_limits: {
+    _doc: 'Doer context-window budgeting. Used to predict whether a ready-task streak will fit in the model usable context before autocompact/session-limit truncation, and to split streaks proactively. Keyed by tier.',
+    model_context_tokens: { _doc: 'Total context window per tier (tokens).', cheap: 200000, standard: 200000, premium: 200000 },
+    autocompact_headroom_fraction: 0.72, // usable fraction of the window before autocompact/limit risk (observed doer failures at ~100K+ on Sonnet -> stay well under)
+    base_prompt_tokens: 9000,            // fixed doer system+task prompt + repo orientation
+    per_task_input_overhead_tokens: 3500,// per-task prompt + accumulated tool-result growth
+    output_expansion_factor: 1.0,        // multiplier on estimated output tokens counted against context
   },
   historical: {
     _doc: 'Written by harvester after each sprint. Contains actual per-role output token averages from sprint-log JSONL files. Used by auto-sprint.js computeSprintQuote() to improve future estimates. Do not edit manually.',
@@ -912,6 +930,142 @@ function truncateStreakToCeiling(streakIds, bucketById, calibration, tier) {
   return kept;
 }
 
+// validateSprintArgs: validates the parsed sprint opts. Returns { ok:true } or
+// { ok:false, error, detail }. Pure -- no I/O. Enforces the invocation contract
+// in meta.description.
+function validateSprintArgs(opts, rawArgs) {
+  const expected = 'Expected a JSON OBJECT, e.g. {"issues":["BD-7"],"branch":"feat/x"}';
+  if (opts == null || typeof opts !== 'object' || Array.isArray(opts)) {
+    return { ok: false, error: 'invalid args: not an object', detail: `${expected}. Received: ${JSON.stringify(rawArgs)}` };
+  }
+  const issues = opts.issues;
+  if (!Array.isArray(issues) || issues.length === 0) {
+    return { ok: false, error: 'invalid args: issues', detail: `"issues" must be a non-empty array of beads IDs. ${expected}. Received: ${JSON.stringify(rawArgs)}` };
+  }
+  if (!issues.every(s => typeof s === 'string' && s.trim().length > 0)) {
+    return { ok: false, error: 'invalid args: issues entries', detail: 'every entry in "issues" must be a non-empty string beads ID' };
+  }
+  if (opts.branch != null && (typeof opts.branch !== 'string' || opts.branch.trim() === '')) {
+    return { ok: false, error: 'invalid args: branch', detail: '"branch" must be a non-empty string when provided' };
+  }
+  if (opts.goal != null && !['P1', 'P1/P2', 'P1/P2/P3'].includes(opts.goal)) {
+    return { ok: false, error: 'invalid args: goal', detail: '"goal" must be one of "P1" | "P1/P2" | "P1/P2/P3"' };
+  }
+  if (opts.max_cycles != null && !(Number.isInteger(Number(opts.max_cycles)) && Number(opts.max_cycles) > 0)) {
+    return { ok: false, error: 'invalid args: max_cycles', detail: '"max_cycles" must be a positive integer' };
+  }
+  if (opts.base_branch != null && (typeof opts.base_branch !== 'string' || opts.base_branch.trim() === '')) {
+    return { ok: false, error: 'invalid args: base_branch', detail: '"base_branch" must be a non-empty string when provided' };
+  }
+  return { ok: true };
+}
+
+// assertCalibrationComplete: walks every numeric calibration path the cost/context
+// arithmetic reads and heals any missing or NaN value from defaults. Operates on a
+// deep-enough clone so neither the input calibration nor the defaults are mutated.
+// Returns { calibration, healed } where healed is an array of human-readable strings
+// describing each healed path (caller WARNs per entry).
+function assertCalibrationComplete(calibration, defaults) {
+  const getPath = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  const setPath = (obj, path, val) => {
+    const keys = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k = keys[i];
+      // Clone-on-write so the caller's nested objects are never mutated.
+      cur[k] = Object.assign({}, cur[k]);
+      cur = cur[k];
+    }
+    cur[keys[keys.length - 1]] = val;
+  };
+  const requiredPaths = [
+    'model_prices_per_1m_output_tokens.cheap',
+    'model_prices_per_1m_output_tokens.standard',
+    'model_prices_per_1m_output_tokens.premium',
+    'complexity_buckets.S.doer_tokens',
+    'complexity_buckets.M.doer_tokens',
+    'complexity_buckets.L.doer_tokens',
+    'reviewer_ratio.value',
+    'cycle_assumptions.optimistic',
+    'cycle_assumptions.expected',
+    'cycle_assumptions.pessimistic',
+    'fixed_overhead_tokens.setup',
+    'fixed_overhead_tokens.planner',
+    'fixed_overhead_tokens.plan_reviewer',
+    'fixed_overhead_tokens.harvester',
+    'fixed_overhead_tokens.ci_watcher',
+    'fixed_overhead_tokens.log_flush_per_cycle',
+    'input_cost_multiplier.value',
+    'outlier_thresholds.notable_pct',
+    'outlier_thresholds.outlier_pct',
+    'outlier_thresholds.calibration_failure_pct',
+    'doer_token_ceiling.cheap',
+    'doer_token_ceiling.standard',
+    'doer_token_ceiling.premium',
+    'context_limits.model_context_tokens.cheap',
+    'context_limits.model_context_tokens.standard',
+    'context_limits.model_context_tokens.premium',
+    'context_limits.autocompact_headroom_fraction',
+    'context_limits.base_prompt_tokens',
+    'context_limits.per_task_input_overhead_tokens',
+  ];
+  const healed = [];
+  const result = Object.assign({}, calibration);
+  for (const path of requiredPaths) {
+    const val = getPath(result, path);
+    if (typeof val !== 'number' || Number.isNaN(val)) {
+      const def = getPath(defaults, path);
+      setPath(result, path, def);
+      healed.push(`calibration field ${path} missing/invalid -- healed to ${def}`);
+    }
+  }
+  return { calibration: result, healed };
+}
+
+// checkModelAliasStaleness: returns "tier=id" strings for any TIER_TO_MODEL value
+// that looks like a dated pin (ends in -YYYYMMDD). Caller WARNs if non-empty.
+function checkModelAliasStaleness(tierToModel) {
+  const stale = [];
+  for (const [tier, id] of Object.entries(tierToModel || {})) {
+    if (typeof id === 'string' && /-\d{8}$/.test(id)) stale.push(`${tier}=${id}`);
+  }
+  return stale; // caller WARNs if non-empty
+}
+
+// fitStreakToContext: predicts whether an in-order streak fits the doer's usable
+// context and returns the longest prefix that does. Mirrors truncateStreakToCeiling's
+// per-task token estimate. Returns { fittedIds, estContext, available, wouldOverflow }.
+function fitStreakToContext(streakIds, bucketById, calibration, tier) {
+  const cl = (calibration && calibration.context_limits) || {};
+  const windowTokens = (cl.model_context_tokens || {})[tier];
+  const frac = cl.autocompact_headroom_fraction;
+  if (typeof windowTokens !== 'number' || typeof frac !== 'number' || windowTokens <= 0) {
+    return { fittedIds: streakIds.slice(), estContext: 0, available: Infinity, wouldOverflow: false };
+  }
+  const available = windowTokens * frac;
+  const base = cl.base_prompt_tokens || 0;
+  const perTask = cl.per_task_input_overhead_tokens || 0;
+  const outMul = cl.output_expansion_factor != null ? cl.output_expansion_factor : 1.0;
+  // reuse the same output estimate as truncateStreakToCeiling
+  const hist = (calibration && calibration.historical) || {};
+  const buckets = (calibration && calibration.complexity_buckets) || {};
+  const histToks = hist.bucket_avg_tokens || {};
+  const estOut = id => {
+    const b = bucketById ? bucketById[id] : undefined;
+    const h = histToks[b];
+    if (hist.sprints_sampled >= 1 && h != null) return Math.round(h);
+    const def = buckets[b] || buckets.M || { doer_tokens: 0 };
+    return def.doer_tokens || 0;
+  };
+  let sum = base, kept = [];
+  for (const id of streakIds) {
+    const cost = perTask + estOut(id) * outMul;
+    if (kept.length > 0 && sum + cost > available) break; // always keep >=1
+    kept.push(id); sum += cost;
+  }
+  return { fittedIds: kept, estContext: sum, available, wouldOverflow: kept.length < streakIds.length };
+}
+
 // PURE_FUNCTIONS_END
 
 // ------------------------------------------------------------- role schemas
@@ -1126,14 +1280,16 @@ phase('Plan');
 // Phase 1: deterministic setup steps -- run via dispatchShell so each command
 // executes exactly once with a bounded turn cap (no LLM looping on simple checks).
 //
-// Fixed output indices (always 7 elements regardless of branch/no-branch):
+// Fixed output indices (always 8 elements regardless of branch/no-branch):
 //   0: repo root (git rev-parse --show-toplevel)
-//   1: branch checkout result (or "no-op" when branch was not specified)
-//   2: confirmed branch name (git rev-parse --abbrev-ref HEAD)
-//   3: startedAt timestamp (date +%Y%m%d_%H%M%S)
-//   4: deploy.md exists (YES/NO)
-//   5: integ-test-playbook.md exists (YES/NO)
-//   6: comma-joined list of permission entries declared in deploy.md /
+//   1: fetch result (FETCHED / FETCH_FAIL) -- run BEFORE checkout so a new sprint
+//      branch is cut from the freshest origin/<base_branch> (guards stale-main branching)
+//   2: branch checkout result (or "no-op" when branch was not specified)
+//   3: confirmed branch name (git rev-parse --abbrev-ref HEAD)
+//   4: startedAt timestamp (date +%Y%m%d_%H%M%S)
+//   5: deploy.md exists (YES/NO)
+//   6: integ-test-playbook.md exists (YES/NO)
+//   7: comma-joined list of permission entries declared in deploy.md /
 //      integ-test-playbook.md's "## Permissions" sections that are NOT yet
 //      in .claude/settings.json's permissions.allow (empty string if none --
 //      computed deterministically here so Step 5's prompt to the agent never
@@ -1141,8 +1297,11 @@ phase('Plan');
 //      to grant).
 const setupShellCmds = [
   `git rev-parse --show-toplevel`,
+  // Fetch first so branch creation below can base a NEW sprint branch on the freshest
+  // origin/<base_branch> instead of a possibly-stale local HEAD (stale-main guard).
+  `git fetch origin --quiet && echo FETCHED || echo FETCH_FAIL`,
   branch
-    ? `git checkout "${branch}" 2>/dev/null || git checkout --track "origin/${branch}" 2>/dev/null || git checkout -b "${branch}"`
+    ? `git checkout "${branch}" 2>/dev/null || git checkout --track "origin/${branch}" 2>/dev/null || git checkout -b "${branch}" "origin/${base_branch}"`
     : `echo "no-op"`,
   `git rev-parse --abbrev-ref HEAD`,
   `date +%Y%m%d_%H%M%S`,
@@ -1173,15 +1332,23 @@ const setupShell = await dispatchShell(setupShellCmds, {
 
 const _outs = setupShell && Array.isArray(setupShell.outputs) ? setupShell.outputs : [];
 const _detectedRepo    = (_outs[0] || '').trim();
-const _detectedBranch  = (_outs[2] || '').trim();
-const _detectedTs      = (_outs[3] || '').trim();
-const _deployExists    = (_outs[4] || '').trim() === 'YES';
-const _playbookExists  = (_outs[5] || '').trim() === 'YES';
-const _missingPerms    = (_outs[6] || '').trim().split(',').map(s => s.trim()).filter(Boolean);
+const _fetchResult     = (_outs[1] || '').trim();
+const _detectedBranch  = (_outs[3] || '').trim();
+const _detectedTs      = (_outs[4] || '').trim();
+const _deployExists    = (_outs[5] || '').trim() === 'YES';
+const _playbookExists  = (_outs[6] || '').trim() === 'YES';
+const _missingPerms    = (_outs[7] || '').trim().split(',').map(s => s.trim()).filter(Boolean);
 
 if (!_detectedRepo || !_detectedBranch) {
   log('ERROR: setup-shell failed -- could not detect repo root or branch');
   return { error: 'setup failed' };
+}
+
+// PREFLIGHT (latest HEAD) -- a failed fetch means we cannot guarantee the sprint branch
+// was cut from the latest origin/<base_branch>; there is no safe silent fallback. Hard-fail.
+if (_fetchResult === 'FETCH_FAIL') {
+  log(`ERROR: preflight -- git fetch origin failed; cannot guarantee branch is off latest ${base_branch}. Check network/remote and retry.`);
+  return { error: 'preflight: git fetch failed' };
 }
 
 // Phase 2: free-form setup steps (permissions merge, calibration, transcript dir).
@@ -1246,7 +1413,7 @@ if (branch === 'main' || branch === 'master') {
 // historical gets its own merge because it accumulates real sprint history on top of the zeros.
 let _parsedCalib = {};
 try { _parsedCalib = JSON.parse(setup.calibrationRaw || '{}'); } catch {}
-const calibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
+const _mergedCalibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
   historical:                      Object.assign({}, DEFAULT_CALIBRATION.historical,                      _parsedCalib.historical                      || {}),
   complexity_buckets:              _parsedCalib.complexity_buckets              || DEFAULT_CALIBRATION.complexity_buckets,
   model_prices_per_1m_output_tokens: _parsedCalib.model_prices_per_1m_output_tokens || DEFAULT_CALIBRATION.model_prices_per_1m_output_tokens,
@@ -1257,7 +1424,17 @@ const calibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
   input_cost_multiplier:           _parsedCalib.input_cost_multiplier           || DEFAULT_CALIBRATION.input_cost_multiplier,
   outlier_thresholds:              _parsedCalib.outlier_thresholds              || DEFAULT_CALIBRATION.outlier_thresholds,
   doer_token_ceiling:              _parsedCalib.doer_token_ceiling              || DEFAULT_CALIBRATION.doer_token_ceiling,
+  context_limits:                  _parsedCalib.context_limits                  || DEFAULT_CALIBRATION.context_limits,
 });
+// PREFLIGHT (calibration completeness) -- heal any numeric field the cost/context
+// arithmetic reads that is missing or NaN on a stale on-disk calibration.json, filling
+// from DEFAULT_CALIBRATION so estimation never produces NaN. Auto-heal + WARN.
+const _calCheck = assertCalibrationComplete(_mergedCalibration, DEFAULT_CALIBRATION);
+const calibration = _calCheck.calibration;
+for (const h of _calCheck.healed) log(`WARN: ${h}`);
+// PREFLIGHT (model-alias staleness) -- warn if any tier maps to a dated model pin.
+const _staleAliases = checkModelAliasStaleness(TIER_TO_MODEL);
+if (_staleAliases.length) log(`WARN: TIER_TO_MODEL has dated-looking model IDs (prefer bare aliases): ${_staleAliases.join(', ')}`);
 // Sync output prices from loaded calibration so dispatchLedger uses correct rates.
 Object.assign(OUTPUT_PRICE_PER_M, calibration.model_prices_per_1m_output_tokens || {});
 
@@ -1559,9 +1736,19 @@ while (cycleCount < maxCycles) {
       // Truncate the streak to the longest prefix that fits the doer token ceiling for
       // this tier. Remaining IDs are left unworked and resurface on the next
       // getReadyStreaks iteration.
-      const fittedIds = truncateStreakToCeiling(streak.ids, bucketById, calibration, streak.model);
+      // Fit the streak by BOTH the output-token ceiling AND the predicted context window,
+      // taking the more restrictive prefix. The context predictor proactively splits a
+      // streak that would exceed the doer's usable context (below the autocompact/session
+      // limit) -- pre-empting the "doer exhausts context -> returns null -> work lost"
+      // failure. Deferred tasks resurface on the next getReadyStreaks iteration (lossless).
+      const _ceilFit = truncateStreakToCeiling(streak.ids, bucketById, calibration, streak.model);
+      const _ctxFit  = fitStreakToContext(streak.ids, bucketById, calibration, streak.model);
+      const fittedIds = _ceilFit.length <= _ctxFit.fittedIds.length ? _ceilFit : _ctxFit.fittedIds;
       if (fittedIds.length < streak.ids.length) {
-        log(`Streak ${streak.model} truncated to token ceiling: working ${fittedIds.length}/${streak.ids.length} task(s) (${labelTaskIds(fittedIds)}); ${streak.ids.length - fittedIds.length} deferred`);
+        const _reason = _ctxFit.fittedIds.length < _ceilFit.length
+          ? `context-limited (est ${Math.round(_ctxFit.estContext)} tok > usable ${Math.round(_ctxFit.available)} tok)`
+          : `token ceiling`;
+        log(`Streak ${streak.model} split by ${_reason}: working ${fittedIds.length}/${streak.ids.length} task(s) (${labelTaskIds(fittedIds)}); ${streak.ids.length - fittedIds.length} deferred`);
       }
       const doerLabel = `doer-c${cycleCount}-i${devIter}: ${labelTaskIds(fittedIds)}`;
       const streakEstUsd = sprintQuote
