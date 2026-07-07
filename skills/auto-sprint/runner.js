@@ -666,11 +666,12 @@ if (!buildSprintSummary) {
   const integTestEnabled = deployMdExists && playbookExists;
 
   // Sprint loop state.
-  let cycleCount     = 0;
-  let abortReason    = '';
-  let goalMet        = false;
+  let cycleCount      = 0;
+  let abortReason     = '';
+  let goalMet         = false;
   let taskAssignments = [];
-  let sprintQuote    = null;
+  let sprintQuote     = null;
+  let prevOpenIds     = [];
 
   // ---- SPRINT LOOP ----
   while (cycleCount < maxCycles) {
@@ -1044,55 +1045,347 @@ if (!buildSprintSummary) {
 
     if (abortReason) break;
 
-    // ---------------------------------------------------------------- TEST (Phase 3 - stub for now)
-    if (integTestEnabled) {
-      log('Test phase: deploy.md + integ-test-playbook.md detected -- Test phase runs in Phase 3');
+    // ---------------------------------------------------------------- TEST (T3.1)
+
+    const _deployMdExists = fs.existsSync(path.join(repo, 'deploy.md'));
+    const _playbookExists = fs.existsSync(path.join(repo, 'integ-test-playbook.md'));
+
+    if (!_deployMdExists && !_playbookExists) {
+      log('Test phase: no deploy.md or integ-test-playbook.md found -- skipping');
+    } else {
+      if (_deployMdExists) {
+        const deployerPrompt =
+          'Repo: ' + repo + '\nBranch: ' + branch + '\nCycle: ' + cycleCount + '\n\n' +
+          'Follow the integration test playbook and deploy.md:\n' +
+          (cycleCount === 1
+            ? '1. Run the Setup section of integ-test-playbook.md to bring up the test environment.\n'
+            : '1. Run the Reset section of integ-test-playbook.md to restore pristine state.\n') +
+          '2. Follow all steps in deploy.md to deploy the build.\n' +
+          '3. Run the smoke test defined in deploy.md.\n' +
+          '4. Return deployed: true if the smoke test passes, false otherwise.\n' +
+          '5. If deployed is false, include the error output in notes.';
+        const deployResult = await dispatchFleet('pm-doer-std', deployerPrompt, {
+          label: 'deployer-c' + cycleCount, phase: 'Test', cycle: cycleCount,
+          schema: { type: 'object', required: ['deployed'],
+            properties: { deployed: { type: 'boolean' }, notes: { type: 'string' } } },
+        });
+        if (!deployResult || !deployResult.deployed) {
+          const msg = (deployResult && deployResult.notes) || 'no details';
+          log('Deploy failed on cycle ' + cycleCount + ': ' + msg.slice(0, 200));
+          log('Skipping integration tests this cycle -- teardown and continue');
+          await dispatchFleet('pm-doer-std',
+            'Run the Teardown section of integ-test-playbook.md to clean up the test environment.',
+            { label: 'teardown-c' + cycleCount + '-fail', phase: 'Test', cycle: cycleCount });
+        } else if (_playbookExists) {
+          const integTestPrompt =
+            'Repo: ' + repo + '\nBranch: ' + branch + '\nCycle: ' + cycleCount + '\n' +
+            'Sprint goals: ' + rootSummary + '\n\n' +
+            'Run: bd list --type=feature --status=open\n' +
+            'For each open feature, execute its integration tests.\n\n' +
+            'For each feature:\n' +
+            '  PASS: all tests pass -> bd close <feature-id>\n' +
+            '  FAIL: tests fail -> bd create --title="[integ] <description>" ' +
+            '--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ' +
+            '--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n' +
+            '  Keep feature open on failure or if inconclusive.\n\n' +
+            'Priority rules:\n' +
+            '  P0: system will not start or core path completely broken\n' +
+            '  P1: requirement from sprint goal explicitly not met\n' +
+            '  P2: requirement partially met, degraded behaviour\n' +
+            '  P3: quality, performance, or UX issue not blocking core function\n\n' +
+            'Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n' +
+            'Return featuresClosed (count), issuesCreated (count), summary (one paragraph).';
+          const integResult = await dispatchFleet('pm-doer-std', integTestPrompt, {
+            label: 'integ-runner-c' + cycleCount, phase: 'Test', cycle: cycleCount,
+            schema: INTEG_RUN_SCHEMA,
+          });
+          if (integResult) {
+            log('Integration: ' + integResult.featuresClosed + ' features closed, ' +
+                integResult.issuesCreated + ' issues created');
+            log('Summary: ' + integResult.summary);
+          }
+          await dispatchFleet('pm-doer-std',
+            'Run the Teardown section of integ-test-playbook.md to fully clean up the test environment.',
+            { label: 'teardown-c' + cycleCount, phase: 'Test', cycle: cycleCount });
+        }
+      }
     }
 
-    // ---------------------------------------------------------------- HARVEST (Phase 3 - stub for now)
-    log('Harvest phase: runs in Phase 3 (T3.x tasks)');
+    writeSprintState(stateFileRel, {
+      type: 'checkpoint', cycle: cycleCount, phase: 'Test', branch, goal, rootIds, startedAt,
+    }, 'Test', 'state-c' + cycleCount + '-test');
 
-    // ---- Exit check: count open blockers ----
-    const openIdExtractFinal = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
-    const idExtractFinal = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-    const exitCmds = [
-      ...rootIds.map(id => `bd graph --json ${id} | ${idExtractFinal}`),
-      `bd list --status=open --json | ${openIdExtractFinal}`,
+    // ---------------------------------------------------------------- CYCLE EXIT GATE (T3.2)
+
+    const _openIdExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+    const _idExtract2    = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
+    const _exitCmds = [
+      ...rootIds.map(id => 'bd graph --json ' + id + ' | ' + _idExtract2),
+      'bd list --status=open --json | ' + _openIdExtract,
     ];
-    const exitRaw = await dispatchShellFleet(exitCmds, 'pm-doer-cheap', {
-      label: 'exit-check-c' + cycleCount, phase: 'Harvest', cycle: cycleCount,
+    const _exitRaw = await dispatchShellFleet(_exitCmds, 'pm-doer-cheap', {
+      label: 'exit-check-c' + cycleCount, phase: 'Test', cycle: cycleCount,
     });
-    const blockersFinal = parseBlockers(
-      exitRaw && exitRaw.outputs, rootIds.length, rootIds.length, threshold, rootIds);
+    const _blockers = parseBlockers(
+      _exitRaw && _exitRaw.outputs, rootIds.length, rootIds.length, threshold, rootIds);
+    const openCount = _blockers.count;
+    const currentOpenIds = (_blockers.ids || []).slice().sort();
 
-    log('Exit check cycle ' + cycleCount + ': ' + blockersFinal.count + ' blocker(s) at/above ' + goal);
-    if (blockersFinal.count === 0) {
+    log('Exit check cycle ' + cycleCount + ': ' + openCount +
+        ' blocker(s) at/above ' + goal + ' -- IDs: [' + currentOpenIds.join(', ') + ']');
+
+    if (openCount === 0) {
       goalMet = true;
       log('Goal met -- all P<=' + threshold + ' issues resolved');
       break;
     }
+
+    // No-progress check: if open IDs are identical to last cycle, abort.
+    if (cycleCount > 1 && prevOpenIds.length > 0) {
+      const prevSorted = prevOpenIds.slice().sort();
+      const same = prevSorted.length === currentOpenIds.length &&
+        prevSorted.every((id, i) => id === currentOpenIds[i]);
+      if (same) {
+        log('No progress in cycle ' + cycleCount + ': same ' +
+            prevOpenIds.length + ' issues unresolved -- aborting');
+        abortReason = 'no-progress';
+        prevOpenIds = currentOpenIds;
+        break;
+      }
+    }
+
+    prevOpenIds = currentOpenIds;
+
+    if (cycleCount >= maxCycles) {
+      log('Cycle ceiling reached: ' + cycleCount + '/' + maxCycles + ' -- stopping sprint loop');
+      break;
+    }
+
+    log('Cycle ' + cycleCount + ' complete -- ' + openCount +
+        ' open issue(s) remain; starting cycle ' + (cycleCount + 1));
   }
 
-  // ---- Post-loop summary ----
+  // ---------------------------------------------------------------- POST-LOOP
   log('\n=== Sprint complete: cycles=' + cycleCount + ' goalMet=' + goalMet +
       ' abortReason=' + (abortReason || 'none') + ' ===');
 
+  // ---------------------------------------------------------------- HARVEST (T3.3)
+
+  const finalReviewPrompt =
+    'Repo: ' + repo + '\nBranch: ' + branch + '\nBase branch: ' + base_branch + '\n' +
+    'Sprint goals: ' + rootSummary + '\nGoal: ' + goal + '\n' +
+    (abortReason ? 'Sprint ended early: ' + abortReason + '. Review what was completed.\n' : '') +
+    (goalMet ? 'Goal was met: all P<=' + threshold + ' issues resolved.\n' : 'Goal not yet met.\n') +
+    '\nReview the overall output of this sprint:\n' +
+    '  - Does the work address the original sprint goals?\n' +
+    '  - Are there obvious gaps or regressions?\n' +
+    '  - Is the codebase in a releasable state for what was completed?\n' +
+    'APPROVED means the work is ready to harvest and raise as a PR.\n' +
+    'CHANGES NEEDED means critical issues were found; include specific findings in notes.';
+
+  const finalReview = await dispatchFleet('pm-reviewer', finalReviewPrompt, {
+    label: 'final-reviewer', phase: 'Harvest', cycle: cycleCount,
+    schema: REVIEW_SCHEMA,
+  });
+  log('Final review: ' + ((finalReview && finalReview.verdict) || 'null'));
+
+  if (!approved(finalReview)) {
+    const notes = (finalReview && finalReview.notes) || '';
+    log('Final review not approved -- aborting before harvest. Notes: ' + notes.slice(0, 300));
+    clearSprintState(stateFileRel, 'state-clear-finalrejected');
+    return {
+      cycles: cycleCount, goalMet, goal,
+      abortReason: abortReason || 'final review rejected',
+      finalReviewNotes: notes,
+    };
+  }
+
+  // Build sprint summary via cost.js (pure JS).
+  const sprintSummary = buildSprintSummary(null, sprintQuote, calibration, {
+    branch, goal, goalMet, cycleCount,
+    tasksCompleted: goalMet ? (sprintQuote ? sprintQuote.tasks.length : 0) : 0,
+    tasksOpen: prevOpenIds.length,
+    startedAt,
+  });
+
+  // Write analysis artifact (sprint-logs/<branch>.analysis.md).
+  const analysisFile = path.join(repo, 'sprint-logs', safeBranch + '.analysis.md');
+  try {
+    fs.writeFileSync(analysisFile, sprintSummary.summaryText || '', 'utf8');
+    log('Sprint analysis written to: ' + analysisFile);
+  } catch (err) {
+    log('WARN: could not write analysis file: ' + String(err).slice(0, 120));
+  }
+
+  const harvesterPrompt =
+    'Repo: ' + repo + '\nBranch: ' + branch + '\nBase branch: ' + base_branch + '\n' +
+    'Sprint goals: ' + rootSummary + '\nCycles completed: ' + cycleCount +
+    '\nGoal met: ' + goalMet + '\n\n' +
+    'The sprint is complete. Harvest the sprint artefacts.\n' +
+    'Follow your runbook (agents/harvester.md).\n\n' +
+    'IMPORTANT: Your FIRST action is to commit the analysis artifact below before doing anything else.\n\n' +
+    'analysisText (write verbatim to sprint-logs/' + safeBranch + '.analysis.md):\n' +
+    (sprintSummary.summaryText || '(no summary)') + '\n\n' +
+    'Final review notes to include in CHANGELOG:\n' +
+    ((finalReview && finalReview.notes) || '(none)') + '\n\n' +
+    'Steps:\n' +
+    '  1. Update docs/ and README if API or usage changed.\n' +
+    '  2. Append sprint summary to CHANGELOG.md under [Unreleased].\n' +
+    '  3. Export beads state: git -C "' + repo + '" add .beads/issues.jsonl\n' +
+    '     git -C "' + repo + '" diff --cached --quiet || ' +
+    '     git -C "' + repo + '" -c user.name=\'pm\' -c user.email=\'pm@pm.local\' commit -m "chore: export beads state"\n' +
+    '  4. Remove sprint scaffold files from PR diff (requirements.md, feedback.md).\n' +
+    '  5. Stage sprint-logs/ and push: git -C "' + repo + '" add sprint-logs/ && ' +
+    '     git -C "' + repo + '" push origin ' + branch + '\n' +
+    '  6. Close delivered sprint goals in beads:\n' +
+    rootIds.map(id => '     bd close ' + id + ' --reason="implemented in sprint ' + branch + '"').join('\n') + '\n\n' +
+    'Return status "OK" if successful, "FAILED" with notes otherwise.';
+
+  const harvestResult = await dispatchFleet('pm-harvester', harvesterPrompt, {
+    label: 'harvester', phase: 'Harvest', cycle: cycleCount,
+    schema: HARVEST_SCHEMA,
+  });
+
+  if (!harvestResult || harvestResult.status !== 'OK') {
+    log('Harvest failed: ' + ((harvestResult && harvestResult.notes) || 'null'));
+  }
+
+  // Calibration update (pure JS then write file).
+  const updatedCalibration = computeUpdatedCalibration(calibration, null, startedAt, taskAssignments, []);
+  try {
+    fs.writeFileSync(calibPath, JSON.stringify(updatedCalibration, null, 2), 'utf8');
+    log('Calibration updated: ' + calibPath);
+  } catch (err) {
+    log('WARN: could not write calibration: ' + String(err).slice(0, 120));
+  }
+
+  // Dolt push (non-fatal).
+  const doltPushPrompt =
+    'Sync beads state to the Dolt remote.\n\n' +
+    'Run:\n' +
+    '  bd dolt push\n\n' +
+    'Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n' +
+    'If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n' +
+    '  "bd dolt push failed (non-fatal): <reason>"\n' +
+    'and continue -- do NOT throw, return an error, or abort.\n\n' +
+    'Return "OK" when done (regardless of whether the push succeeded or failed).';
+  try {
+    await dispatchFleet('pm-harvester', doltPushPrompt, {
+      label: 'dolt-push', phase: 'Harvest', cycle: cycleCount,
+    });
+  } catch (err) {
+    log('WARN: dolt push dispatch failed (non-fatal): ' + String(err).slice(0, 120));
+  }
+
+  // ---------------------------------------------------------------- PR + CI (T3.4)
+
+  const prPrompt =
+    'In repo ' + repo + ' on branch ' + branch +
+    ', create a GitHub pull request targeting ' + base_branch + '.\n' +
+    'Command: gh pr create --base ' + base_branch + ' --head ' + branch + '\n' +
+    'Title: summarise what was implemented across ' + cycleCount + ' cycle(s).\n' +
+    'Body:\n' +
+    '  - What was built (per sprint goal)\n' +
+    '  - Sprint goal: ' + goal + ' -- ' + (goalMet ? 'MET' : 'NOT MET (partial delivery)') + '\n' +
+    '  - Cycles run: ' + cycleCount + '\n' +
+    '  - Open items carried forward (if any): bd list --status=open and summarise\n' +
+    '  - Final review notes: ' + ((finalReview && finalReview.notes) || '(none)') + '\n' +
+    '  - Token cost summary from: bd memories auto-sprint\n\n' +
+    'After creating the PR, return its number as prNumber (integer).';
+
+  const harvestPr = await dispatchFleet('pm-harvester', prPrompt, {
+    label: 'harvest-pr', phase: 'Harvest', cycle: cycleCount,
+    schema: {
+      type: 'object', required: ['prNumber'],
+      properties: { prNumber: { type: 'number' }, prUrl: { type: 'string' } },
+    },
+  });
+  const prNumber = harvestPr && harvestPr.prNumber;
+  log('PR number: ' + (prNumber || 'none'));
+
+  if (prNumber) {
+    const ciPrompt =
+      'Check CI status for PR #' + prNumber + ' on branch ' + branch + '.\n' +
+      'Run: gh run list --pr ' + prNumber + ' --limit 3 --json status,conclusion,databaseId\n' +
+      'If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n' +
+      'If runs exist and conclusion is "success": return status "green".\n' +
+      'If runs exist and conclusion is "failure": return status "red" with notes (include run URL).\n' +
+      'If no runs found: return status "not_configured".\n' +
+      'Do not block for more than 10 minutes total.';
+
+    const ciResult = await dispatchFleet('pm-doer-cheap', ciPrompt, {
+      label: 'ci-watcher', phase: 'Harvest', cycle: cycleCount,
+      schema: CI_SCHEMA,
+    });
+
+    if (ciResult) {
+      log('CI status: ' + ciResult.status);
+
+      if (ciResult.status === 'not_configured') {
+        log('CI not configured -- checking for existing open CI pipeline task');
+        const dedupSchema = {
+          type: 'object', required: ['exists', 'id'],
+          properties: { exists: { type: 'boolean' }, id: { type: 'string' } },
+        };
+        const dedupResult = await dispatchFleet('pm-doer-cheap',
+          'Run: bd search "Add CI pipeline" --status=open --json\n' +
+          'Parse the JSON output and look for any issue whose title matches ' +
+          '"Add CI pipeline to project" (exact or close variant, case-insensitive).\n' +
+          'If a matching OPEN issue is found, return JSON: {"exists": true, "id": "<issue-id>"}\n' +
+          'If no matching open issue is found (or the command returns empty/no results), ' +
+          'return JSON: {"exists": false, "id": null}',
+          { label: 'ci-task-dedup', phase: 'Harvest', cycle: cycleCount, schema: dedupSchema });
+
+        if (dedupResult && dedupResult.exists) {
+          log('CI pipeline task already exists: ' + dedupResult.id + ' -- skipping creation');
+        } else {
+          await dispatchFleet('pm-doer-cheap',
+            'Run: bd create --title="Add CI pipeline to project" ' +
+            '--description="The auto-sprint workflow found no CI runs for branch ' + branch + '. ' +
+            'CI is required for the sprint exit gate. ' +
+            'This task covers: choosing a CI provider, writing the workflow config, and verifying it triggers on push." ' +
+            '--type=task --priority=2\n' +
+            'Then run: bd show <new-id> and confirm it was created.',
+            { label: 'ci-task-create', phase: 'Harvest', cycle: cycleCount });
+          log('ACTION REQUIRED: Set up CI for this project. Task created in beads.');
+        }
+      } else if (ciResult.status === 'red') {
+        log('CI FAILED: ' + ((ciResult.notes || '').slice(0, 200)));
+      }
+
+      if (ciResult.status !== 'green') {
+        const ciNotes = ciResult.notes ? '\\n\\n' + ciResult.notes : '';
+        await dispatchFleet('pm-doer-cheap',
+          'Annotate PR #' + prNumber + ' with the CI status result.\n\n' +
+          'Run: gh pr comment ' + prNumber + ' --body "**CI status: ' +
+          ciResult.status + '**' + ciNotes + '"',
+          { label: 'ci-pr-annotate', phase: 'Harvest', cycle: cycleCount });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- COST SUMMARY (T3.5)
+
   const roleOf = label => String(label || '').replace(/-c\d.*$/, '');
-  log('=== Sprint cost summary (output tokens only) ===');
   const byRole = {};
   for (const e of dispatchLedger) {
     const role = roleOf(e.label);
-    if (!byRole[role]) byRole[role] = { outTokens: 0, costUsd: 0 };
+    if (!byRole[role]) byRole[role] = { outTokens: 0, costUsd: 0, calls: 0 };
     byRole[role].outTokens += e.outTokens || 0;
     byRole[role].costUsd   += e.costUsd   || 0;
+    byRole[role].calls     += 1;
   }
-  let sprintTotal = 0;
-  for (const [role, data] of Object.entries(byRole)) {
-    log('  ' + role + ': ' + data.outTokens + ' tokens, $' + data.costUsd.toFixed(4));
-    sprintTotal += data.costUsd;
+  const sprintTotal = dispatchLedger.reduce((s, e) => s + (e.costUsd || 0), 0);
+
+  log('\n=== Sprint cost summary (output tokens only) ===');
+  for (const [role, data] of Object.entries(byRole)
+      .sort((a, b) => b[1].costUsd - a[1].costUsd)) {
+    log('  ' + role.padEnd(24) + ' $' + data.costUsd.toFixed(4).padStart(8) +
+        '  ' + String(data.outTokens).padStart(8) + ' tok  ' + data.calls + ' call(s)');
   }
-  log('  TOTAL: $' + sprintTotal.toFixed(4));
-  log('Sprint log: ' + stateFileRel);
+  log('  ' + 'TOTAL'.padEnd(24) + ' $' + sprintTotal.toFixed(4).padStart(8));
+  log('  (input token cost not included -- see ' + stateFileRel + ' for per-dispatch detail)');
+  log('================================================\n');
 
   clearSprintState(stateFileRel, 'state-clear-done');
 
