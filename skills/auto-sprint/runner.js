@@ -263,87 +263,358 @@ const SHELL_DISPATCH_PROMPT_HEADER =
 // STATUS_HTML: self-contained sprint dashboard (T3.6)
 // No external resources - pure HTML/CSS/JS, auto-polls /state every 3s.
 // ---------------------------------------------------------------------------
-const STATUS_HTML = [
-  '<!DOCTYPE html><html lang="en"><head>',
-  '<meta charset="UTF-8">',
-  '<meta name="viewport" content="width=device-width,initial-scale=1">',
-  '<title>auto-sprint dashboard</title>',
-  '<style>',
-  '*{box-sizing:border-box;margin:0;padding:0}',
-  'body{background:#0d1117;color:#c9d1d9;font-family:system-ui,-apple-system,sans-serif;padding:16px}',
-  'h1{font-size:18px;font-weight:600;margin-bottom:4px}',
-  'h2{font-size:13px;color:#8b949e;margin:12px 0 6px}',
-  '.header{display:flex;align-items:center;justify-content:space-between;',
-  '  padding:12px 16px;background:#161b22;border-radius:8px;',
-  '  border:1px solid #30363d;margin-bottom:12px}',
-  '.badge{padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600}',
-  '.phase-starting,.phase-setup{background:#21262d;color:#8b949e}',
-  '.phase-Plan{background:#1d4ed8;color:#dbeafe}',
-  '.phase-Develop{background:#166534;color:#dcfce7}',
-  '.phase-Test{background:#92400e;color:#fef3c7}',
-  '.phase-Harvest{background:#6b21a8;color:#f3e8ff}',
-  '.phase-ERROR,.phase-CRASHED{background:#7f1d1d;color:#fee2e2}',
-  '.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}',
-  '.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px}',
-  '.card-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}',
-  '.card-value{font-size:22px;font-weight:700;color:#e6edf3}',
-  '.card-value.green{color:#3fb950}.card-value.red{color:#f85149}',
-  '.card-value.muted{font-size:14px;color:#8b949e}',
-  '.log-box{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px;',
-  '  height:300px;overflow-y:auto;font-family:monospace;font-size:11px;',
-  '  line-height:1.5;color:#8b949e;white-space:pre-wrap;word-break:break-all}',
-  '.banner{padding:14px 18px;border-radius:8px;font-size:16px;font-weight:700;',
-  '  text-align:center;margin-bottom:12px}',
-  '.banner.green{background:#0d4429;border:1px solid #238636;color:#3fb950}',
-  '.banner.red{background:#4d1d1d;border:1px solid #f85149;color:#f85149}',
-  '.refresh{font-size:11px;color:#484f58;margin-top:8px}',
-  '</style></head><body>',
-  '<div id="app">',
-  '<div class="header">',
-  '<div><h1>auto-sprint</h1>',
-  '<div id="branch" style="font-size:12px;color:#8b949e">loading...</div></div>',
-  '<div id="phase-badge" class="badge phase-starting">starting</div>',
-  '</div>',
-  '<div id="banner" style="display:none"></div>',
-  '<div class="grid">',
-  '<div class="card"><div class="card-label">Cycle</div>',
-  '<div id="cycle" class="card-value">-</div></div>',
-  '<div class="card"><div class="card-label">Open Issues</div>',
-  '<div id="open" class="card-value">-</div></div>',
-  '<div class="card"><div class="card-label">Cost (USD)</div>',
-  '<div id="cost" class="card-value">-</div></div>',
-  '<div class="card"><div class="card-label">Current Agent</div>',
-  '<div id="agent" class="card-value muted">-</div></div>',
-  '</div>',
-  '<h2>Sprint Log (last 30 lines)</h2>',
-  '<div id="logbox" class="log-box"></div>',
-  '<div class="refresh" id="refresh"></div>',
-  '</div>',
-  '<script>',
-  'async function poll(){',
-  'try{',
-  'var r=await fetch("/state"),s=await r.json();',
-  'var pb=document.getElementById("phase-badge");',
-  'pb.textContent=s.phase||"?";pb.className="badge phase-"+(s.phase||"starting");',
-  'document.getElementById("branch").textContent="Branch: "+(s.branch||"?");',
-  'document.getElementById("cycle").textContent=(s.cycle||0)+"/"+(s.maxCycles||"?");',
-  'var oe=document.getElementById("open");',
-  'oe.textContent=s.openCount!=null?s.openCount:"-";',
-  'oe.className="card-value"+(s.goalMet?" green":"");',
-  'document.getElementById("cost").textContent="$"+(s.costUsd||0).toFixed(4);',
-  'document.getElementById("agent").textContent=s.currentAgent||"-";',
-  'var lb=document.getElementById("logbox");',
-  'var tail=(s.log||[]).slice(-30).join("\\n");',
-  'lb.textContent=tail;lb.scrollTop=lb.scrollHeight;',
-  'var bn=document.getElementById("banner");',
-  'if(s.goalMet){bn.className="banner green";bn.textContent="Sprint complete -- Goal MET!";bn.style.display="block";}',
-  'else if(s.abortReason){bn.className="banner red";bn.textContent="Sprint ended: "+s.abortReason;bn.style.display="block";}',
-  'document.getElementById("refresh").textContent="Last updated: "+new Date().toLocaleTimeString();',
-  '}catch(e){document.getElementById("refresh").textContent="Poll error: "+e.message;}',
-  '}',
-  'poll();setInterval(poll,3000);',
-  '<\/script></body></html>',
-].join('');
+const STATUS_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Auto-Sprint Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #09090b;
+      --bg-glass: rgba(24, 24, 27, 0.6);
+      --border: rgba(255, 255, 255, 0.1);
+      --text: #e4e4e7;
+      --text-muted: #a1a1aa;
+      --accent: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.2);
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-image: radial-gradient(circle at 50% 0%, var(--accent-glow) 0%, transparent 50%);
+    }
+    .header {
+      padding: 20px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-glass);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header h1 span {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.05);
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+    .main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 250px;
+      border-right: 1px solid var(--border);
+      padding: 30px;
+      background: var(--bg-glass);
+      backdrop-filter: blur(12px);
+    }
+    .phase-list { list-style: none; }
+    .phase-item {
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .phase-item::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.5;
+    }
+    .phase-item.active {
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .phase-item.active::before {
+      background: var(--accent);
+      opacity: 1;
+      box-shadow: 0 0 10px var(--accent);
+    }
+    .content-area {
+      flex: 1;
+      padding: 30px 40px;
+      overflow-y: auto;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+    .stat-card {
+      background: var(--bg-glass);
+      border: 1px solid var(--border);
+      padding: 24px;
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .stat-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,0.2);
+    }
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .tasks-section {
+      margin-bottom: 40px;
+    }
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-muted);
+    }
+    .task-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .task-item {
+      background: var(--bg-glass);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      padding: 16px 20px;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      animation: slideIn 0.3s ease;
+    }
+    .task-item .task-name { font-weight: 600; font-size: 15px; }
+    .task-item .task-agent { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+    .task-item .task-status { 
+      font-size: 12px; 
+      padding: 4px 12px; 
+      border-radius: 12px; 
+      background: rgba(255,255,255,0.1); 
+    }
+    .task-item.running .task-status { background: var(--accent-glow); color: var(--accent); }
+    .task-item.done .task-status { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+    
+    .terminal {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #a1a1aa;
+      height: 300px;
+      overflow-y: auto;
+    }
+    .terminal .log-line { border-bottom: 1px solid rgba(255,255,255,0.02); padding: 2px 0; }
+    .terminal .log-time { color: #52525b; margin-right: 12px; display: inline-block; min-width: 65px; }
+    .terminal .log-msg { color: #d4d4d8; }
+    .terminal .log-msg.highlight { color: #3b82f6; }
+    .terminal .log-msg.error { color: #ef4444; }
+    
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .banner {
+      padding: 16px 20px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      font-weight: 600;
+      display: none;
+      animation: slideIn 0.5s ease;
+    }
+    .banner.success { background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); color: var(--success); }
+    .banner.error { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Auto-Sprint <span id="branch-badge">loading...</span></h1>
+    <div id="connection-status" style="font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 6px;">
+      <div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live
+    </div>
+  </div>
+  
+  <div class="main-content">
+    <div class="sidebar">
+      <div class="section-title" style="margin-bottom: 20px;">Sprint Phases</div>
+      <ul class="phase-list" id="phase-list">
+        <li class="phase-item" data-phase="setup">Setup</li>
+        <li class="phase-item" data-phase="Plan">Plan</li>
+        <li class="phase-item" data-phase="Develop">Develop</li>
+        <li class="phase-item" data-phase="Test">Test</li>
+        <li class="phase-item" data-phase="Harvest">Harvest</li>
+      </ul>
+    </div>
+    
+    <div class="content-area">
+      <div id="banner" class="banner"></div>
+      
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Cycle</div>
+          <div class="stat-value" id="stat-cycle">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Open Issues</div>
+          <div class="stat-value" id="stat-open">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Cost (USD)</div>
+          <div class="stat-value" id="stat-cost" style="color: var(--success);">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active Agent</div>
+          <div class="stat-value" id="stat-agent" style="font-size: 20px;">-</div>
+        </div>
+      </div>
+      
+      <div class="tasks-section">
+        <div class="section-title">Recent Activity</div>
+        <div class="task-list" id="task-list">
+          <!-- Tasks injected here -->
+        </div>
+      </div>
+      
+      <div class="section-title">Terminal Log</div>
+      <div class="terminal" id="terminal"></div>
+    </div>
+  </div>
+
+  <script>
+    let lastLogCount = 0;
+    
+    function parseActivity(logs) {
+      const activities = [];
+      for (const log of logs) {
+        if (log.includes('dispatch: ')) {
+          const match = log.match(/dispatch: (.*?) \[(.*?)\]/);
+          if (match) {
+            activities.push({ name: match[1], agent: match[2], status: 'Running', type: 'dispatch' });
+          }
+        } else if (log.includes('returned status: ') || log.includes('Cycle state:') || log.includes('Plan approved') || log.includes('dispatch error') || log.includes('Cycle ') && log.includes('complete')) {
+          if (activities.length > 0) {
+            activities[activities.length - 1].status = 'Done';
+          }
+        }
+      }
+      return activities.slice(-4).reverse();
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch('/state');
+        const s = await res.json();
+        
+        document.getElementById('branch-badge').textContent = s.branch || '?';
+        
+        const currentPhase = s.phase || 'setup';
+        document.querySelectorAll('.phase-item').forEach(el => {
+          el.classList.remove('active');
+          if (el.dataset.phase.toLowerCase() === currentPhase.toLowerCase()) {
+            el.classList.add('active');
+          }
+        });
+        
+        document.getElementById('stat-cycle').textContent = (s.cycle || 0) + '/' + (s.maxCycles || '?');
+        document.getElementById('stat-open').textContent = s.openCount != null ? s.openCount : '-';
+        document.getElementById('stat-cost').textContent = '$' + (s.costUsd || 0).toFixed(4);
+        document.getElementById('stat-agent').textContent = s.currentAgent || 'Idle';
+        
+        const banner = document.getElementById('banner');
+        if (s.goalMet) {
+          banner.className = 'banner success';
+          banner.textContent = 'Sprint complete -- Goal MET!';
+          banner.style.display = 'block';
+        } else if (s.abortReason) {
+          banner.className = 'banner error';
+          banner.textContent = 'Sprint ended: ' + s.abortReason;
+          banner.style.display = 'block';
+        }
+        
+        const activities = parseActivity(s.log || []);
+        const taskList = document.getElementById('task-list');
+        if (!activities.length) {
+          taskList.innerHTML = '<div style="color:var(--text-muted);font-size:14px;padding:16px;">Waiting for tasks...</div>';
+        } else {
+          taskList.innerHTML = activities.map(act => {
+            const isDone = act.status === 'Done';
+            return '<div class="task-item ' + (isDone ? 'done' : 'running') + '">' +
+                   '<div><div class="task-name">' + act.name + '</div>' +
+                   '<div class="task-agent">Agent: ' + act.agent + '</div></div>' +
+                   '<div class="task-status">' + act.status + '</div></div>';
+          }).join('');
+        }
+        
+        if (s.log && s.log.length !== lastLogCount) {
+          lastLogCount = s.log.length;
+          const term = document.getElementById('terminal');
+          term.innerHTML = s.log.map(line => {
+            const timeMatch = line.match(/202\d-[\d-T:.]+Z/);
+            const time = timeMatch ? timeMatch[0].split('T')[1].split('.')[0] : '';
+            const msg = line.replace(/\[RUNNER\] 202\d-[\d-T:.]+Z /, '');
+            const isHighlight = msg.includes('dispatch:') || msg.includes('===');
+            const isError = msg.includes('ERROR') || msg.includes('FATAL') || msg.includes('failed');
+            const cls = isError ? 'error' : (isHighlight ? 'highlight' : '');
+            return '<div class="log-line"><span class="log-time">' + time + '</span><span class="log-msg ' + cls + '">' + msg + '</span></div>';
+          }).join('');
+          term.scrollTop = term.scrollHeight;
+        }
+        
+      } catch(e) {
+        document.getElementById('connection-status').innerHTML = '<div style="width:8px;height:8px;background:var(--danger);border-radius:50%;"></div> Offline';
+        document.getElementById('connection-status').style.color = 'var(--danger)';
+      }
+    }
+    
+    poll();
+    setInterval(poll, 2000);
+  </script>
+</body>
+</html>`;
+
 
 // ---------------------------------------------------------------------------
 // Pure parsers (exact ports from auto-sprint.js)
