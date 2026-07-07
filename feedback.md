@@ -1,129 +1,221 @@
-APPROVED
+CHANGES NEEDED
 
-## Review: Phase 1 + Phase 2 deliverables (apra-pm-lmx)
-
-Branch: feat/agy-auto-sprint-skill
+======================================================================
+PHASE 3 REVIEW - skills/auto-sprint/runner.js
 Reviewer: pm-lite-reviewer
-Scope: T1.1, T1.2, T2.1-T2.7, PHASE 1 VERIFY, PHASE 2 VERIFY
+======================================================================
 
----
+----------------------------------------------------------------------
+ISSUE 1 (CRITICAL): Line count far exceeds spec
+----------------------------------------------------------------------
+File:     skills/auto-sprint/runner.js
+Line:     N/A (whole file)
+Spec:     PLAN.md T3.5 + PHASE 3 VERIFY: "Total line count ~450
+          (acceptable range 400-550)"
+Actual:   1581 lines (2.87x the maximum of 550)
 
-## T1.1 - SKILL.md [PASS]
+Required fix:
+  The runner.js file must be refactored to fit within 400-550 lines.
+  The file grew across all Phase 2+3 tasks without hitting the line
+  budget. Options:
+  a) Collapse large inline prompt strings into shorter template refs or
+     helper functions
+  b) Move repeated shell-extract node one-liners into named constants
+     defined once at top
+  c) Collapse the STATUS_HTML array (lines 266-346, 81 lines) into a
+     single string assigned inline
+  d) Collapse large prompt strings (plannerPrompt, planReviewPrompt,
+     doerPrompt, reviewerPrompt, harvesterPrompt, prPrompt, ciPrompt)
+     into helper functions or shorter inline form
 
-- YAML frontmatter: name=auto-sprint, description present, runner=runner.js [OK]
-- All 4 invocation forms present: bare ID, space-separated, JSON array, JSON object [OK]
-- 8 agents named in roster table: pm-planner, pm-reviewer, pm-doer-cheap, pm-doer-std,
-  pm-doer-premium, pm-reviewer (reviewer role), pm-planner (integ-test-runner), pm-harvester [OK]
-- Phases: Plan -> Develop -> Test -> Harvest [OK]
-- member-setup.md referenced in One-time setup section [OK]
-- Non-ASCII scan (byte-level): zero hits [OK]
+----------------------------------------------------------------------
+ISSUE 2 (HIGH): Each phase NOT wrapped in individual try/catch
+----------------------------------------------------------------------
+File:     skills/auto-sprint/runner.js
+Lines:    836-1329 (while loop body)
+Spec:     T3.7: "Each phase (Plan/Develop/Test/Harvest) wrapped in
+          try/catch that logs and continues"
+          T3.7: "Cycle loop has try/catch per iteration"
+          T3.7: "Harvest phase runs EVEN IF Test or Develop phase threw"
 
-## T1.2 - member-setup.md [PASS]
+Actual:   The while loop body (line 836) has NO outer try/catch per
+          iteration. Plan, Develop, and Test phases are not individually
+          wrapped in try/catch. If any phase throws synchronously the
+          entire sprint crashes without reaching Harvest.
 
-- All 6 member names present: pm-planner, pm-reviewer, pm-doer-cheap, pm-doer-std,
-  pm-doer-premium, pm-harvester [OK]
-- register_member tool usage shown with correct JSON blocks for each member [OK]
-- Verification step present: list_members, confirms all six names [OK]
-- Non-ASCII scan (byte-level): zero hits [OK]
+Required fix:
+  Wrap the while loop body in a per-iteration try/catch:
 
-## PHASE 1 VERIFY [PASS]
+    while (cycleCount < maxCycles) {
+      try {
+        cycleCount++;
+        // ... Plan, Develop, Test phases ...
+      } catch (iterErr) {
+        log('[ERROR] Cycle ' + cycleCount + ' threw: ' + String(iterErr).slice(0, 200));
+        abortReason = 'cycle-error';
+        break;
+      }
+    }
 
-- SKILL.md non-ASCII: zero hits [OK]
-- member-setup.md non-ASCII: zero hits [OK]
-- All 6 member names in member-setup.md: confirmed [OK]
-- All 4 invocation forms in SKILL.md: confirmed [OK]
+  Additionally wrap each phase block (Plan/Develop/Test) in its own
+  try/catch so that e.g. a Test phase error does not prevent the next
+  iteration or the Harvest phase from running.
 
-## T2.1 - Arg parsing [PASS]
+----------------------------------------------------------------------
+ISSUE 3 (HIGH): IIFE catch block does not write a minimal report
+----------------------------------------------------------------------
+File:     skills/auto-sprint/runner.js
+Lines:    1574-1579
+Spec:     T3.7: "Top-level IIFE has catch block that writes minimal
+          report + calls statusServer.close()"
 
-- Shebang: #!/usr/bin/env node present (line 1) [OK]
-- log() format: [RUNNER] <ISO> <msg> - exact match (line 47) [OK]
-- 4 invocation forms parsed: JSON array, JSON object, bare string (space/comma split) [OK]
-- Defaults: goal='P1/P2' (line 87), max_cycles=5 (line 88), base_branch='main' (line 90) [OK]
+Actual (lines 1574-1579):
+  })().catch(function(err) {
+    log('[FATAL] Unhandled: ' + String(err));
+    updateLiveState({ phase: 'CRASHED', abortReason: String(err) });
+    try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
+    process.exit(1);
+  });
 
-## T2.2 - bd helpers [PASS]
+The catch block logs to stdout and closes the server but does NOT write
+any minimal report to disk.
 
-- bdExec: defined (line ~102) [OK]
-- bdJson: defined (line ~106) [OK]
-- bdReadyTasks: defined (line ~110) [OK]
-- bdOpenCount: defined (line ~113) [OK]
-- shellExtract: defined (line ~122) [OK]
+Required fix:
+  Add a safeWriteFile call inside the catch block before process.exit:
 
-## T2.3 - Schemas and SHELL_DISPATCH_PROMPT_HEADER [PASS]
+    })().catch(function(err) {
+      log('[FATAL] Unhandled: ' + String(err));
+      updateLiveState({ phase: 'CRASHED', abortReason: String(err) });
+      try {
+        var _crashPath = path.join(
+          typeof repo !== 'undefined' && repo ? repo : process.cwd(),
+          'sprint-logs', 'crash-report.json');
+        safeWriteFile(_crashPath,
+          JSON.stringify({ crashed: true, error: String(err),
+            ts: new Date().toISOString() }, null, 2),
+          'crash-report');
+      } catch {}
+      try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
+      process.exit(1);
+    });
 
-- REVIEW_SCHEMA: defined [OK]
-- PLAN_REVIEW_SCHEMA: defined (line 153) [OK]
-- DOER_STATUS_SCHEMA: defined [OK]
-- HARVEST_SCHEMA: defined [OK]
-- CI_SCHEMA: defined [OK]
-- INTEG_RUN_SCHEMA: defined (line 203) [OK]
-- SHELL_OUTPUTS_SCHEMA: defined [OK]
-- SHELL_DISPATCH_PROMPT_HEADER: defined at line 224. Exact string match with
-  auto-sprint.js (line 1017): identical text [OK]
+----------------------------------------------------------------------
+ISSUE 4 (MEDIUM): safeWriteFile not used for analysis.md and calibration.json
+----------------------------------------------------------------------
+File:     skills/auto-sprint/runner.js
+Lines:    1378-1383 (analysis.md) and 1420-1425 (calibration.json)
+Spec:     T3.7: "safeWriteFile() helper used for all disk writes"
 
-## T2.4 - dispatchFleet and dispatchShellFleet [PASS]
+Actual:   Both writes use fs.writeFileSync directly inside try/catch
+          instead of calling safeWriteFile(), which already encapsulates
+          the try/catch + mkdirSync pattern.
 
-- dispatchLedger: const array initialized before dispatchFleet [OK]
-- dispatchFleet: schema appends RESPOND WITH ONLY VALID JSON block [OK]
-- Retry loop: MAX_RETRIES=3, retries on JSON parse failure [OK]
-- dispatchLedger accumulation: appends entry on every call path [OK]
-- dispatchShellFleet: defined, uses SHELL_DISPATCH_PROMPT_HEADER + numbered cmds,
-  passes SHELL_OUTPUTS_SCHEMA [OK]
+Required fix:
+  Line 1378-1383 - replace with:
+    safeWriteFile(analysisFile, sprintSummary.summaryText || '', 'sprint analysis');
+    log('Sprint analysis written to: ' + analysisFile);
 
-## T2.5 - Pure parsers [PASS]
+  Line 1420-1425 - replace with:
+    safeWriteFile(calibPath, JSON.stringify(updatedCalibration, null, 2), 'calibration');
+    log('Calibration updated: ' + calibPath);
 
-- parseBlockers: defined, signature (outputs, rootCount, openListIdx, threshold, rootIds) [OK]
-- parseReadyStreaks: defined, signature (outputs, rootCount, readyListIdx, defaultModel) [OK]
-- parseCycleState: defined, signature (outputs, rootCount) [OK]
-- truncateStreakToCeiling: defined (exact auto-sprint.js name), same 4 parameters [OK]
-- approved(): defined [OK]
+----------------------------------------------------------------------
+ISSUE 5 (LOW): process.on guards inside IIFE, not at top level
+----------------------------------------------------------------------
+File:     skills/auto-sprint/runner.js
+Lines:    704, 708
+Spec:     T3.7: "process.on('unhandledRejection') guard at top level"
+          T3.7: "process.on('uncaughtException') guard at top level"
 
-## T2.6 - State helpers and sprint setup [PASS]
+Actual:   Both handlers are registered inside the async IIFE (inside
+          the async function main() body). Functionally they still work,
+          but the spec says "at top level" - i.e., outside the IIFE,
+          before the (async function main() { ... })() invocation.
 
-- readSprintState: defined (line 463) [OK]
-- writeSprintState: defined (line 475) [OK]
-- clearSprintState: defined (line 486) [OK]
-- computeSprintQuote: loaded from cost.js via require; fallback stub defined [OK]
-- Sprint loop: while (cycleCount < maxCycles) with cycleCount++ [OK]
-- integTestEnabled: local fs.existsSync check for deploy.md + integ-test-playbook.md [OK]
+Required fix:
+  Move both process.on registrations to module top level, before the
+  IIFE. Since log() is defined at top level, they can call it:
 
-## T2.7 - Plan phase and Develop phase [PASS]
+    process.on('unhandledRejection', function(reason) {
+      log('[FATAL] unhandledRejection: ' + String(reason));
+      updateLiveState({ phase: 'ERROR', abortReason: String(reason) });
+    });
+    process.on('uncaughtException', function(err) {
+      log('[FATAL] uncaughtException: ' + err.message);
+      updateLiveState({ phase: 'ERROR', abortReason: err.message });
+    });
 
-Plan phase:
-- MAX_PLAN_ITER=3 (line 712) [OK]
-- pm-planner dispatched each round [OK]
-- pm-reviewer (plan-reviewer label) dispatched with PLAN_REVIEW_SCHEMA [OK]
-- planFeedback set on CHANGES NEEDED verdict (line 838-840) [OK]
-- computeSprintQuote called after approval (line 819) [OK]
-- Proceeds after 3 rounds regardless (line 858-860) [OK]
+    (async function main() { ... })().catch(...);
 
-Develop phase:
-- MAX_DEV_ITER=20 (line 874) [OK]
-- truncateStreakToCeiling used per streak (line ~931) [OK]
-- Tier->member mapping: cheap->pm-doer-cheap, standard->pm-doer-std,
-  premium->pm-doer-premium (lines 938-940) [OK]
-- doer null handling: resets orphaned in_progress tasks, sets doerNullReset=true,
-  breaks and continues outer loop [OK]
-- VERIFY check: doerResult.status !== 'VERIFY' -> abortReason set [OK]
-- After each iteration: pm-reviewer dispatched with REVIEW_SCHEMA [OK]
-- CHANGES NEEDED -> devFeedback set; fire-and-forget feedback.md write [OK]
-- No-progress abort NOT present inside Develop loop (correctly omitted; T2.7 scope only) [OK]
-- Deadlock detection at devIter===0 when open>0 (lines 895-912) [OK]
+----------------------------------------------------------------------
+PASSING CHECKS
+----------------------------------------------------------------------
+[OK] node --check exits 0 (syntax valid)
+[OK] Non-ASCII character count: 0
+[OK] All 4 phases present: Plan, Develop, Test, Harvest
+[OK] T3.1 deploy.md fs.existsSync check (local, no LLM) - line 1212
+[OK] T3.1 integ-test-playbook.md fs.existsSync check - line 1213
+[OK] T3.1 deploy.md -> dispatchFleet('pm-doer-std', deployerPrompt) - line 1229
+[OK] T3.1 integ-test-playbook.md -> dispatchFleet('pm-doer-std', integTestPrompt, {schema: INTEG_RUN_SCHEMA}) - line 1260
+[OK] T3.1 neither exists -> logs correct skip message - line 1216
+[OK] T3.1 writeSprintState checkpoint after Test phase - line 1276
+[OK] T3.2 openCount===0 -> goalMet=true; break - line 1300-1303
+[OK] T3.2 no-progress: sorted prevOpenIds vs currentOpenIds -> abortReason='no-progress'; break - lines 1307-1317
+[OK] T3.2 cycleCount >= maxCycles -> log + break - lines 1322-1325
+[OK] T3.2 prevOpenIds saved after each cycle - line 1320
+[OK] T3.3 dispatchFleet('pm-reviewer', finalReviewPrompt, {schema: REVIEW_SCHEMA}) - line 1351
+[OK] T3.3 dispatchFleet('pm-harvester', harvesterPrompt, {schema: HARVEST_SCHEMA}) - line 1409
+[OK] T3.3 dolt push wrapped in try/catch (non-fatal) - lines 1437-1443
+[OK] T3.3 buildSprintSummary called - line 1369
+[OK] T3.3 computeUpdatedCalibration called - line 1419
+[OK] T3.3 writes sprint-logs/*.analysis.md - line 1377
+[OK] T3.3 writes sprint-logs/calibration.json - line 1421
+[OK] T3.4 PR via pm-harvester with schema requiring prNumber - lines 1461-1467
+[OK] T3.4 CI via pm-doer-cheap with CI_SCHEMA - line 1481
+[OK] T3.4 not_configured -> dedup check first -> create CI task - lines 1489-1516
+[OK] T3.4 red -> log failure - line 1518
+[OK] T3.4 non-green -> annotate PR - lines 1521-1527
+[OK] T3.5 roleOf() strips -c\d+ suffix (exact port) - line 1534
+[OK] T3.5 groups dispatchLedger by role - lines 1535-1542
+[OK] T3.5 prints table: role, tokens, calls, cost - lines 1545-1552
+[OK] T3.5 TOTAL line - line 1551
+[OK] T3.5 clearSprintState called - line 1564
+[OK] T3.5 returns {cycles, goalMet, goal, harvest, sprintCostUsd} - lines 1566-1572
+[OK] T3.6 http.createServer using 'node:http' - line 717
+[OK] T3.6 port 3000-3999 via Math.random() - line 714
+[OK] T3.6 statusServer.listen before cycle loop - line 726 (loop starts at 836)
+[OK] T3.6 URL logged: http://127.0.0.1:<port> - line 727
+[OK] T3.6 platform-specific open command (win32/darwin/linux) - lines 729-733
+[OK] T3.6 browser open wrapped in try/catch - lines 728-735
+[OK] T3.6 /state endpoint returns _liveState as JSON - lines 718-721
+[OK] T3.6 STATUS_HTML constant: self-contained, dark theme (#0d1117) - lines 266-346
+[OK] T3.6 auto-polls /state every 3s (setInterval(poll,3000)) - line 344
+[OK] T3.6 dashboard shows: phase (color-coded), cycle N/M, current agent, cost, open, log tail - lines 308-342
+[OK] T3.6 updateLiveState() called at every phase transition - lines 839, 1027, 1209, 1336
+[OK] T3.6 _liveState.log ring buffer max 200 entries - line 68
+[OK] T3.6 HTML sprint report written to sprint-logs/ - lines 1556-1558
+[OK] T3.6 statusServer.close() called at sprint end - line 1562
+[OK] T3.6 zero npm dependencies (require uses node: prefix only)
+[OK] T3.7 dispatchFleet returns null on all-retries failure - line 546
+[OK] T3.7 bdExec wrapped in try/catch returning fallback - lines 131-138
+[OK] T3.7 new Date().toISOString() used freely - lines 45, 65, 794
+[OK] T3.7 Math.random() used for port selection - line 714
+[OK] T3.7 No JSVM restriction workarounds found
+[OK] T3.7 All file I/O uses fs module directly
+[OK] T3.7 IIFE .catch() closes statusServer - line 1577
+[OK] T3.7 safeWriteFile() defined and used for HTML report - lines 51-59, 1558
 
-## PHASE 2 VERIFY [PASS]
+======================================================================
+VERDICT SUMMARY
+======================================================================
+5 issues found:
+  - ISSUE 1 (CRITICAL): Line count 1581 vs spec max 550
+  - ISSUE 2 (HIGH):     No per-iteration try/catch in cycle loop;
+                        phases not individually fault-isolated
+  - ISSUE 3 (HIGH):     IIFE catch does not write minimal report to disk
+  - ISSUE 4 (MEDIUM):   safeWriteFile not used for analysis.md and calibration.json
+  - ISSUE 5 (LOW):      process.on guards inside IIFE rather than top-level
 
-- node --check skills/auto-sprint/runner.js: exits 0 [OK]
-- Non-ASCII scan (byte-level, all three files): zero hits [OK]
-- All 7 schemas present in runner.js [OK]
-- SHELL_DISPATCH_PROMPT_HEADER exact string match with auto-sprint.js [OK]
-- All 3 parser functions defined with correct signatures [OK]
-- truncateStreakToCeiling defined (exact name) [OK]
-- Plan phase: MAX_PLAN_ITER=3, planner+reviewer, computeSprintQuote on approval [OK]
-- Develop phase: MAX_DEV_ITER=20, tier->member mapping correct, null handling [OK]
-
----
-
-## Summary
-
-All T1.1, T1.2, T2.1, T2.2, T2.3, T2.4, T2.5, T2.6, T2.7 acceptance criteria
-satisfied. Both PHASE 1 and PHASE 2 VERIFY checkpoints pass. No defects found.
-Proceed to Phase 3 (T3.x: Test + Harvest phases).
+All Phase 3 functional requirements (T3.1-T3.6 behavior logic) are
+correctly implemented. The issues are: one structural spec deviation
+(line count), two T3.7 fault-tolerance gaps, and two minor style gaps.
