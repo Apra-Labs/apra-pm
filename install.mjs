@@ -60,6 +60,13 @@ function claudeOnlyPermissions() {
   ];
 }
 
+// Additional permissions specific to AGY (Antigravity) installs.
+function agyOnlyPermissions() {
+  return [
+    'Skill(auto-sprint)',    // suppress "Use skill 'auto-sprint'?" prompt for AGY
+  ];
+}
+
 // --- opencode agent transform -----------------------------------------------
 // OpenCode uses a different agent frontmatter schema:
 //   description, mode: subagent, permission: { edit, write, bash, external_directory }
@@ -166,13 +173,14 @@ const KNOWN_AGENT_FILES = [
 //   - only the permission strings install() would have merged in, leaving any
 //     permissions the user configured themselves untouched
 //   - for Claude, the native auto-sprint workflow file it copied in
+//   - for AGY, the auto-sprint skill directory it copied in
 // Safe to call even if nothing was ever installed (each step is a no-op then).
 function uninstall(cfg, agentsSrc) {
   const skillDest = path.join(cfg.configDir, 'skills', 'pm');
   const agentsDest = path.join(cfg.configDir, 'agents');
   const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
-  const removed = { skill: false, agents: [], permsRemoved: 0, workflow: false };
+  const removed = { skill: false, agents: [], permsRemoved: 0, workflow: false, autoSprintSkill: false };
 
   // 1) skill directory
   if (fs.existsSync(skillDest)) {
@@ -200,6 +208,7 @@ function uninstall(cfg, agentsSrc) {
     if (settings.permissions && Array.isArray(settings.permissions.allow)) {
       const installedPerms = new Set(requiredPermissions(cfg));
       if (cfg.name === 'Claude') for (const p of claudeOnlyPermissions()) installedPerms.add(p);
+      if (cfg.name === 'Antigravity') for (const p of agyOnlyPermissions()) installedPerms.add(p);
       const before = settings.permissions.allow.length;
       settings.permissions.allow = settings.permissions.allow.filter((p) => !installedPerms.has(p));
       removed.permsRemoved = before - settings.permissions.allow.length;
@@ -207,12 +216,21 @@ function uninstall(cfg, agentsSrc) {
     }
   }
 
-  // 4) claude-only: the native /auto-sprint workflow file
+  // 4a) claude-only: the native /auto-sprint workflow file
   if (cfg.name === 'Claude') {
     const workflowDest = path.join(cfg.configDir, 'workflows', 'auto-sprint.js');
     if (fs.existsSync(workflowDest)) {
       fs.rmSync(workflowDest, { force: true });
       removed.workflow = true;
+    }
+  }
+
+  // 4b) agy-only: the provider-agnostic auto-sprint skill directory
+  if (cfg.name === 'Antigravity') {
+    const autoSprintSkillDest = path.join(cfg.configDir, 'skills', 'auto-sprint');
+    if (fs.existsSync(autoSprintSkillDest)) {
+      fs.rmSync(autoSprintSkillDest, { recursive: true, force: true });
+      removed.autoSprintSkill = true;
     }
   }
 
@@ -236,8 +254,8 @@ function parseArgs(argv) {
 
 const HELP = `apra-pm installer
 
-Installs the auto-sprint workflow, pm skill, and eight agents into your agent
-harness's config directory, and grants minimal permissions.
+Installs the auto-sprint workflow/skill, pm skill, and eight agents into your
+agent harness's config directory, and grants minimal permissions.
 
 Usage:
   node install.mjs [options]
@@ -246,15 +264,23 @@ Options:
   --llm <provider>   claude (default) | gemini | agy | opencode
   --force            reinstall even if already present
   --uninstall        remove everything a prior install added (skill, agents,
-                     auto-sprint workflow, and the permissions it merged in)
+                     auto-sprint workflow/skill, and the permissions it merged in)
   --help             show this help
 
-What it installs:
-  <configDir>/skills/pm/      the skill (SKILL.md + sub-docs)
-  <configDir>/agents/*.md     eight sprint agents (see below)
-  <configDir>/settings.json   minimal permissions (merged, non-destructive)
-  <configDir>/skills/pm/cost.js  pure JS cost functions extracted from auto-sprint.js (all providers)
-  ~/.claude/workflows/auto-sprint.js  native /auto-sprint workflow (claude only)
+What it installs (all providers):
+  <configDir>/skills/pm/         the pm skill (SKILL.md + sub-docs)
+  <configDir>/agents/*.md        eight sprint agents (see below)
+  <configDir>/settings.json      minimal permissions (merged, non-destructive)
+  <configDir>/skills/pm/cost.js  pure JS cost functions (all providers)
+
+What it installs (claude only):
+  ~/.claude/workflows/auto-sprint.js  native /auto-sprint dynamic workflow
+
+What it installs (agy only):
+  <configDir>/skills/auto-sprint/  provider-agnostic /auto-sprint skill
+    SKILL.md        -- skill entry point, identical input args to auto-sprint.js
+    runner.js       -- pure JS orchestrator (zero orchestrator tokens)
+    member-setup.md -- one-time fleet member registration guide
 
 Agents:
   planner            reads open sprint goals, creates feature+task DAG in beads
@@ -288,7 +314,9 @@ function main() {
     console.log(`  agents       -> ${removed.agents.length} removed${removed.agents.length ? ` (${removed.agents.join(', ')})` : ''}`);
     console.log(`  permissions  -> ${removed.permsRemoved} removed`);
     if (cfg.name === 'Claude') {
-      console.log(`  workflow     -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);
+      console.log(`  workflow          -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);}
+    if (cfg.name === 'Antigravity') {
+      console.log(`  auto-sprint skill -> ${removed.autoSprintSkill ? 'removed' : 'not found (nothing to do)'}`);
     }
     console.log('');
     console.log('pm uninstalled.');
@@ -343,6 +371,7 @@ function main() {
   } else {
     const perms = requiredPermissions(cfg);
     if (args.llm === 'claude') perms.push(...claudeOnlyPermissions());
+    if (args.llm === 'agy') perms.push(...agyOnlyPermissions());
     added = mergePermissions(settingsFile, perms);
   }
   console.log(`  [3/4] perms   -> ${settingsFile} (${added} added)`);
@@ -360,6 +389,7 @@ function main() {
   //    not exist on other providers).
   //    For Claude, also copy the full auto-sprint.js to ~/.claude/workflows/ so the
   //    native /auto-sprint slash command works.
+  //    For AGY, copy the provider-agnostic auto-sprint skill to <configDir>/skills/auto-sprint/.
   const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
   if (fs.existsSync(workflowSrc)) {
     const fullSrc = fs.readFileSync(workflowSrc, 'utf-8');
@@ -405,6 +435,24 @@ function main() {
     }
   }
 
+  // 5) AGY-only: deploy the provider-agnostic auto-sprint skill
+  //    <configDir>/skills/auto-sprint/ contains SKILL.md, runner.js, member-setup.md.
+  //    runner.js is the zero-orchestrator-token equivalent of auto-sprint.js and
+  //    accepts exactly the same input JSON args.
+  //    Refreshed on every install run (clearDir then copyDir).
+  if (args.llm === 'agy') {
+    const autoSprintSkillSrc  = path.join(ROOT, 'skills', 'auto-sprint');
+    const autoSprintSkillDest = path.join(cfg.configDir, 'skills', 'auto-sprint');
+    if (!fs.existsSync(autoSprintSkillSrc)) {
+      console.error(`  [!] auto-sprint skill not found at ${autoSprintSkillSrc} -- skipping`);
+    } else {
+      clearDir(autoSprintSkillDest);
+      copyDir(autoSprintSkillSrc, autoSprintSkillDest);
+      console.log(`  [5/5] auto-sprint skill -> ${autoSprintSkillDest}`);
+      console.log(`        (provider-agnostic /auto-sprint: same args as Claude workflow)`);
+    }
+  }
+
   // beads check -- install automatically if missing
   console.log('');
   const bdCheck = spawnSync('bd', ['--version'], { encoding: 'utf-8', shell: true });
@@ -428,6 +476,16 @@ function main() {
     console.log('               /auto-sprint BD-1 BD-2         (multiple sprint goals)');
     console.log('               /auto-sprint {"issues":["BD-1"],"branch":"feat/x","goal":"P1"}');
     console.log('  Other sessions: /pm  (provider-agnostic skill)');
+  } else if (args.llm === 'agy') {
+    console.log('  AGY:  /auto-sprint BD-1');
+    console.log('        /auto-sprint BD-1 BD-2');
+    console.log('        /auto-sprint {"issues":["BD-1"],"branch":"feat/x","goal":"P1"}');
+    console.log('');
+    console.log('  Same input JSON as Claude /auto-sprint. Zero orchestrator tokens.');
+    console.log('  Works with any fleet provider: Claude, AGY, Gemini, Codex, or mixed.');
+    console.log('');
+    console.log('  One-time fleet member setup required before first run:');
+    console.log('    See ~/.gemini/antigravity-cli/skills/auto-sprint/member-setup.md');
   } else {
     console.log('  Invoke the "pm" skill to drive a sprint.');
   }
