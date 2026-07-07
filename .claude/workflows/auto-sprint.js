@@ -1289,15 +1289,21 @@ async function readSprintState(stateFileRel, label) {
   const r = await dispatchShell([script], { model: MODEL_HAIKU, label: label || 'state-read', phase: 'Plan' });
   try { return JSON.parse((r?.outputs?.[0] || '').trim()); } catch { return { exists: false, ageS: null, state: null }; }
 }
-// Writes the state object as JSON (base64-passed to avoid shell-quoting hazards).
+// Writes the state object as JSON. The JSON is hex-encoded in the workflow body (which
+// has ONLY standard JS built-ins -- NOT Buffer/process/require) and decoded inside the
+// node subprocess (which has them). Hex is quote-safe so it embeds cleanly in the
+// double-quoted `node -e` string; charCodeAt/fromCharCode round-trip UTF-16 exactly.
 // Rewriting the file updates its mtime = lock heartbeat.
 async function writeSprintState(stateFileRel, stateObj, phaseName, label) {
-  const b64 = Buffer.from(JSON.stringify(stateObj), 'utf8').toString('base64');
+  const json = JSON.stringify(stateObj);
+  let hex = '';
+  for (let i = 0; i < json.length; i++) hex += json.charCodeAt(i).toString(16).padStart(4, '0');
   const script =
     `node -e "` +
-    `const fs=require('fs'),path=require('path');const p='${stateFileRel}';` +
+    `const fs=require('fs'),path=require('path');const p='${stateFileRel}';const h='${hex}';` +
+    `let s='';for(let i=0;i<h.length;i+=4)s+=String.fromCharCode(parseInt(h.substr(i,4),16));` +
     `fs.mkdirSync(path.dirname(p),{recursive:true});` +
-    `fs.writeFileSync(p,Buffer.from('${b64}','base64').toString('utf8'));` +
+    `fs.writeFileSync(p,s);` +
     `console.log('WROTE');` +
     `"`;
   await dispatchShell([script], { model: MODEL_HAIKU, label: label || 'state-write', phase: phaseName || 'Plan' });
