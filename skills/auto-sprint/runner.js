@@ -705,3 +705,161 @@ if (!buildSprintSummary) {
         label: 'reset-orphans', phase: 'Plan', cycle: cycleCount,
       });
     }
+    // ---------------------------------------------------------------- PLAN
+
+    let planApproved = cycleState.planDone;
+    let planFeedback = '';
+    const MAX_PLAN_ITER = 3;
+
+    if (planApproved) {
+      log('Plan already complete -- skipping plan loop for cycle ' + cycleCount);
+    }
+
+    for (let pi = 0; pi < MAX_PLAN_ITER && !planApproved; pi++) {
+      const plannerLabel = `planner-c${cycleCount}-r${pi}`;
+
+      const plannerPrompt =
+        `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+        `Sprint goals: ${rootSummary}\n` +
+        (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
+        `\n` +
+        (planFeedback
+          ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
+          : '') +
+        `Inspect existing state first:\n` +
+        `  ${rootIds.map(id => `bd show ${id} && bd graph --compact ${id}`).join('\n  ')}\n` +
+        `Run: bd show <id> on any existing features/tasks to read their current descriptions.\n` +
+        `Then build or complete the feature+task DAG -- create only what is missing:\n` +
+        `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
+        `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
+        `\n` +
+        `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
+        `The correct wiring direction is: parents depend on children (children unblock first).\n` +
+        `\n` +
+        `  Step 1 -- wire sprint goal -> child (goal waits for children):\n` +
+        `    bd dep add <goal-id> <child-id>\n` +
+        `    After this: "bd ready" will NOT show the sprint goal (it's waiting). Children show as ready.\n` +
+        `\n` +
+        `  Step 2 -- wire feature -> tasks (feature waits for tasks):\n` +
+        `    bd dep add <feature-id> <impl-task-id>\n` +
+        `    bd dep add <feature-id> <test-task-id>\n` +
+        `    After this: "bd ready" will show impl-task (the leaf). Feature is now blocked.\n` +
+        `\n` +
+        `  Step 3 -- wire test after impl:\n` +
+        `    bd dep add <test-task-id> <impl-task-id>\n` +
+        `    After this: "bd ready" shows only impl-task. test-task unblocks once impl-task closes.\n` +
+        `\n` +
+        `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT sprint goals or blocked parents.\n` +
+        `  If sprint goals appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
+        `\n` +
+        `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
+        `\n` +
+        `  Break each sprint goal into child issues: bd create --parent <goal-id> (use type=feature for sub-goals, type=task for leaf work).\n` +
+        `  Create type=task issues for each feature: implementation tasks AND integration\n` +
+        `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
+        `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
+        `  Each task must be completable in one agent session (1-3 file changes max)\n` +
+        `  Every task needs clear acceptance criteria in its description\n` +
+        `  - Assign each task a tier AND complexity bucket based on complexity -- after creating or updating each\n` +
+        `    task, run: bd update <id> --set-metadata model=<tier>\n` +
+        `    Available tiers and when to use them:\n` +
+        `      ${TIER_CHEAP}    -- mechanical work: rename, config tweak, move file, simple wiring\n` +
+        `      ${TIER_STANDARD} -- standard work: new function, test suite, API endpoint, refactor\n` +
+        `      ${TIER_PREMIUM}  -- hard work: architecture, multi-file design, ambiguous requirements\n` +
+        `    Complexity buckets (S/M/L) are assigned by the plan-reviewer based on task scope.\n` +
+        `    Every task MUST receive a bucket assignment -- tasks without a bucket cannot be cost-estimated.\n` +
+        `  - Group tasks so consecutive tasks in dependency order share a tier where\n` +
+        `    possible -- this minimises tier-switching overhead during execution\n` +
+        (cycleCount > 1
+          ? `This is cycle ${cycleCount}. Focus on open issues only.\n` +
+            `Do NOT add new scope beyond the original sprint goals and open bugs/enhancements.\n` +
+            `Do NOT re-create tasks that are already closed.\n`
+          : '') +
+        `Confirm with any text when done.`;
+
+      const plannerResult = await dispatchFleet('pm-planner', plannerPrompt, {
+        label: plannerLabel, phase: 'Plan', cycle: cycleCount,
+      });
+
+      if (!plannerResult) {
+        log('Planner returned null on cycle ' + cycleCount + ' round ' + pi + ' -- retrying');
+        continue;
+      }
+
+      const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
+      const planReviewPrompt =
+        `Repo: ${repo}\nBranch: ${branch}\nSprint goals: ${rootSummary}\n` +
+        `Calibration file: ${repo}/sprint-logs/calibration.json (read this first if it exists)\n\n` +
+        `Review the beads DAG for these sprint goals ONLY: ${rootSummary}\n` +
+        `Run: ${rootIds.map(id => `bd show ${id}`).join(' && ')} to inspect each sprint goal.\n` +
+        `Run: ${rootIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
+        `Run: bd show <id> to inspect individual issues in depth.\n` +
+        `Run: bd ready -- this is your FIRST correctness check.\n` +
+        `Do NOT review or comment on issues outside these sprint goals.\n\n` +
+        `Follow your runbook (plan-reviewer.md) step by step:\n` +
+        `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
+        `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
+        `    from beads metadata. If a task has no model metadata, note it in your verdict\n` +
+        `    notes as a warning but do NOT return CHANGES NEEDED for it -- the workflow has a fallback.\n` +
+        `  Step 4: return verdict, notes, and taskAssignments (id + bucket + model per task).\n\n` +
+        `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
+        `any dependency direction problems.`;
+
+      const planReview = await dispatchFleet('pm-reviewer', planReviewPrompt, {
+        label: planReviewerLabel, phase: 'Plan', cycle: cycleCount,
+        schema: PLAN_REVIEW_SCHEMA,
+      });
+
+      if (approved(planReview)) {
+        planApproved = true;
+        log('Plan APPROVED on cycle ' + cycleCount + ' round ' + (pi + 1));
+        taskAssignments = (planReview && planReview.taskAssignments) || [];
+
+        // Compute sprint cost quote in pure JS.
+        sprintQuote = computeSprintQuote(taskAssignments, calibration);
+        const sc = sprintQuote.scenarios;
+        log('Sprint quote (' + sprintQuote.calibrationSource + ', ' + taskAssignments.length + ' tasks): ' +
+            'exp=$' + sc.expected.outputOnly.toFixed(3));
+
+        // Commit plan snapshot via shell dispatch.
+        const planCommitCmds = [
+          ...((sprintQuote && sprintQuote.tasks) ? sprintQuote.tasks.map(t =>
+            `bd update ${t.id} --notes="cost-estimate: bucket=${t.bucket} model=${t.model} ` +
+            `doer_tokens=${t.doerTokens || 0} output_usd=${t.outputUsd ? t.outputUsd.toFixed(4) : '0.0000'}"`
+          ) : []),
+          `bd export -o "${repo}/.beads/issues.jsonl"`,
+          `git -C "${repo}" add .beads/issues.jsonl`,
+          `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "plan: approve task DAG"`,
+        ];
+        await dispatchShellFleet(planCommitCmds, 'pm-doer-cheap', {
+          label: 'plan-commit-c' + cycleCount, phase: 'Plan', cycle: cycleCount,
+        });
+
+      } else if (planReview && planReview.verdict === 'CHANGES NEEDED') {
+        planFeedback = (planReview && planReview.notes) || '';
+        log('Plan CHANGES NEEDED (round ' + (pi + 1) + '): ' + planFeedback.slice(0, 120));
+
+        // Write feedback.md and commit so planner can read it.
+        await dispatchFleet('pm-doer-cheap',
+          `Repo: ${repo}\nBranch: ${branch}\n\n` +
+          `Write the following plan-reviewer feedback to feedback.md (overwrite if it exists):\n\n` +
+          `${planFeedback}\n\n` +
+          `Then commit:\n` +
+          `  git -C "${repo}" add feedback.md\n` +
+          `  git -C "${repo}" -c user.name='pm-reviewer' -c user.email='pm-reviewer@pm.local' commit -m "feedback: plan-reviewer-c${cycleCount}-r${pi}"\n` +
+          `Do not push. Return "OK" when done.`,
+          { label: 'feedback-commit-plan-c' + cycleCount + '-r' + pi, phase: 'Plan', cycle: cycleCount }
+        );
+      } else {
+        log('Plan reviewer returned null or unexpected verdict on round ' + (pi + 1));
+      }
+    }
+
+    if (!planApproved) {
+      log('Plan not approved after ' + MAX_PLAN_ITER + ' rounds -- proceeding anyway');
+      planApproved = true;
+    }
+
+    writeSprintState(stateFileRel, {
+      type: 'checkpoint', cycle: cycleCount, phase: 'Plan', planApproved: true, branch, goal, rootIds, startedAt,
+    }, 'Plan', 'state-c' + cycleCount + '-plan-done');
