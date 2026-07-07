@@ -1,112 +1,129 @@
 APPROVED
 
-## Plan Review: skills/auto-sprint sprint (apra-pm-lmx)
+## Review: Phase 1 + Phase 2 deliverables (apra-pm-lmx)
 
-Overall verdict: APPROVED. The plan is well-structured, covers all requirements, and
-has no blocking defects. Two minor wording issues are noted below; neither blocks
-execution but should be corrected by the doer in-place.
-
----
-
-## Criterion-by-criterion findings
-
-### 1. COVERAGE [PASS]
-All 4 deliverables from requirements.md Deliverables section are addressed:
-- SKILL.md -> T1.1
-- runner.js -> T2.1-T2.7, T3.1-T3.5
-- member-setup.md -> T1.2
-- install.mjs gaps -> T4.1, T4.2, T4.3
-
-All 5 Constraints from requirements.md are addressed:
-- Constraint 1 (identical input grammar): T2.1 (arg parsing), T5.3 checklist
-- Constraint 2 (same inner logic): T2.3-T2.7, T3.1-T3.5, T5.3
-- Constraint 3 (zero orchestrator tokens): T2.4 (pure JS dispatch), T2.2 (bd helpers)
-- Constraint 4 (fleet dispatch, no model IDs): T2.4, T2.7 (tier->member mapping)
-- Constraint 5 (install.mjs integration): T4.1, T4.2, T4.3
-
-### 2. PARITY [PASS with minor note]
-
-Phase order Plan->Develop->Test->Harvest: present (T2.6, T2.7, T3.1, T3.3).
-
-All 6 schema names present in T2.3:
-  REVIEW_SCHEMA, PLAN_REVIEW_SCHEMA, DOER_STATUS_SCHEMA,
-  HARVEST_SCHEMA, CI_SCHEMA, INTEG_RUN_SCHEMA. [PASS]
-
-SHELL_DISPATCH_PROMPT_HEADER: present in T2.4 acceptance criteria. [PASS]
-
-deploy.md + integ-test-playbook.md detection via fs.existsSync: T3.1. [PASS]
-
-No-progress abort: present in T2.7 and T3.2. [PASS - see note N1 below]
-
-Cost summary table: T3.5 (dispatchLedger grouping, per-role lines, TOTAL). [PASS]
-
-fitStreakToContext / truncateStreakToCeiling: MINOR WORDING ISSUE (see N2 below).
-
-buildSprintSummary, computeUpdatedCalibration, computeSprintQuote: T3.3, T3.5. [PASS]
-
-### 3. SIZING [PASS]
-All tasks are completable in one doer turn. The largest task (T2.7, Develop phase)
-is bounded by a clear scope: one phase, one while-loop, ~100 lines. T3.5 is
-appropriately assigned flash. No trivially small tasks.
-
-### 4. DEPENDENCIES [PASS]
-VERIFY checkpoints at end of each phase: Phase 1, 2, 3, 4, 5. [PASS]
-Phase N tasks do not reference Phase N+1 outputs. T2.x tasks only consume what
-prior T2.x tasks produce. T3.x consume T2.x runner.js skeleton. [PASS]
-
-### 5. MODEL ASSIGNMENT [PASS]
-- Flash: T1.1 (scaffold), T1.2 (scaffold), T3.5 (cost summary - mechanical port),
-  T4.2 (audit/verify), T4.3 (audit/verify), T5.1, T5.2, T5.4, T5.5
-- Pro: T2.1-T2.7 (arg parsing, parsers, fleet dispatch, Plan, Develop),
-  T3.1-T3.4 (Test, Harvest, PR, CI), T4.1 (step numbering fix), T5.3 (parity check)
-Assignments are appropriate.
-
-### 6. NO DUPLICATION [PASS]
-PLAN.md correctly lists what is already in install.mjs under "Already done - DO NOT
-re-implement": agyOnlyPermissions(), [5/5] AGY deploy block, uninstall block,
-post-install message, providerConfig('agy'). Tasks T4.1-T4.3 are scoped only to
-the confirmed gaps (step label inconsistency, missing JSON array invocation form).
-
-Confirmed gaps are real (verified against install.mjs):
-- Step labels: [1/4]...[4/4] then [5/5] for AGY path (T4.1 fixes to [1/5]...[5/5])
-- Missing invocation form in AGY post-message: ["BD-1","BD-2"] absent (T4.1 adds it)
-- Uninstall already handles AGY (install.mjs:207-213) -> T4.2 is a verify-only task [OK]
-
-### 7. NO NON-ASCII [PASS]
-Select-String scan of PLAN.md for [^\x00-\x7F] -> zero matches. [PASS]
+Branch: feat/agy-auto-sprint-skill
+Reviewer: pm-lite-reviewer
+Scope: T1.1, T1.2, T2.1-T2.7, PHASE 1 VERIFY, PHASE 2 VERIFY
 
 ---
 
-## Notes (non-blocking)
+## T1.1 - SKILL.md [PASS]
 
-N1 - No-progress abort split across T2.7 and T3.2:
-  T2.7 mentions "No-progress abort: if prevOpenIds === currentOpenIds after cycle N>1".
-  T3.2 also describes "No-progress check (after cycle 1): compares current open IDs".
-  In auto-sprint.js the comparison happens at the cycle level after the Test phase,
-  not inside the Develop loop. The doer should implement it once in T3.2 (cycle exit
-  gate) and the T2.7 reference should be treated as context only. The PHASE 2 VERIFY
-  does not check for this function, so there is no risk of a false-pass; the PHASE 3
-  VERIFY grep for "no-progress" will catch omission. No task change needed.
+- YAML frontmatter: name=auto-sprint, description present, runner=runner.js [OK]
+- All 4 invocation forms present: bare ID, space-separated, JSON array, JSON object [OK]
+- 8 agents named in roster table: pm-planner, pm-reviewer, pm-doer-cheap, pm-doer-std,
+  pm-doer-premium, pm-reviewer (reviewer role), pm-planner (integ-test-runner), pm-harvester [OK]
+- Phases: Plan -> Develop -> Test -> Harvest [OK]
+- member-setup.md referenced in One-time setup section [OK]
+- Non-ASCII scan (byte-level): zero hits [OK]
 
-N2 - fitStreakToContext vs truncateStreakToCeiling wording in T2.3:
-  T2.3 acceptance criteria say: "fitStreakToContext(...) -- exact port; NOTE: renamed
-  from truncateStreakToCeiling if that name appears in auto-sprint.js".
-  Verified: auto-sprint.js defines ONLY truncateStreakToCeiling (line 925); there is
-  no fitStreakToContext anywhere in the file. The wording is inverted: the function
-  to port is truncateStreakToCeiling, not fitStreakToContext. The doer should use
-  truncateStreakToCeiling as the canonical name. Requirements.md mentions both names
-  (Constraint 2) so using truncateStreakToCeiling satisfies the requirement.
-  The T5.3 checklist correctly says "truncateStreakToCeiling or fitStreakToContext"
-  which is permissive enough. Risk is low; the doer will read auto-sprint.js directly.
+## T1.2 - member-setup.md [PASS]
 
-N3 - Claude post-message missing JSON array form (existing gap, not a plan gap):
-  install.mjs Claude block (lines 475-477) also does not show the JSON array form
-  but the requirements.md and PLAN.md scope fix only to the AGY block. This is
-  out of scope for this sprint and the plan correctly ignores it.
+- All 6 member names present: pm-planner, pm-reviewer, pm-doer-cheap, pm-doer-std,
+  pm-doer-premium, pm-harvester [OK]
+- register_member tool usage shown with correct JSON blocks for each member [OK]
+- Verification step present: list_members, confirms all six names [OK]
+- Non-ASCII scan (byte-level): zero hits [OK]
+
+## PHASE 1 VERIFY [PASS]
+
+- SKILL.md non-ASCII: zero hits [OK]
+- member-setup.md non-ASCII: zero hits [OK]
+- All 6 member names in member-setup.md: confirmed [OK]
+- All 4 invocation forms in SKILL.md: confirmed [OK]
+
+## T2.1 - Arg parsing [PASS]
+
+- Shebang: #!/usr/bin/env node present (line 1) [OK]
+- log() format: [RUNNER] <ISO> <msg> - exact match (line 47) [OK]
+- 4 invocation forms parsed: JSON array, JSON object, bare string (space/comma split) [OK]
+- Defaults: goal='P1/P2' (line 87), max_cycles=5 (line 88), base_branch='main' (line 90) [OK]
+
+## T2.2 - bd helpers [PASS]
+
+- bdExec: defined (line ~102) [OK]
+- bdJson: defined (line ~106) [OK]
+- bdReadyTasks: defined (line ~110) [OK]
+- bdOpenCount: defined (line ~113) [OK]
+- shellExtract: defined (line ~122) [OK]
+
+## T2.3 - Schemas and SHELL_DISPATCH_PROMPT_HEADER [PASS]
+
+- REVIEW_SCHEMA: defined [OK]
+- PLAN_REVIEW_SCHEMA: defined (line 153) [OK]
+- DOER_STATUS_SCHEMA: defined [OK]
+- HARVEST_SCHEMA: defined [OK]
+- CI_SCHEMA: defined [OK]
+- INTEG_RUN_SCHEMA: defined (line 203) [OK]
+- SHELL_OUTPUTS_SCHEMA: defined [OK]
+- SHELL_DISPATCH_PROMPT_HEADER: defined at line 224. Exact string match with
+  auto-sprint.js (line 1017): identical text [OK]
+
+## T2.4 - dispatchFleet and dispatchShellFleet [PASS]
+
+- dispatchLedger: const array initialized before dispatchFleet [OK]
+- dispatchFleet: schema appends RESPOND WITH ONLY VALID JSON block [OK]
+- Retry loop: MAX_RETRIES=3, retries on JSON parse failure [OK]
+- dispatchLedger accumulation: appends entry on every call path [OK]
+- dispatchShellFleet: defined, uses SHELL_DISPATCH_PROMPT_HEADER + numbered cmds,
+  passes SHELL_OUTPUTS_SCHEMA [OK]
+
+## T2.5 - Pure parsers [PASS]
+
+- parseBlockers: defined, signature (outputs, rootCount, openListIdx, threshold, rootIds) [OK]
+- parseReadyStreaks: defined, signature (outputs, rootCount, readyListIdx, defaultModel) [OK]
+- parseCycleState: defined, signature (outputs, rootCount) [OK]
+- truncateStreakToCeiling: defined (exact auto-sprint.js name), same 4 parameters [OK]
+- approved(): defined [OK]
+
+## T2.6 - State helpers and sprint setup [PASS]
+
+- readSprintState: defined (line 463) [OK]
+- writeSprintState: defined (line 475) [OK]
+- clearSprintState: defined (line 486) [OK]
+- computeSprintQuote: loaded from cost.js via require; fallback stub defined [OK]
+- Sprint loop: while (cycleCount < maxCycles) with cycleCount++ [OK]
+- integTestEnabled: local fs.existsSync check for deploy.md + integ-test-playbook.md [OK]
+
+## T2.7 - Plan phase and Develop phase [PASS]
+
+Plan phase:
+- MAX_PLAN_ITER=3 (line 712) [OK]
+- pm-planner dispatched each round [OK]
+- pm-reviewer (plan-reviewer label) dispatched with PLAN_REVIEW_SCHEMA [OK]
+- planFeedback set on CHANGES NEEDED verdict (line 838-840) [OK]
+- computeSprintQuote called after approval (line 819) [OK]
+- Proceeds after 3 rounds regardless (line 858-860) [OK]
+
+Develop phase:
+- MAX_DEV_ITER=20 (line 874) [OK]
+- truncateStreakToCeiling used per streak (line ~931) [OK]
+- Tier->member mapping: cheap->pm-doer-cheap, standard->pm-doer-std,
+  premium->pm-doer-premium (lines 938-940) [OK]
+- doer null handling: resets orphaned in_progress tasks, sets doerNullReset=true,
+  breaks and continues outer loop [OK]
+- VERIFY check: doerResult.status !== 'VERIFY' -> abortReason set [OK]
+- After each iteration: pm-reviewer dispatched with REVIEW_SCHEMA [OK]
+- CHANGES NEEDED -> devFeedback set; fire-and-forget feedback.md write [OK]
+- No-progress abort NOT present inside Develop loop (correctly omitted; T2.7 scope only) [OK]
+- Deadlock detection at devIter===0 when open>0 (lines 895-912) [OK]
+
+## PHASE 2 VERIFY [PASS]
+
+- node --check skills/auto-sprint/runner.js: exits 0 [OK]
+- Non-ASCII scan (byte-level, all three files): zero hits [OK]
+- All 7 schemas present in runner.js [OK]
+- SHELL_DISPATCH_PROMPT_HEADER exact string match with auto-sprint.js [OK]
+- All 3 parser functions defined with correct signatures [OK]
+- truncateStreakToCeiling defined (exact name) [OK]
+- Plan phase: MAX_PLAN_ITER=3, planner+reviewer, computeSprintQuote on approval [OK]
+- Develop phase: MAX_DEV_ITER=20, tier->member mapping correct, null handling [OK]
 
 ---
 
 ## Summary
 
-The plan is complete, well-scoped, and internally consistent. The two wording notes
-(N1, N2) are informational and do not require plan changes. Proceed to execution.
+All T1.1, T1.2, T2.1, T2.2, T2.3, T2.4, T2.5, T2.6, T2.7 acceptance criteria
+satisfied. Both PHASE 1 and PHASE 2 VERIFY checkpoints pass. No defects found.
+Proceed to Phase 3 (T3.x: Test + Harvest phases).
