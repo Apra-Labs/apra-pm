@@ -339,11 +339,12 @@ function main() {
   }
 
   console.log(`Installing pm for ${cfg.name} ...`);
+  const stepTotal = args.llm === 'agy' ? 5 : 4;
 
   // 1) skill
   clearDir(skillDest);
   copyDir(skillSrc, skillDest);
-  console.log(`  [1/4] skill   -> ${skillDest}`);
+  console.log(`  [1/${stepTotal}] skill   -> ${skillDest}`);
 
   // 2) agents (overwrite the eight; leave any others in place)
   ensureDir(agentsDest);
@@ -353,7 +354,7 @@ function main() {
     if (args.llm === 'opencode') content = transformAgentForOpenCode(content);
     fs.writeFileSync(path.join(agentsDest, a), content);
   }
-  console.log(`  [2/4] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
+  console.log(`  [2/${stepTotal}] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
 
   // 3) permissions
   let added;
@@ -374,7 +375,7 @@ function main() {
     if (args.llm === 'agy') perms.push(...agyOnlyPermissions());
     added = mergePermissions(settingsFile, perms);
   }
-  console.log(`  [3/4] perms   -> ${settingsFile} (${added} added)`);
+  console.log(`  [3/${stepTotal}] perms   -> ${settingsFile} (${added} added)`);
 
   if (args.llm === 'claude') {
     console.log('        Bash(*) required for fire-and-forget log/feedback writes in the develop loop');
@@ -424,7 +425,7 @@ function main() {
 
       const costDest = path.join(skillDest, 'cost.js');
       fs.writeFileSync(costDest, costJs);  // skillDest already ensured by step 1
-      console.log(`  [4/4] cost.js  -> ${costDest}`);
+      console.log(`  [4/${stepTotal}] cost.js  -> ${costDest}`);
     }
 
     if (args.llm === 'claude') {
@@ -448,7 +449,7 @@ function main() {
     } else {
       clearDir(autoSprintSkillDest);
       copyDir(autoSprintSkillSrc, autoSprintSkillDest);
-      console.log(`  [5/5] auto-sprint skill -> ${autoSprintSkillDest}`);
+      console.log(`  [5/${stepTotal}] auto-sprint skill -> ${autoSprintSkillDest}`);
       console.log(`        (provider-agnostic /auto-sprint: same args as Claude workflow)`);
     }
   }
@@ -479,6 +480,7 @@ function main() {
   } else if (args.llm === 'agy') {
     console.log('  AGY:  /auto-sprint BD-1');
     console.log('        /auto-sprint BD-1 BD-2');
+    console.log('        /auto-sprint ["BD-1","BD-2"]');
     console.log('        /auto-sprint {"issues":["BD-1"],"branch":"feat/x","goal":"P1"}');
     console.log('');
     console.log('  Same input JSON as Claude /auto-sprint. Zero orchestrator tokens.');
