@@ -1126,13 +1126,19 @@ phase('Plan');
 // Phase 1: deterministic setup steps -- run via dispatchShell so each command
 // executes exactly once with a bounded turn cap (no LLM looping on simple checks).
 //
-// Fixed output indices (always 6 elements regardless of branch/no-branch):
+// Fixed output indices (always 7 elements regardless of branch/no-branch):
 //   0: repo root (git rev-parse --show-toplevel)
 //   1: branch checkout result (or "no-op" when branch was not specified)
 //   2: confirmed branch name (git rev-parse --abbrev-ref HEAD)
 //   3: startedAt timestamp (date +%Y%m%d_%H%M%S)
 //   4: deploy.md exists (YES/NO)
 //   5: integ-test-playbook.md exists (YES/NO)
+//   6: comma-joined list of permission entries declared in deploy.md /
+//      integ-test-playbook.md's "## Permissions" sections that are NOT yet
+//      in .claude/settings.json's permissions.allow (empty string if none --
+//      computed deterministically here so Step 5's prompt to the agent never
+//      has to say "you may grant yourself permissions" when there's nothing
+//      to grant).
 const setupShellCmds = [
   `git rev-parse --show-toplevel`,
   branch
@@ -1142,6 +1148,24 @@ const setupShellCmds = [
   `date +%Y%m%d_%H%M%S`,
   `test -f deploy.md && echo YES || echo NO`,
   `test -f integ-test-playbook.md && echo YES || echo NO`,
+  `node -e "` +
+    `const fs=require('fs');` +
+    `function permsFrom(file){` +
+      `if(!fs.existsSync(file))return[];` +
+      `const text=fs.readFileSync(file,'utf8');` +
+      `const idx=text.indexOf('## Permissions');` +
+      `if(idx<0)return[];` +
+      `const rest=text.slice(idx);` +
+      `const next=rest.indexOf('\\n## ',3);` +
+      `const section=next>=0?rest.slice(0,next):rest;` +
+      `return(section.match(/^Bash\\([^)]*\\)$/gm)||[]).map(s=>s.trim());` +
+    `}` +
+    `const declared=[...new Set([...permsFrom('deploy.md'),...permsFrom('integ-test-playbook.md')])];` +
+    `let existing=[];` +
+    `try{existing=(JSON.parse(fs.readFileSync('.claude/settings.json','utf8')).permissions||{}).allow||[];}catch(e){}` +
+    `const missing=declared.filter(p=>!existing.includes(p));` +
+    `console.log(missing.join(','));` +
+  `"`,
 ];
 const setupShell = await dispatchShell(setupShellCmds, {
   model: MODEL_HAIKU, label: 'setup-shell', phase: 'Plan',
@@ -1153,6 +1177,7 @@ const _detectedBranch  = (_outs[2] || '').trim();
 const _detectedTs      = (_outs[3] || '').trim();
 const _deployExists    = (_outs[4] || '').trim() === 'YES';
 const _playbookExists  = (_outs[5] || '').trim() === 'YES';
+const _missingPerms    = (_outs[6] || '').trim().split(',').map(s => s.trim()).filter(Boolean);
 
 if (!_detectedRepo || !_detectedBranch) {
   log('ERROR: setup-shell failed -- could not detect repo root or branch');
@@ -1161,6 +1186,15 @@ if (!_detectedRepo || !_detectedBranch) {
 
 // Phase 2: free-form setup steps (permissions merge, calibration, transcript dir).
 // maxTurns: 20 backstop prevents a runaway agent from stalling indefinitely.
+const step5Block = _missingPerms.length > 0
+  ? (
+    `Step 5: Add these specific missing permission entries to .claude/settings.json's\n` +
+    `  permissions.allow array (create the file/array if absent). Add ONLY these entries,\n` +
+    `  nothing else, and do not remove or modify anything else in the file:\n` +
+    _missingPerms.map(p => `    - ${p}`).join('\n') + `\n\n`
+  )
+  : `Step 5: Already satisfied -- every permission declared in deploy.md / integ-test-playbook.md\n` +
+    `  is already present in .claude/settings.json. Do nothing for this step.\n\n`;
 const setup = await dispatch(
   `Sprint workspace setup (Phase 2 -- deterministic steps already done).\n\n` +
   `Pre-known values (do NOT re-run these commands):\n` +
@@ -1171,15 +1205,7 @@ const setup = await dispatch(
   `  playbookExists: ${_playbookExists}\n\n` +
   `Your job is only Steps 5-7 below. Return ALL fields in your schema response,\n` +
   `including the pre-known values above.\n\n` +
-  `Step 5: Merge deploy permissions into .claude/settings.json.\n` +
-  `  For each of deploy.md and integ-test-playbook.md that exists:\n` +
-  `    a. Read the file and extract lines under the "## Permissions" section\n` +
-  `       (stop at the next ## heading). Each non-empty line is a permission entry\n` +
-  `       such as "Bash(docker *)" or "Bash(npm run *)".\n` +
-  `    b. Read .claude/settings.json (create it as {} if absent).\n` +
-  `    c. For each extracted permission not already in permissions.allow, add it.\n` +
-  `    d. Write the updated .claude/settings.json back.\n` +
-  `  If neither file has a ## Permissions section, skip this step.\n\n` +
+  step5Block +
   `Step 6: Load or bootstrap calibration data.\n` +
   `  If sprint-logs/calibration.json exists in the repo root:\n` +
   `    Run: cat sprint-logs/calibration.json\n` +
