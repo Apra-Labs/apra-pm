@@ -1334,11 +1334,12 @@ process.on('uncaughtException', function(err) {
         (planFeedback
           ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
           : '') +
-        `Inspect existing state first:\n` +
-        `  ${rootIds.map(id => `bd show ${id} && bd graph --compact ${id}`).join('\n  ')}\n` +
-        `Run: bd show <id> on any existing features/tasks to read their current descriptions.\n` +
+        `Inspect existing state first (DO NOT USE RUN_COMMAND FOR THIS):\n` +
+        `  Use the 'view_file' or 'grep_search' tool on ".beads/issues.jsonl" to read issue descriptions.\n` +
+        `  NEVER try to run "bd show <id>" in the shell. The Native agent cannot use interactive tools!\n` +
+        `  IMPORTANT: When using the 'call_mcp_tool' tool, the 'Arguments' field MUST be a JSON object, NOT a stringified JSON string! For example: {"command": "bd ready", "run_from": "C:/akhil/git/fleet-e2e-toy-agy"} (Do NOT use 'cwd', use 'run_from').\n` +
         `Then build or complete the feature+task DAG -- create only what is missing:\n` +
-        `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
+        `  - BEFORE creating any feature or task, read the existing issues in .beads/issues.jsonl.\n` +
         `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
         `\n` +
         `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
