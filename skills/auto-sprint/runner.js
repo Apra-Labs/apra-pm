@@ -937,13 +937,14 @@ async function _fleetCall(memberName, prompt, opts) {
     const parsed = JSON.parse(out);
     const convId = parsed.response.newConversation.conversationId;
     
-    // Poll the transcript log synchronously to get the response
+    // Poll the transcript log asynchronously to get the response
     const logPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
     
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     let lastPos = 0;
     while (true) {
         if (!fs.existsSync(logPath)) {
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+            await sleep(500);
             continue;
         }
         const fd = fs.openSync(logPath, 'r');
@@ -967,7 +968,7 @@ async function _fleetCall(memberName, prompt, opts) {
         } else {
             fs.closeSync(fd);
         }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+        await sleep(500);
     }
   } catch (err) {
     throw new Error('Fallback agentapi execution failed: ' + (err.stderr || err.message));
