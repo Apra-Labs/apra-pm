@@ -501,10 +501,6 @@ const STATUS_HTML = `<!DOCTYPE html>
         <li class="phase-item" data-phase="Test">Test</li>
         <li class="phase-item" data-phase="Harvest">Harvest</li>
       </ul>
-      <div class="section-title" style="margin-top: 40px; margin-bottom: 20px;">Task Activity</div>
-      <div class="task-list" id="task-list">
-        <!-- Tasks injected here grouped by phase -->
-      </div>
     </div>
     
     <div class="content-area">
@@ -546,6 +542,13 @@ const STATUS_HTML = `<!DOCTYPE html>
       
       <div class="section-title">Terminal Log</div>
       <div class="terminal" id="terminal"></div>
+      
+      <div class="section-title" style="margin-top: 30px; margin-bottom: 16px;">Task Activity</div>
+      <div style="max-height: 25vh; overflow-y: auto; background: var(--bg-glass); border: 1px solid var(--border); border-radius: 8px;">
+        <table id="task-list" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+          <!-- Table rows injected here -->
+        </table>
+      </div>
     </div>
   </div>
 
@@ -623,19 +626,30 @@ const STATUS_HTML = `<!DOCTYPE html>
              byPhase[phase].push({ ...act, isRunning });
           });
           
-          let html = '';
+          let html = '<thead style="color:var(--text-muted); border-bottom:1px solid var(--border); position:sticky; top:0; background:#18181b; z-index:10;"><tr style="background:rgba(255,255,255,0.02);">' +
+                     '<th style="padding:10px 12px; font-weight:500;">Phase</th>' +
+                     '<th style="padding:10px 12px; font-weight:500;">Task</th>' +
+                     '<th style="padding:10px 12px; font-weight:500;">Agent</th>' +
+                     '<th style="padding:10px 12px; font-weight:500;">Tokens</th>' +
+                     '<th style="padding:10px 12px; font-weight:500;">Cycle</th></tr></thead><tbody>';
+          
           for (const phase of phases) {
             const acts = byPhase[phase];
             if (acts && acts.length > 0) {
-               html += '<div style="margin-top: 12px; margin-bottom: 8px; font-weight: 600; font-size: 13px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px;">' + phase + '</div>';
                acts.forEach(act => {
-                 html += '<div class="task-item ' + (act.isRunning ? 'running' : 'done') + '" style="margin-bottom: 8px;">' +
-                         '<div><div class="task-name">' + act.label + '</div>' +
-                         '<div class="task-agent">Agent: ' + act.model + ' | Tokens: ' + (act.outTokens || 0) + '</div></div>' +
-                         '<div class="task-status">C' + (act.cycle === 'setup' ? '0' : act.cycle) + '</div></div>';
+                 const statusStyle = act.isRunning ? 'color:var(--accent); font-weight:bold;' : 'color:var(--success);';
+                 const bgStyle = act.isRunning ? 'background: rgba(59, 130, 246, 0.05);' : '';
+                 html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05); ' + bgStyle + '">' +
+                         '<td style="padding:10px 12px; width:120px; ' + statusStyle + '">' + phase + (act.isRunning ? ' (Running)' : ' (Done)') + '</td>' +
+                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);">' + act.label + '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + act.model + '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + (act.outTokens || 0) + '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">C' + (act.cycle === 'setup' ? '0' : act.cycle) + '</td>' +
+                         '</tr>';
                });
             }
           }
+          html += '</tbody>';
           if (taskList.innerHTML !== html) taskList.innerHTML = html;
         }
         
@@ -816,9 +830,10 @@ async function dispatchFleet(memberName, prompt, opts) {
   const phase  = opts.phase  || '?';
   const cycle  = opts.cycle  != null ? opts.cycle : 'setup';
 
-  let fullPrompt = prompt;
+  const repo = process.cwd();
+  let fullPrompt = `CRITICAL: You are working inside a local repository. ALL your commands and file operations MUST be executed inside this exact directory path:\n${repo}\n\n${prompt}`;
   if (schema) {
-    fullPrompt = prompt + '\n\nRESPOND WITH ONLY VALID JSON matching this schema:\n' +
+    fullPrompt = fullPrompt + '\n\nRESPOND WITH ONLY VALID JSON matching this schema:\n' +
       JSON.stringify(schema, null, 2);
   }
 
@@ -852,8 +867,27 @@ async function dispatchFleet(memberName, prompt, opts) {
 
     // Try to parse JSON response.
     try {
-      // Strip markdown code fences if present.
-      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+      // Extract JSON block robustly to bypass any MCP tool wrapper text (like '[Response] from...')
+      let stripped = raw;
+      const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+      if (jsonMatch) {
+        stripped = jsonMatch[1].trim();
+      } else {
+        // Fallback: try to find the first { or [ and last } or ]
+        const firstBrace = raw.indexOf('{');
+        const firstBracket = raw.indexOf('[');
+        const firstIdx = (firstBrace === -1) ? firstBracket : (firstBracket === -1 ? firstBrace : Math.min(firstBrace, firstBracket));
+        
+        const lastBrace = raw.lastIndexOf('}');
+        const lastBracket = raw.lastIndexOf(']');
+        const lastIdx = Math.max(lastBrace, lastBracket);
+        
+        if (firstIdx !== -1 && lastIdx !== -1 && lastIdx >= firstIdx) {
+          stripped = raw.substring(firstIdx, lastIdx + 1).trim();
+        } else {
+          stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+        }
+      }
       const parsed = JSON.parse(stripped);
       dispatchLedger.push({ cycle, phase, label, model: memberName,
         outTokens: Math.ceil(raw.length / 4), costUsd: 0 });
@@ -926,7 +960,7 @@ async function _fleetCall(memberName, prompt, opts) {
     const tempPromptPath = path.join(os.tmpdir(), `agy-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
     fs.writeFileSync(tempPromptPath, subagentPrompt, 'utf-8');
     
-    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested. CRITICAL INSTRUCTION: You are running headlessly. DO NOT use the native "run_command" tool (or Bash tool) as it will hang indefinitely waiting for user approval. If you absolutely must execute a shell command, you MUST use the "execute_command" tool on the "apra-fleet" MCP server. All other tools (read_file, write_file, grep_search, etc.) are safe to use normally.`;
+    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested. CRITICAL INSTRUCTION: You are running headlessly. DO NOT use the native run_command tool (or Bash tool). If you must execute a shell command, you MUST use the call_mcp_tool tool. CRITICAL: When using call_mcp_tool, set ServerName exactly to apra-fleet (do NOT include quotes in the string value) and set ToolName exactly to execute_command (do NOT include quotes in the string value). The Arguments field MUST be a valid JSON object.`;
     if (useGatewayMode) {
       instruction = `Read the file at "${tempPromptPath}". It contains instructions to call an MCP tool. Call the tool and return its exact output with no extra conversational text.`;
     }
@@ -975,33 +1009,44 @@ async function _fleetCall(memberName, prompt, opts) {
   }
 }
 
-// dispatchShellFleet: runs a set of shell commands via a fleet member.
-// Builds the prompt with SHELL_DISPATCH_PROMPT_HEADER + numbered commands,
-// dispatches with SHELL_OUTPUTS_SCHEMA, and returns the parsed result.
 async function dispatchShellFleet(cmds, memberName, opts) {
   opts = opts || {};
-  const useGatewayMode = process.env.AGY_GATEWAY_MODE === 'true';
-  
-  if (!useGatewayMode) {
-    // VERSION A: Native AGY Mode - Execute shell commands directly in Node, bypassing the LLM
-    // This avoids LLM hallucination, saves tokens, and prevents the LLM from getting stuck trying to use tools.
-    const cp = require('node:child_process');
-    const outputs = [];
-    for (const c of cmds) {
-      try {
-        const out = cp.execSync(c, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50 });
+  const cp = require('node:child_process');
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  const repo = process.cwd();
+  const outputs = [];
+  for (const c of cmds) {
+    try {
+      if (c.includes('| node -e')) {
+        const parts = c.split('| node -e');
+        const cmd1 = parts[0].trim();
+        let script = parts[1].trim();
+        if (script.startsWith('"') && script.endsWith('"')) {
+          script = script.substring(1, script.length - 1);
+        }
+        
+        const out1 = cp.execSync(cmd1, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
+        
+        const tmpFile = path.join(os.tmpdir(), 'script-' + Date.now() + '-' + Math.floor(Math.random()*1000) + '.js');
+        fs.writeFileSync(tmpFile, script, 'utf-8');
+        
+        const out2 = cp.execSync(`node "${tmpFile}"`, { 
+            input: out1, encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo 
+        });
+        try { fs.unlinkSync(tmpFile); } catch(e) {}
+        
+        outputs.push(out2);
+      } else {
+        const out = cp.execSync(c, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
         outputs.push(out);
-      } catch (e) {
-        outputs.push((e.stdout || '') + (e.stderr || ''));
       }
+    } catch (e) {
+      outputs.push((e.stdout || '') + (e.stderr || ''));
     }
-    return { outputs };
   }
-  
-  // VERSION B: Gateway Mode - Send to apra-fleet via MCP
-  const prompt = SHELL_DISPATCH_PROMPT_HEADER + cmds.map((c, i) => `${i + 1}. ${c}`).join('\n');
-  return await dispatchFleet(memberName, prompt,
-    Object.assign({}, opts, { schema: SHELL_OUTPUTS_SCHEMA }));
+  return { outputs };
 }
 // ---------------------------------------------------------------------------
 // Sprint state helpers (branch-keyed JSON under sprint-logs/.state/)
@@ -1235,30 +1280,13 @@ process.on('uncaughtException', function(err) {
   const rootSummary = rootIds.join(', ');
 
   // Dispatch setup agent via pm-planner to ensure branch exists and sprint-log meta
-  // line is written.
-  const useGatewayMode = process.env.AGY_GATEWAY_MODE === 'true';
-  if (!useGatewayMode) {
-    const cp = require('node:child_process');
-    try { cp.execSync(`git -C "${repo}" checkout -b ${branch}`, { stdio: 'ignore' }); } catch(e) {
-      try { cp.execSync(`git -C "${repo}" checkout ${branch}`, { stdio: 'ignore' }); } catch(e2) {}
-    }
-    fs.mkdirSync(`${repo}/sprint-logs`, { recursive: true });
-  } else {
-    const setupPrompt =
-      `Sprint workspace setup.\n\n` +
-      `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-      `Sprint goals: ${rootSummary}\n\n` +
-      `Step 1: Ensure the sprint branch exists:\n` +
-      `  git -C "${repo}" checkout -b ${branch} 2>/dev/null || git -C "${repo}" checkout ${branch}\n\n` +
-      `Step 2: Ensure sprint-logs/ directory exists:\n` +
-      `  mkdir -p "${repo}/sprint-logs"\n\n` +
-      `Step 3: Check if deploy.md and integ-test-playbook.md exist in ${repo}.\n` +
-      `  Return "OK" when all steps complete.`;
-
-    await dispatchFleet('pm-planner', setupPrompt, {
-      label: 'setup', phase: 'Plan', cycle: 0,
-    });
+  // line is written. ALWAYS execute locally.
+  const cp = require('node:child_process');
+  try { cp.execSync(`git -C "${repo}" checkout -b ${branch}`, { stdio: 'ignore' }); } catch(e) {
+    try { cp.execSync(`git -C "${repo}" checkout ${branch}`, { stdio: 'ignore' }); } catch(e2) {}
   }
+  fs.mkdirSync(`${repo}/sprint-logs`, { recursive: true });
+
 
   log('Setup complete. Starting sprint cycle loop.');
   log('Sprint goals: ' + rootSummary + ' | Goal: ' + goal + ' (P<=' + threshold +
@@ -1337,7 +1365,7 @@ process.on('uncaughtException', function(err) {
         `Inspect existing state first (DO NOT USE RUN_COMMAND FOR THIS):\n` +
         `  Use the 'view_file' or 'grep_search' tool on ".beads/issues.jsonl" to read issue descriptions.\n` +
         `  NEVER try to run "bd show <id>" in the shell. The Native agent cannot use interactive tools!\n` +
-        `  IMPORTANT: When using the 'call_mcp_tool' tool, the 'Arguments' field MUST be a JSON object, NOT a stringified JSON string! For example: {"command": "bd ready", "run_from": "C:/akhil/git/fleet-e2e-toy-agy"} (Do NOT use 'cwd', use 'run_from').\n` +
+        `  IMPORTANT: When using the 'call_mcp_tool' tool, the 'Arguments' field MUST be a JSON object, NOT a stringified JSON string! For example: {"command": "bd ready", "run_from": "C:/akhil/git/fleet-e2e-toy-agy", "member_name": "pm-planner"} (Do NOT use 'cwd', use 'run_from', and ALWAYS include 'member_name').\n` +
         `Then build or complete the feature+task DAG -- create only what is missing:\n` +
         `  - BEFORE creating any feature or task, read the existing issues in .beads/issues.jsonl.\n` +
         `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
@@ -1490,11 +1518,12 @@ process.on('uncaughtException', function(err) {
 
     while (devIter < MAX_DEV_ITER) {
       // Get ready streaks via fleet shell dispatch.
-      const idExtractR = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
+      // Use the graph to accurately determine which tasks have 0 open blockers, bypassing bd list --ready filtering.
+      const graphReadyExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);const nodes=g.layout.Nodes;const readyIds=[];for(const id in nodes){const n=nodes[id];if(n.Issue.status!=='open')continue;let blocked=false;if(n.DependsOn){for(const depId of n.DependsOn){const dep=nodes[depId];if(dep&&dep.Issue.status!=='closed'&&dep.Issue.status!=='deferred'){blocked=true;break;}}}if(!blocked)readyIds.push(id);}console.log(readyIds.join(' '));}catch(e){}"`;
       const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
       const readyCmds = [
-        ...rootIds.map(id => `bd graph --json ${id} | ${idExtractR}`),
-        `bd list --ready --type=task --json | ${taskExtract}`,
+        ...rootIds.map(id => `bd graph --json ${id} | ${graphReadyExtract}`),
+        `bd list --status=open --type=task --json | ${taskExtract}`,
       ];
       const streakRaw = await dispatchShellFleet(readyCmds, 'pm-doer-cheap', {
         label: 'ready-streaks', phase: 'Develop', cycle: cycleCount,
@@ -1505,6 +1534,7 @@ process.on('uncaughtException', function(err) {
       if (streakResult.totalCount === 0) {
         // Deadlock check: if first iteration and open issues exist but none ready.
         if (devIter === 0) {
+          const idExtractR = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(Object.keys(JSON.parse(d).layout.Nodes).join(' '))}catch{}"`;
           const openIdExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
           const blockerCmds = [
             ...rootIds.map(id => `bd graph --json ${id} | ${idExtractR}`),
