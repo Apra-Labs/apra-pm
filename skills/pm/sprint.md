@@ -148,9 +148,11 @@ check. The phase has three steps:
    Reset section to restore pristine state. It then follows `deploy.md` to deploy the
    build and runs the smoke test. On smoke-test failure, it tears down, and PM skips
    integration tests this cycle and continues.
-2. **Integration tests** -- dispatch `integ-test-runner` (standard-tier). It executes
-   each open feature's tests, closes passing features in beads, and files a
-   priority-ranked bug for each failure (see `beads.md`).
+2. **Integration tests** -- dispatch `integ-test-runner` (standard-tier), passing the
+   **sprint root id** (`<sprint-id>`) in the dispatch prompt. It executes the tests of
+   each open feature **in the sprint-root subtree only** (not every open feature in the
+   DB), closes passing features in beads, and files a priority-ranked bug for each
+   failure (see `beads.md`).
 3. **Teardown** -- dispatch `deployer` to run the playbook's Teardown section and
    fully clean up.
 

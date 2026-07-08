@@ -15,6 +15,8 @@ Your dispatch prompt must supply:
 
 - The deployed environment is already up and reachable (required) -- you run after a
   successful `deployer` deploy; you do not bring the environment up yourself.
+- The **sprint root id** (`<sprint-id>`), so you test only features inside that sprint's
+  subtree -- never the whole beads DB.
 
 Everything else (which features are open, their `[test]` tasks) is read directly by you
 from beads in Step 1-2, not passed in the prompt.
@@ -23,13 +25,24 @@ from beads in Step 1-2, not passed in the prompt.
 run tests against it and report fabricated results. Stop, leave all features open/untouched,
 and return `passed: false` with `notes` stating the environment was not reachable.
 
-## Step 1 -- Find open features
+## Step 1 -- Find THIS sprint's open features
+
+Test ONLY features inside `<sprint-id>`'s subtree -- never the whole beads DB. A populated
+DB holds features from other epics/sprints and noise items; closing or filing bugs against
+those is a bug.
 
 ```bash
-bd list --type=feature --status=open
+bd graph --json <sprint-id>
 ```
 
-Work through each open feature one at a time.
+From that graph, take the features (`issue_type == "feature"`) that are still open
+(`status != "closed"`) and reachable under `<sprint-id>` -- the same sprint-root subtree
+the goal-check and doer loop use. Do NOT run `bd list --type=feature --status=open` (it is
+unscoped and returns every open feature in the DB). Work through each scoped open feature
+one at a time.
+
+If the dispatch prompt already hands you an explicit feature-id list, use exactly that list
+and skip the graph query.
 
 ## Step 2 -- Run tests for each feature
 

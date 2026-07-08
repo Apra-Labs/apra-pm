@@ -257,6 +257,16 @@ function runSuite(suite, timeoutS, keepPr, keepInstall) {
   // here with the toy's prefix so `bd ready` and `bd list` work out of the box.
   spawnSync('bd', ['init', '-p', 'gh-toy', '--non-interactive'], { cwd: repo, encoding: 'utf-8' });
 
+  // bd init ADOPTS the shared Dolt seed from the toy's refs/dolt/data (the "issues shared
+  // between team members without a database" model) -- that's the intended read path. But bd
+  // then AUTO-PUSHES every bd close/create back to that remote (only `bd close --sandbox`
+  // disables it), which would drift the shared seed and, because the next run re-adopts it,
+  // silently corrupt subsequent runs. This ephemeral clone must be read-only against the
+  // shared Dolt remote: remove the adopted Dolt remote so nothing can push to it. The sprint
+  // still mutates its LOCAL Dolt DB and exports to the branch's .beads/issues.jsonl (which the
+  // closure gates read); the toy's main config keeps sync.remote so future clones still adopt.
+  spawnSync('bd', ['dolt', 'remote', 'remove', 'origin'], { cwd: repo, encoding: 'utf-8' });
+
   // The sprint pushes and raises a PR, so keep origin. If a token is provided, wire
   // it into the push URL (gh reads GH_TOKEN from the environment on its own).
   const token = process.env.GH_TOKEN || process.env.E2E_GH_TOKEN || '';
