@@ -980,6 +980,25 @@ async function _fleetCall(memberName, prompt, opts) {
 // dispatches with SHELL_OUTPUTS_SCHEMA, and returns the parsed result.
 async function dispatchShellFleet(cmds, memberName, opts) {
   opts = opts || {};
+  const useGatewayMode = process.env.AGY_GATEWAY_MODE === 'true';
+  
+  if (!useGatewayMode) {
+    // VERSION A: Native AGY Mode - Execute shell commands directly in Node, bypassing the LLM
+    // This avoids LLM hallucination, saves tokens, and prevents the LLM from getting stuck trying to use tools.
+    const cp = require('node:child_process');
+    const outputs = [];
+    for (const c of cmds) {
+      try {
+        const out = cp.execSync(c, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50 });
+        outputs.push(out);
+      } catch (e) {
+        outputs.push((e.stdout || '') + (e.stderr || ''));
+      }
+    }
+    return { outputs };
+  }
+  
+  // VERSION B: Gateway Mode - Send to apra-fleet via MCP
   const prompt = SHELL_DISPATCH_PROMPT_HEADER + cmds.map((c, i) => `${i + 1}. ${c}`).join('\n');
   return await dispatchFleet(memberName, prompt,
     Object.assign({}, opts, { schema: SHELL_OUTPUTS_SCHEMA }));
