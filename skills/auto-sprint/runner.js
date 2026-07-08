@@ -423,7 +423,7 @@ const STATUS_HTML = `<!DOCTYPE html>
       display: flex;
       justify-content: space-between;
       align-items: center;
-      animation: slideIn 0.3s ease;
+      
     }
     .task-item .task-name { font-weight: 600; font-size: 14px; }
     .task-item .task-agent { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
@@ -597,18 +597,22 @@ const STATUS_HTML = `<!DOCTYPE html>
         
         const banner = document.getElementById('banner');
         if (s.goalMet) {
-          banner.className = 'banner success';
-          banner.textContent = 'Sprint complete -- Goal MET!';
-          banner.style.display = 'block';
+          if (banner.className !== 'banner success') {
+            banner.className = 'banner success';
+            banner.textContent = 'Sprint complete -- Goal MET!';
+            banner.style.display = 'block';
+          }
         } else if (s.abortReason) {
-          banner.className = 'banner error';
-          banner.textContent = 'Sprint ended: ' + s.abortReason;
-          banner.style.display = 'block';
+          if (banner.className !== 'banner error') {
+            banner.className = 'banner error';
+            banner.textContent = 'Sprint ended: ' + s.abortReason;
+            banner.style.display = 'block';
+          }
         }
         
         const taskList = document.getElementById('task-list');
         if (!ledger.length) {
-          taskList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>';
+          if (taskList.innerHTML !== '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>') taskList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>';
         } else {
           const byPhase = {};
           ledger.forEach((act, idx) => {
@@ -632,7 +636,7 @@ const STATUS_HTML = `<!DOCTYPE html>
                });
             }
           }
-          taskList.innerHTML = html;
+          if (taskList.innerHTML !== html) taskList.innerHTML = html;
         }
         
         if (s.log && s.log.length !== lastLogCount) {
