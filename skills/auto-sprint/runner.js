@@ -873,7 +873,7 @@ async function dispatchFleet(memberName, prompt, opts) {
 
 // _fleetCall: low-level call to the apra-fleet MCP execute_prompt tool.
 // Uses the AGY MCP client interface available in the runner process context.
-// Falls back to a stub if the MCP interface is not available (for --check / tests).
+// Falls back to spawning the native `agy` CLI if the MCP interface is not available.
 async function _fleetCall(memberName, prompt, opts) {
   // In the AGY skill runtime, MCP tools are accessible via the global __mcp object
   // injected by the skill engine. Check for it and use it if available.
@@ -885,8 +885,27 @@ async function _fleetCall(memberName, prompt, opts) {
     return (result && result.content && result.content[0] && result.content[0].text) || '';
   }
 
-  // If no MCP client is injected, throw so dispatchFleet logs the error and retries.
-  throw new Error('No MCP client available -- ensure runner is invoked within AGY skill runtime');
+  // Fallback: if running in a background shell without MCP, use `agy --print`
+  const modelMap = {
+    'pm-doer-cheap': 'Gemini 3.1 Flash (High)',
+    'pm-doer-std': 'Gemini 3.1 Pro (High)',
+    'pm-doer-premium': 'Gemini 3.1 Pro (High)',
+    'pm-planner': 'Gemini 3.1 Pro (High)',
+    'pm-reviewer': 'Gemini 3.1 Pro (High)',
+    'pm-harvester': 'Gemini 3.1 Pro (High)'
+  };
+  const model = modelMap[memberName] || 'Gemini 3.1 Pro (High)';
+  const execFileAsync = require('util').promisify(child_process.execFile);
+  
+  try {
+    const { stdout } = await execFileAsync('agy', ['--model', model, '--print', prompt], {
+      encoding: 'utf-8',
+      maxBuffer: 1024 * 1024 * 50
+    });
+    return stdout;
+  } catch (err) {
+    throw new Error('Fallback agy --print failed: ' + (err.stderr || err.message));
+  }
 }
 
 // dispatchShellFleet: runs a set of shell commands via a fleet member.
