@@ -1072,6 +1072,30 @@ function fitStreakToContext(streakIds, bucketById, calibration, tier) {
   return { fittedIds: kept, estContext: sum, available, wouldOverflow: kept.length < streakIds.length };
 }
 
+// Build a per-phase wall-clock report from ordered epoch stamps captured at phase boundaries.
+// Each stamp is {name, epoch}; the elapsed time attributed to a phase is the delta from its
+// stamp to the NEXT stamp. Turns "the sprint is slow" into "develop was N of M seconds", which
+// is what proves the parallel-doer win with numbers. Pure -- no Date/clock access of its own.
+function buildPhaseTiming(stamps) {
+  const clean = (stamps || []).filter(s => s && s.name && Number.isFinite(s.epoch));
+  const rows = [];
+  for (let i = 0; i < clean.length - 1; i++) {
+    const seconds = Math.max(0, clean[i + 1].epoch - clean[i].epoch);
+    rows.push({ phase: clean[i].name, seconds });
+  }
+  const totalSeconds = rows.reduce((a, r) => a + r.seconds, 0);
+  const fmt = s => {
+    const m = Math.floor(s / 60), sec = s % 60;
+    return m > 0 ? `${m}m${sec.toString().padStart(2, '0')}s` : `${sec}s`;
+  };
+  const pct = s => (totalSeconds > 0 ? Math.round((s / totalSeconds) * 100) : 0);
+  const text = rows.length
+    ? rows.map(r => `  ${r.phase}: ${fmt(r.seconds)} (${pct(r.seconds)}%)`).join('\n') +
+      `\n  TOTAL: ${fmt(totalSeconds)}`
+    : '  (no phase timing captured)';
+  return { rows, totalSeconds, text };
+}
+
 // Flatten ready streaks into a deterministic, de-duplicated task batch for parallel doers.
 // Each parallel doer works exactly ONE task in its own worktree, so the per-doer context is a
 // single task (no context-fit split needed here -- that split only matters when one doer chains
@@ -1637,6 +1661,20 @@ log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles
 
 // ------------------------------------------------------------------ SPRINT LOOP
 
+// Per-phase wall-clock instrumentation. We cannot self-time (Date.now() is banned in the
+// workflow sandbox), so we capture a cheap `date +%s` epoch at each phase boundary and diff
+// them at the end (buildPhaseTiming). This is what turns "the sprint is slow" into a concrete
+// per-phase breakdown and lets the parallel-doer win be shown in numbers.
+const phaseTimeline = [];
+// Arrow (not `async function`) on purpose: appendNewEntries is asserted to be the LAST top-level
+// `async function` in this file by test/sprint-log-flush.test.mjs, which slices to the next one.
+const stamp = async (name) => {
+  const r = await dispatchShell(['date +%s'], { model: MODEL_HAIKU, label: `stamp-${name}`, phase: 'Plan' });
+  const epoch = parseInt(((r?.outputs?.[0]) || '').trim(), 10);
+  if (Number.isFinite(epoch)) phaseTimeline.push({ name, epoch });
+};
+await stamp('setup');
+
 while (cycleCount < maxCycles) {
   cycleCount++;
   cycleCostUsd = 0;
@@ -1645,6 +1683,7 @@ while (cycleCount < maxCycles) {
   // ---------------------------------------------------------------- RESUME CHECK + CYCLE CHECKPOINT
 
   phase('Plan');
+  await stamp(`plan-c${cycleCount}`);
 
   // Write per-cycle checkpoint entry and check cycle state in parallel -- no data dependency.
   // The cycle-checkpoint uses type='cycle-start' (distinct from the one-time type='meta' above).
@@ -1831,6 +1870,7 @@ while (cycleCount < maxCycles) {
   // ---------------------------------------------------------------- DEVELOP
 
   phase('Develop');
+  await stamp(`develop-c${cycleCount}`);
 
   // Phase checkpoint (heartbeat): plan approved for this cycle, entering develop.
   await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Develop', planApproved: true }, 'Develop', `state-c${cycleCount}-dev`);
@@ -2157,6 +2197,7 @@ while (cycleCount < maxCycles) {
 
   if (integTestEnabled) {
     phase('Test');
+    await stamp(`test-c${cycleCount}`);
 
     // -- Deploy --
     const deployLabel = `deployer-c${cycleCount}`;
@@ -2287,6 +2328,7 @@ while (cycleCount < maxCycles) {
 // ------------------------------------------------------------------ FINAL REVIEW
 
 phase('Harvest');
+await stamp('harvest');
 
 const finalReviewLabel = 'final-reviewer';
 const finalReview = await dispatch(
@@ -2560,7 +2602,16 @@ log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
 log(`  (input token cost not included -- see ${sprintLogFile} for per-dispatch detail)`);
 log('================================================\n');
 
+// Final per-phase wall-clock stamp + report. Shows where the sprint's time actually went
+// (e.g. "develop was 70% of total") and is the evidence for the parallel-doer speedup.
+await stamp('end');
+const phaseTiming = buildPhaseTiming(phaseTimeline);
+log('=== Sprint wall-clock by phase ===');
+log(phaseTiming.text);
+log('==================================\n');
+
 // Sprint completed cleanly -- release the concurrency lock so the next run starts fresh.
 // (An unclean crash skips this, leaving the state file for a resume.)
 await clearSprintState(stateFileRel, 'state-clear-done');
-return { cycles: cycleCount, goalMet, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
+return { cycles: cycleCount, goalMet, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)),
+  phaseTimingSeconds: phaseTiming.totalSeconds, phaseTiming: phaseTiming.rows };

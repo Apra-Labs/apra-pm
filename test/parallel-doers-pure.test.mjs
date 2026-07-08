@@ -19,7 +19,8 @@ function loadPure(...names) {
   return new Function(`${block}\n return { ${names.join(', ')} };`)();
 }
 
-const { computeDoerBatch, worktreeNamesFor } = loadPure('computeDoerBatch', 'worktreeNamesFor');
+const { computeDoerBatch, worktreeNamesFor, buildPhaseTiming } =
+  loadPure('computeDoerBatch', 'worktreeNamesFor', 'buildPhaseTiming');
 
 test('computeDoerBatch flattens streaks, dedupes, and caps at maxDoers', () => {
   const streaks = [
@@ -74,4 +75,40 @@ test('worktreeNamesFor strips unsafe characters from arbitrary ids/branches', ()
 test('worktreeNamesFor defaults the worktree root when omitted', () => {
   const n = worktreeNamesFor('main', 't1');
   assert.equal(n.path, '.auto-sprint/wt/t1');
+});
+
+test('buildPhaseTiming diffs consecutive epoch stamps into per-phase seconds', () => {
+  const t = buildPhaseTiming([
+    { name: 'setup', epoch: 1000 },
+    { name: 'plan-c1', epoch: 1030 },   // setup took 30s
+    { name: 'develop-c1', epoch: 1090 }, // plan took 60s
+    { name: 'end', epoch: 1100 },        // develop took 10s
+  ]);
+  assert.deepEqual(t.rows, [
+    { phase: 'setup', seconds: 30 },
+    { phase: 'plan-c1', seconds: 60 },
+    { phase: 'develop-c1', seconds: 10 },
+  ]);
+  assert.equal(t.totalSeconds, 100);
+  assert.match(t.text, /develop-c1: 10s \(10%\)/);
+  assert.match(t.text, /plan-c1: 1m00s \(60%\)/);
+  assert.match(t.text, /TOTAL: 1m40s/);
+});
+
+test('buildPhaseTiming ignores malformed/non-finite stamps and never goes negative', () => {
+  const t = buildPhaseTiming([
+    { name: 'a', epoch: 100 },
+    { name: null, epoch: 200 },      // dropped (no name)
+    { name: 'b', epoch: NaN },       // dropped (non-finite)
+    { name: 'c', epoch: 90 },        // earlier than 'a' -> clamped to 0
+  ]);
+  // clean = [a@100, c@90] -> one row a->c = max(0, -10) = 0
+  assert.deepEqual(t.rows, [{ phase: 'a', seconds: 0 }]);
+  assert.equal(t.totalSeconds, 0);
+});
+
+test('buildPhaseTiming handles empty/too-short input gracefully', () => {
+  assert.deepEqual(buildPhaseTiming([]).rows, []);
+  assert.deepEqual(buildPhaseTiming([{ name: 'only', epoch: 5 }]).rows, []);
+  assert.match(buildPhaseTiming(undefined).text, /no phase timing captured/);
 });
