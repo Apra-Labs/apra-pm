@@ -468,6 +468,18 @@ const STATUS_HTML = `<!DOCTYPE html>
     }
     .banner.success { background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); color: var(--success); }
     .banner.error { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); color: var(--danger); }
+    
+    .capability-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      background: rgba(255,255,255,0.05);
+      margin-right: 6px;
+      margin-top: 4px;
+    }
+    .capability-pill.yes { color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
+    .capability-pill.no { color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); }
   </style>
 </head>
 <body>
@@ -518,6 +530,13 @@ const STATUS_HTML = `<!DOCTYPE html>
           <div class="stat-label">Active Agent</div>
           <div class="stat-value" id="stat-agent" style="font-size: 18px;">-</div>
         </div>
+        <div class="stat-card">
+          <div class="stat-label">Workspace Capabilities</div>
+          <div style="margin-top: 8px;">
+            <div id="cap-deploy" class="capability-pill">Deploy</div>
+            <div id="cap-integ" class="capability-pill">Integ Tests</div>
+          </div>
+        </div>
       </div>
       
       <div class="section-title">Terminal Log</div>
@@ -553,6 +572,14 @@ const STATUS_HTML = `<!DOCTYPE html>
         const totalCalls = ledger.length;
         const totalTokens = ledger.reduce((acc, l) => acc + (l.outTokens || 0), 0);
         document.getElementById('stat-calls-tokens').textContent = totalCalls + ' / ' + totalTokens.toLocaleString();
+        
+        const capDeploy = document.getElementById('cap-deploy');
+        capDeploy.className = 'capability-pill ' + (s.deployMdExists ? 'yes' : 'no');
+        capDeploy.innerHTML = s.deployMdExists ? 'Deploy &#10003;' : 'Deploy &#10007;';
+        
+        const capInteg = document.getElementById('cap-integ');
+        capInteg.className = 'capability-pill ' + (s.playbookExists ? 'yes' : 'no');
+        capInteg.innerHTML = s.playbookExists ? 'Integ Tests &#10003;' : 'Integ Tests &#10007;';
         
         const banner = document.getElementById('banner');
         if (s.goalMet) {
@@ -997,7 +1024,10 @@ process.on('uncaughtException', function(err) {
     _statusServer = http.createServer(function(req, res) {
       if (req.url === '/state') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        const statePayload = Object.assign({}, _liveState, { ledger: dispatchLedger });
+        const _repo = typeof repo === 'string' && repo ? repo : '.';
+        const deployMdExists = fs.existsSync(path.join(_repo, 'deploy.md'));
+        const playbookExists = fs.existsSync(path.join(_repo, 'integ-test-playbook.md'));
+        const statePayload = Object.assign({}, _liveState, { ledger: dispatchLedger, deployMdExists, playbookExists });
         res.end(JSON.stringify(statePayload));
         return;
       }
