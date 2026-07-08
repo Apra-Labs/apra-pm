@@ -1236,20 +1236,29 @@ process.on('uncaughtException', function(err) {
 
   // Dispatch setup agent via pm-planner to ensure branch exists and sprint-log meta
   // line is written.
-  const setupPrompt =
-    `Sprint workspace setup.\n\n` +
-    `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-    `Sprint goals: ${rootSummary}\n\n` +
-    `Step 1: Ensure the sprint branch exists:\n` +
-    `  git -C "${repo}" checkout -b ${branch} 2>/dev/null || git -C "${repo}" checkout ${branch}\n\n` +
-    `Step 2: Ensure sprint-logs/ directory exists:\n` +
-    `  mkdir -p "${repo}/sprint-logs"\n\n` +
-    `Step 3: Check if deploy.md and integ-test-playbook.md exist in ${repo}.\n` +
-    `  Return "OK" when all steps complete.`;
+  const useGatewayMode = process.env.AGY_GATEWAY_MODE === 'true';
+  if (!useGatewayMode) {
+    const cp = require('node:child_process');
+    try { cp.execSync(`git -C "${repo}" checkout -b ${branch}`, { stdio: 'ignore' }); } catch(e) {
+      try { cp.execSync(`git -C "${repo}" checkout ${branch}`, { stdio: 'ignore' }); } catch(e2) {}
+    }
+    fs.mkdirSync(`${repo}/sprint-logs`, { recursive: true });
+  } else {
+    const setupPrompt =
+      `Sprint workspace setup.\n\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
+      `Sprint goals: ${rootSummary}\n\n` +
+      `Step 1: Ensure the sprint branch exists:\n` +
+      `  git -C "${repo}" checkout -b ${branch} 2>/dev/null || git -C "${repo}" checkout ${branch}\n\n` +
+      `Step 2: Ensure sprint-logs/ directory exists:\n` +
+      `  mkdir -p "${repo}/sprint-logs"\n\n` +
+      `Step 3: Check if deploy.md and integ-test-playbook.md exist in ${repo}.\n` +
+      `  Return "OK" when all steps complete.`;
 
-  await dispatchFleet('pm-planner', setupPrompt, {
-    label: 'setup', phase: 'Plan', cycle: 0,
-  });
+    await dispatchFleet('pm-planner', setupPrompt, {
+      label: 'setup', phase: 'Plan', cycle: 0,
+    });
+  }
 
   log('Setup complete. Starting sprint cycle loop.');
   log('Sprint goals: ' + rootSummary + ' | Goal: ' + goal + ' (P<=' + threshold +
