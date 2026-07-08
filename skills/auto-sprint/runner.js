@@ -501,6 +501,11 @@ const STATUS_HTML = `<!DOCTYPE html>
         <li class="phase-item" data-phase="Test">Test</li>
         <li class="phase-item" data-phase="Harvest">Harvest</li>
       </ul>
+      
+      <div class="section-title" style="margin-top: 40px; margin-bottom: 20px;">Active Sprint Tasks</div>
+      <div id="sprint-beads" style="max-height: 60vh; overflow-y: auto; font-size: 13px; line-height: 1.4; padding-right: 8px;">
+        <div style="color:var(--text-muted);">Loading tasks...</div>
+      </div>
     </div>
     
     <div class="content-area">
@@ -636,6 +641,25 @@ const STATUS_HTML = `<!DOCTYPE html>
           if (taskList.innerHTML !== '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>') taskList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>';
         } else {
           const byPhase = {};
+          
+        const sprintBeads = s.sprintBeads || [];
+        const beadsContainer = document.getElementById('sprint-beads');
+        if (sprintBeads.length > 0) {
+          sprintBeads.sort((a,b) => (a.t === 'feature' ? -1 : 1) || a.id.localeCompare(b.id));
+          let bHtml = '';
+          for (const b of sprintBeads) {
+             const isClosed = b.s === 'closed';
+             const isIp = b.s === 'in_progress';
+             const icon = b.t === 'feature' ? '&#128194;' : '&#128196;';
+             const color = isClosed ? 'var(--text-muted)' : (isIp ? 'var(--accent)' : 'var(--text)');
+             const style = isClosed ? 'text-decoration:line-through; opacity:0.6;' : '';
+             bHtml += '<div style="margin-bottom:8px; color:' + color + '; ' + style + '">' +
+                        '<span style="margin-right:6px; font-size:11px;">' + icon + '</span>' +
+                        '<strong>' + b.id + '</strong><br/><span style="opacity:0.8; font-size:11px; padding-left:20px; display:inline-block;">' + (b.title || '').replace(/</g, '&lt;') + '</span>' +
+                      '</div>';
+          }
+          if (beadsContainer.innerHTML !== bHtml) beadsContainer.innerHTML = bHtml;
+        }
           ledger.forEach((act, idx) => {
              const phase = act.phase || '?';
              if (!byPhase[phase]) byPhase[phase] = [];
@@ -871,7 +895,7 @@ async function dispatchFleet(memberName, prompt, opts) {
 
     // Try to parse JSON response.
     try {
-      // Extract JSON block robustly to bypass any MCP tool wrapper text (like '[Response] from...')
+      // Extract JSON block robustly to bypass any MCP tool wrapper text (like '[Response from...]')
       let stripped = raw;
       const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
       if (jsonMatch) {
@@ -1817,7 +1841,7 @@ process.on('uncaughtException', function(err) {
       log('[WARN] Cycle ' + cycleCount + ' threw unexpectedly: ' + String(iterErr).slice(0, 200) + ' -- attempting next cycle or aborting');
       updateLiveState({ phaseError: 'cycle-' + cycleCount + ': ' + String(iterErr).slice(0, 120), endedAt: Date.now() });
       if (cycleCount >= maxCycles) { abortReason = 'cycle-exception'; break; }
-    }
+}
   }
 
   // ---------------------------------------------------------------- POST-LOOP
