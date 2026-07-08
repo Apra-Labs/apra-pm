@@ -895,6 +895,7 @@ async function _fleetCall(memberName, prompt, opts) {
     'pm-harvester': 'Gemini 3.1 Pro (High)'
   };
   const model = modelMap[memberName] || 'Gemini 3.1 Pro (High)';
+  const child_process = require('node:child_process');
   const execFileAsync = require('util').promisify(child_process.execFile);
   
   try {
