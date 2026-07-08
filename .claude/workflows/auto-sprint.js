@@ -2356,6 +2356,24 @@ while (cycleCount < maxCycles) {
 phase('Harvest');
 await stamp('harvest');
 
+// Remove sprint process-scaffold files (feedback.md, requirements.md) BEFORE the final review.
+// These are written during plan/develop review iterations and can be swept into a commit by a
+// doer's `git add -A`. If they survive into the harvest diff, the final reviewer correctly
+// rejects the sprint ("stray file would pollute the PR"), which blocks PR creation AND the
+// downstream bd-export -- cascading into pr-exists / final-changeset-clean / beads-sprint-closed
+// failures even when the actual goal was met. The later beads-export-cleanup step also strips
+// them, but that runs only AFTER an APPROVED review, so the cleanup must also happen up front.
+await dispatchShell(
+  [
+    `git -C "${repo}" rm -f feedback.md requirements.md 2>/dev/null; ` +
+    `rm -f "${repo}/feedback.md" "${repo}/requirements.md" 2>/dev/null; ` +
+    `if git -C "${repo}" diff --cached --quiet; then echo "no process files staged"; else ` +
+    `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: remove sprint process files before harvest" && ` +
+    `git -C "${repo}" push origin ${branch}; fi`,
+  ],
+  { model: MODEL_HAIKU, label: `harvest-clean-process-files-c${cycleCount}`, phase: 'Harvest', maxTurns: 4 }
+);
+
 const finalReviewLabel = 'final-reviewer';
 const finalReview = await dispatch(
   `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
