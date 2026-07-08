@@ -776,30 +776,9 @@ function parseCycleState(outputs, rootCount) {
 // Always returns at least one task. Never truncates when no ceiling is configured.
 function truncateStreakToCeiling(streakIds, bucketById, calibration, tier) {
   if (!Array.isArray(streakIds) || streakIds.length === 0) return [];
-  const ceilings = (calibration && calibration.doer_token_ceiling) || {};
-  const ceiling  = ceilings[tier];
-  if (typeof ceiling !== 'number' || ceiling <= 0) return streakIds.slice();
-
-  const hist     = (calibration && calibration.historical) || {};
-  const buckets  = (calibration && calibration.complexity_buckets) || {};
-  const histToks = hist.bucket_avg_tokens || {};
-  const estFor = id => {
-    const bucket = bucketById ? bucketById[id] : undefined;
-    const h = histToks[bucket];
-    if (hist.sprints_sampled >= 1 && h != null) return Math.round(h);
-    const def = buckets[bucket] || buckets.M || { doer_tokens: 0 };
-    return def.doer_tokens || 0;
-  };
-
-  let sum = 0;
-  const kept = [];
-  for (const id of streakIds) {
-    const est = estFor(id);
-    if (kept.length > 0 && sum + est > ceiling) break;
-    kept.push(id);
-    sum += est;
-  }
-  return kept;
+  // Hard limit to 1 task per batch to prevent long prompts from timing out
+  // the AGY backend MCP execution limit (120 seconds).
+  return [streakIds[0]];
 }
 
 // approved: returns true if review has verdict === 'APPROVED'.
