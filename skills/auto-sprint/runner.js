@@ -556,6 +556,16 @@ const STATUS_HTML = `<!DOCTYPE html>
     const phases = ['setup', 'Plan', 'Develop', 'Test', 'Harvest', '?'];
     let lastLogCount = 0;
 
+    function formatDuration(ms) {
+      if (!ms) return '-';
+      const s = Math.floor(ms / 1000);
+      const m = Math.floor(s / 60);
+      const h = Math.floor(m / 60);
+      if (h > 0) return h + 'h ' + (m%60) + 'm ' + (s%60) + 's';
+      if (m > 0) return m + 'm ' + (s%60) + 's';
+      return s + 's';
+    }
+
     async function poll() {
       try {
         const res = await fetch('/state');
@@ -598,6 +608,14 @@ const STATUS_HTML = `<!DOCTYPE html>
         capInteg.className = 'capability-pill ' + (s.playbookExists ? 'yes' : 'no');
         capInteg.innerHTML = s.playbookExists ? 'Integ Tests &#10003;' : 'Integ Tests &#10007;';
         
+        let overallDurationStr = '';
+        if (s.startedAt) {
+          const startMs = new Date(s.startedAt).getTime();
+          const endMs = (s.goalMet || s.abortReason) ? (s.endedAt ? new Date(s.endedAt).getTime() : Date.now()) : Date.now();
+          overallDurationStr = ' (Duration: ' + formatDuration(endMs - startMs) + ')';
+        }
+        document.getElementById('branch-badge').textContent = (s.branch || '?') + overallDurationStr;
+        
         const banner = document.getElementById('banner');
         if (s.goalMet) {
           if (banner.className !== 'banner success') {
@@ -630,6 +648,7 @@ const STATUS_HTML = `<!DOCTYPE html>
                      '<th style="padding:10px 12px; font-weight:500;">Phase</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Task</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Agent</th>' +
+                     '<th style="padding:10px 12px; font-weight:500;">Duration</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Tokens</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Cycle</th></tr></thead><tbody>';
           
@@ -643,6 +662,7 @@ const STATUS_HTML = `<!DOCTYPE html>
                          '<td style="padding:10px 12px; width:120px; ' + statusStyle + '">' + phase + (act.isRunning ? ' (Running)' : ' (Done)') + '</td>' +
                          '<td style="padding:10px 12px; font-weight:600; color:var(--text);">' + act.label + '</td>' +
                          '<td style="padding:10px 12px; color:var(--text-muted);">' + act.model + '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + formatDuration(act.durationMs) + '</td>' +
                          '<td style="padding:10px 12px; color:var(--text-muted);">' + (act.outTokens || 0) + '</td>' +
                          '<td style="padding:10px 12px; color:var(--text-muted);">C' + (act.cycle === 'setup' ? '0' : act.cycle) + '</td>' +
                          '</tr>';
@@ -821,6 +841,7 @@ async function dispatchFleet(memberName, prompt, opts) {
 
   const MAX_RETRIES = 3;
   let lastRaw = '';
+  const startTime = Date.now();
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     let raw = '';
     try {
@@ -838,8 +859,12 @@ async function dispatchFleet(memberName, prompt, opts) {
     lastRaw = raw;
 
     if (!schema) {
+      if (raw === '' && attempt < MAX_RETRIES - 1) {
+        await new Promise(r => setTimeout(r, 5000));
+        continue;
+      }
       // No schema needed -- record entry and return raw string.
-      dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0 });
+      dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0, durationMs: Date.now() - startTime });
       updateLiveState({ costUsd: dispatchLedger.reduce(function(s,e){return s+(e.costUsd||0);},0) });
       return raw;
     }
@@ -869,18 +894,19 @@ async function dispatchFleet(memberName, prompt, opts) {
       }
       const parsed = JSON.parse(stripped);
       dispatchLedger.push({ cycle, phase, label, model: memberName,
-        outTokens: Math.ceil(raw.length / 4), costUsd: 0 });
+        outTokens: Math.ceil(raw.length / 4), costUsd: 0, durationMs: Date.now() - startTime });
       return parsed;
     } catch {
       if (attempt < MAX_RETRIES - 1) {
         log('JSON parse failed [' + label + '] attempt ' + (attempt + 1) + ' -- retrying');
+        await new Promise(r => setTimeout(r, 5000));
       }
     }
   }
 
   log('ERROR: JSON parse failed after ' + MAX_RETRIES + ' retries [' + label + ']. Raw: ' +
     lastRaw.slice(0, 200));
-  dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0 });
+  dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0, durationMs: Date.now() - startTime });
   return null;
 }
 
@@ -1164,6 +1190,7 @@ process.on('uncaughtException', function(err) {
 });
 
 (async function main() {
+  updateLiveState({ startedAt: Date.now() });
   // ---- Setup block ----
 
   // ---- Browser status server (T3.6) ----
@@ -1785,13 +1812,13 @@ process.on('uncaughtException', function(err) {
         ' open issue(s) remain; starting cycle ' + (cycleCount + 1));
     } catch (iterErr) {
       log('[WARN] Cycle ' + cycleCount + ' threw unexpectedly: ' + String(iterErr).slice(0, 200) + ' -- attempting next cycle or aborting');
-      updateLiveState({ phaseError: 'cycle-' + cycleCount + ': ' + String(iterErr).slice(0, 120) });
+      updateLiveState({ phaseError: 'cycle-' + cycleCount + ': ' + String(iterErr).slice(0, 120), endedAt: Date.now() });
       if (cycleCount >= maxCycles) { abortReason = 'cycle-exception'; break; }
     }
   }
 
   // ---------------------------------------------------------------- POST-LOOP
-  updateLiveState({ goalMet, abortReason });
+  updateLiveState({ goalMet, abortReason, endedAt: Date.now() });
   log('\n=== Sprint complete: cycles=' + cycleCount + ' goalMet=' + goalMet +
       ' abortReason=' + (abortReason || 'none') + ' ===');
 
