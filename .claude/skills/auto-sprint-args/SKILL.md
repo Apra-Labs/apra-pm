@@ -18,8 +18,9 @@ Get the shape right before launching.
 | `max_cycles` | no | positive integer | `5` | Hard cycle ceiling. |
 | `base_branch` | no | string | `"main"` | PR target branch. |
 | `requirementsFile` | no | string | none | Path to an additional context file for the planner. |
+| `skip_dolt_push` | no | boolean | `false` | When `true`, skip the Harvest `bd dolt push` step so the sprint never writes to a real Dolt remote. Set this in CI/e2e runs. |
 
-Do not invent other fields -- these six are the whole contract.
+Do not invent other fields -- these seven are the whole contract.
 
 ## Args must be a JSON OBJECT, not a JSON-encoded string
 
@@ -38,7 +39,8 @@ Full example:
   "goal": "P1/P2",
   "max_cycles": 5,
   "base_branch": "main",
-  "requirementsFile": "docs/auth-requirements.md"
+  "requirementsFile": "docs/auth-requirements.md",
+  "skip_dolt_push": false
 }
 ```
 

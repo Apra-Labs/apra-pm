@@ -9,6 +9,7 @@ args must be a JSON object (not a string) with these fields:
   max_cycles   Optional. Hard cycle ceiling. Default: 5.
   base_branch  Optional. PR target branch. Default: "main".
   requirementsFile  Optional. Path to an additional context file for the planner.
+  skip_dolt_push    Optional. Boolean. When true, skip the Harvest "bd dolt push" (used by the e2e). Default: false.
 
 Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`,
   phases: [
@@ -42,6 +43,7 @@ Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`
 //   max_cycles       -- hard ceiling on sprint cycles                  (default: 5)
 //   requirementsFile -- optional context file for the planner          (default: none)
 //   base_branch      -- PR target                                      (default: "main")
+//   skip_dolt_push   -- skip the Harvest "bd dolt push" when true        (default: false)
 
 // NOTE: the arg-parsing block below is intentionally duplicated from lib/parse-sprint-args.mjs,
 // which exists only for unit testing (workflow scripts cannot import arbitrary files).
@@ -961,6 +963,9 @@ function validateSprintArgs(opts, rawArgs) {
   }
   if (opts.base_branch != null && (typeof opts.base_branch !== 'string' || opts.base_branch.trim() === '')) {
     return { ok: false, error: 'invalid args: base_branch', detail: '"base_branch" must be a non-empty string when provided' };
+  }
+  if (opts.skip_dolt_push != null && typeof opts.skip_dolt_push !== 'boolean') {
+    return { ok: false, error: 'invalid args: skip_dolt_push', detail: '"skip_dolt_push" must be a boolean when provided' };
   }
   return { ok: true };
 }
@@ -2611,17 +2616,23 @@ await dispatch(
 
 // Sync beads Dolt remote so refs/dolt/data is up to date.
 // Non-fatal: a missing remote or network error must not abort harvest.
-await dispatch(
-  `Sync beads state to the Dolt remote.\n\n` +
-  `Run:\n` +
-  `  bd dolt push\n\n` +
-  `Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n` +
-  `If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n` +
-  `  "bd dolt push failed (non-fatal): <reason>"\n` +
-  `and continue -- do NOT throw, return an error, or abort the workflow.\n\n` +
-  `Return "OK" when done (regardless of whether the push succeeded or failed).`,
-  { model: MODEL_HAIKU, label: 'dolt-push', phase: 'Harvest' }
-);
+// Skippable via the optional skip_dolt_push arg (the e2e passes it so sprints never
+// write to a real Dolt remote on GitHub).
+if (!opts.skip_dolt_push) {
+  await dispatch(
+    `Sync beads state to the Dolt remote.\n\n` +
+    `Run:\n` +
+    `  bd dolt push\n\n` +
+    `Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n` +
+    `If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n` +
+    `  "bd dolt push failed (non-fatal): <reason>"\n` +
+    `and continue -- do NOT throw, return an error, or abort the workflow.\n\n` +
+    `Return "OK" when done (regardless of whether the push succeeded or failed).`,
+    { model: MODEL_HAIKU, label: 'dolt-push', phase: 'Harvest' }
+  );
+} else {
+  log('Skipping dolt push as requested by opts.skip_dolt_push.');
+}
 
 // ------------------------------------------------------------------ PR
 

@@ -26,6 +26,8 @@ const {
 test('validateSprintArgs: accepts a well-formed object', () => {
   assert.deepEqual(validateSprintArgs({ issues: ['BD-1'], branch: 'feat/x' }, '...'), { ok: true });
   assert.equal(validateSprintArgs({ issues: ['BD-1', 'BD-2'], goal: 'P1', max_cycles: 3, base_branch: 'main' }, '').ok, true);
+  assert.equal(validateSprintArgs({ issues: ['BD-1'], skip_dolt_push: true }, '').ok, true);
+  assert.equal(validateSprintArgs({ issues: ['BD-1'], skip_dolt_push: false }, '').ok, true);
 });
 
 test('validateSprintArgs: rejects non-object / array / missing issues', () => {
@@ -42,6 +44,8 @@ test('validateSprintArgs: rejects bad optional fields', () => {
   assert.equal(validateSprintArgs({ issues: ['BD-1'], max_cycles: 2.5 }, '').ok, false);
   assert.equal(validateSprintArgs({ issues: ['BD-1'], branch: '' }, '').ok, false);
   assert.equal(validateSprintArgs({ issues: ['BD-1'], base_branch: '  ' }, '').ok === false, false === false);
+  assert.equal(validateSprintArgs({ issues: ['BD-1'], skip_dolt_push: 'yes' }, '').ok, false); // string, not boolean
+  assert.equal(validateSprintArgs({ issues: ['BD-1'], skip_dolt_push: 1 }, '').ok, false);     // number, not boolean
 });
 
 test('validateSprintArgs: failure carries an actionable detail string', () => {

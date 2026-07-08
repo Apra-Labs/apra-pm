@@ -11,5 +11,7 @@ Check out `{{BRANCH}}` in the repo.
 First, invoke the `auto-sprint-args` skill (use the Skill tool) to confirm the exact
 argument shape the /auto-sprint workflow expects. Then, following that contract, invoke
 the /auto-sprint workflow with issues `["gh-toy-mi2", "gh-toy-7rp", "gh-toy-4ef"]`,
-branch `{{BRANCH}}`, goal `P1`, and base_branch `main` (passed as a JSON object, not a
-string). Wait for the workflow to complete.
+branch `{{BRANCH}}`, goal `P1`, base_branch `main`, and `skip_dolt_push` set to `true`
+(passed as a JSON object, not a string). The `skip_dolt_push: true` flag is REQUIRED here
+so the e2e never pushes beads state to a real Dolt remote on GitHub. Wait for the workflow
+to complete.
