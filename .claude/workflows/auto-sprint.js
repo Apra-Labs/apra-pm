@@ -1,17 +1,6 @@
 export const meta = {
   name: 'auto-sprint',
-  description: `Multi-cycle sprint workflow: plan -> develop -> test -> harvest.
-
-args must be a JSON object (not a string) with these fields:
-  issues       REQUIRED. Array of beads issue IDs (sprint roots), e.g. ["BD-1","BD-2"].
-  branch       REQUIRED. Sprint branch name, e.g. "feat/auth". Created if it does not exist.
-  goal         Optional. Exit when no open issues at or above this priority. "P1" | "P1/P2" | "P1/P2/P3". Default: "P1/P2".
-  max_cycles   Optional. Hard cycle ceiling. Default: 5.
-  base_branch  Optional. PR target branch. Default: "main".
-  requirementsFile  Optional. Path to an additional context file for the planner.
-  skip_dolt_push    Optional. Boolean. When true, skip the Harvest "bd dolt push" (used by the e2e). Default: false.
-
-Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`,
+  description: `Multi-cycle sprint workflow: plan -> develop -> test -> harvest. Pass args as a JSON object with required "issues" (array of beads IDs) and "branch"; invoke the auto-sprint-args skill for the full argument contract.`,
   phases: [
     { title: 'Plan' },
     { title: 'Develop' },
@@ -1378,6 +1367,23 @@ async function checkCycleState(rootIds) {
   return parseCycleState(r?.outputs, rootIds.length);
 }
 
+// getSprintOpenFeatures: the OPEN features that live in THIS sprint's subtree, as [{id,title}].
+// The integration tester must test/close only these -- NOT `bd list --type=feature --status=open`,
+// which returns every open feature in the whole beads DB (a populated DB has features from other
+// epics/sprints, so an unscoped list makes the tester test, close, or file bugs against unrelated
+// work). Uses the same strict bdSubtreeSnippet inventory as the develop-phase extractors, so
+// siblings/parents dragged in by `bd graph`'s connected component are excluded.
+async function getSprintOpenFeatures(rootIds) {
+  const featExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}const ff=(g.issues||[]).filter(i=>subtree.has(i.id)&&i.issue_type==='feature'&&i.status!=='closed');console.log(JSON.stringify(ff.map(i=>({id:i.id,title:(i.title||'').slice(0,120)}))))}catch{console.log('[]')}"`;
+  const cmds = rootIds.map(id => `bd graph --json ${id} | ${featExtract}`);
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'integ-scope', phase: 'Test' });
+  const byId = new Map();
+  for (const out of (r?.outputs || [])) {
+    try { for (const f of JSON.parse(out)) if (f && f.id) byId.set(f.id, f); } catch {}
+  }
+  return Array.from(byId.values());
+}
+
 // ---- sprint state file: concurrency lock + phase checkpoint / resume ----
 // A branch-keyed JSON file under sprint-logs/.state/ records the last good phase and
 // cycle so a crashed run resumes forward instead of restarting. Its mtime doubles as a
@@ -2336,32 +2342,44 @@ while (cycleCount < maxCycles) {
         { model: MODEL_SONNET, label: `teardown-c${cycleCount}-fail`, phase: 'Test', agentType: 'deployer' }
       );
     } else {
-      // -- Integration test run --
-      const integLabel = `integ-runner-c${cycleCount}`;
+      // -- Integration test run (scoped to THIS sprint's open features) --
+      // Scope the tester to the sprint subtree's open features. Do NOT let it `bd list
+      // --type=feature --status=open` (every open feature in the whole DB) -- that would
+      // test/close/file-bugs against unrelated features from other epics/sprints.
+      const _sprintFeatures = await getSprintOpenFeatures(rootIds);
+      if (_sprintFeatures.length === 0) {
+        log('No open features in the sprint subtree -- skipping integration tests this cycle.');
+      } else {
+        const integLabel = `integ-runner-c${cycleCount}`;
+        const _featList = _sprintFeatures.map(f => `  ${f.id} -- ${f.title}`).join('\n');
+        log(`Integration scope: ${_sprintFeatures.length} sprint feature(s) [${labelTaskIds(_sprintFeatures.map(f => f.id))}]`);
 
-      const integResult = await dispatch(
-        `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
-        `Sprint goals: ${rootSummary}\n\n` +
-        `Run: bd list --type=feature --status=open\n` +
-        `For each open feature, execute its integration tests.\n\n` +
-        `For each feature:\n` +
-        `  PASS: all tests pass -> bd close <feature-id>\n` +
-        `  FAIL: tests fail -> bd create --title="[integ] <description>" ` +
-        `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
-        `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
-        `  Keep feature open on failure or if inconclusive.\n\n` +
-        `Priority rules:\n` +
-        `  P0: system won't start or core path completely broken\n` +
-        `  P1: requirement from sprint goal explicitly not met\n` +
-        `  P2: requirement partially met, degraded behaviour\n` +
-        `  P3: quality, performance, or UX issue not blocking core function\n\n` +
-        `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
-        `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
-        { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
-      );
-      if (integResult) {
-        log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
-        log(`Summary: ${integResult.summary}`);
+        const integResult = await dispatch(
+          `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
+          `Sprint goals: ${rootSummary}\n\n` +
+          `Integration-test ONLY these open features from THIS sprint. Do NOT list, test, close, ` +
+          `or file bugs against any beads issue that is not in this list (do NOT run ` +
+          `"bd list --type=feature"):\n${_featList}\n\n` +
+          `For each feature above:\n` +
+          `  Run "bd show <feature-id>" to read its acceptance criteria, then execute its integration tests.\n` +
+          `  PASS: all tests pass -> bd close <feature-id>\n` +
+          `  FAIL: tests fail -> bd create --title="[integ] <description>" ` +
+          `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
+          `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
+          `  Keep feature open on failure or if inconclusive.\n\n` +
+          `Priority rules:\n` +
+          `  P0: system won't start or core path completely broken\n` +
+          `  P1: requirement from sprint goal explicitly not met\n` +
+          `  P2: requirement partially met, degraded behaviour\n` +
+          `  P3: quality, performance, or UX issue not blocking core function\n\n` +
+          `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
+          `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
+          { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
+        );
+        if (integResult) {
+          log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
+          log(`Summary: ${integResult.summary}`);
+        }
       }
 
       // -- Teardown --
