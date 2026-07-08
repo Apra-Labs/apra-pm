@@ -926,7 +926,7 @@ async function _fleetCall(memberName, prompt, opts) {
     const tempPromptPath = path.join(os.tmpdir(), `agy-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
     fs.writeFileSync(tempPromptPath, subagentPrompt, 'utf-8');
     
-    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested.`;
+    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested. CRITICAL: DO NOT use any tools (like run_command or write_to_file) to execute the tasks yourself. You must only return the generated text/JSON.`;
     if (useGatewayMode) {
       instruction = `Read the file at "${tempPromptPath}". It contains instructions to call an MCP tool. Call the tool and return its exact output with no extra conversational text.`;
     }
