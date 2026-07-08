@@ -1,4 +1,42 @@
 #!/usr/bin/env node
+let runCiWatcher;
+let writeStaticHtmlReport;
+let startStatusServer;
+let runPlanPhase;
+let runDevelopPhase;
+let runTestPhase;
+let runHarvestPhase;
+let collectSubtreeIds;
+let parseBlockers;
+let parseReadyStreaks;
+let parseCycleState;
+let truncateStreakToCeiling;
+let approved;
+let labelTaskIds;
+let estimateCost;
+
+import('./lib/ci-watcher.js').then(m => runCiWatcher = m.runCiWatcher);
+import('./lib/status-html.js').then(m => writeStaticHtmlReport = m.writeStaticHtmlReport);
+import('./lib/status-server.js').then(m => startStatusServer = m.startStatusServer);
+import('./lib/plan.js').then(m => runPlanPhase = m.runPlanPhase);
+import('./lib/develop.js').then(m => runDevelopPhase = m.runDevelopPhase);
+import('./lib/test-phase.js').then(m => runTestPhase = m.runTestPhase);
+import('./lib/harvest.js').then(m => runHarvestPhase = m.runHarvestPhase);
+import('./lib/pure.mjs').then(m => {
+  collectSubtreeIds = m.collectSubtreeIds;
+  parseBlockers = m.parseBlockers;
+  parseReadyStreaks = m.parseReadyStreaks;
+  parseCycleState = m.parseCycleState;
+  truncateStreakToCeiling = m.truncateStreakToCeiling;
+  approved = m.approved;
+  labelTaskIds = m.labelTaskIds;
+  estimateCost = m.estimateCost;
+  if (!DEFAULT_CALIBRATION) DEFAULT_CALIBRATION = m.DEFAULT_CALIBRATION;
+  if (!computeSprintQuote) computeSprintQuote = m.computeSprintQuote;
+  if (!computeUpdatedCalibration) computeUpdatedCalibration = m.computeUpdatedCalibration;
+  if (!buildSprintSummary) buildSprintSummary = m.buildSprintSummary;
+});
+
 // skills/auto-sprint/runner.js
 //
 // Deterministic Node.js orchestrator for the auto-sprint AGY skill.
@@ -886,136 +924,7 @@ const STATUS_HTML = `<!DOCTYPE html>
 
 
 
-// ---------------------------------------------------------------------------
-// Pure parsers (exact ports from auto-sprint.js)
-// ---------------------------------------------------------------------------
-
-function collectSubtreeIds(outputs, rootCount) {
-  const ids = new Set();
-  for (let i = 0; i < rootCount; i++) {
-    String(outputs[i] || '').trim().split(/\s+/).filter(Boolean).forEach(id => ids.add(id));
-  }
-  return ids;
-}
-
-// parseBlockers: contract {count, ids} of open issues with priority<=threshold
-// inside the sprint-goal subtree.
-function parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds) {
-  if (!Array.isArray(outputs) || outputs.length < openListIdx + 1) return { count: 999, ids: [] };
-  const subtree = collectSubtreeIds(outputs, rootCount);
-  const rootSet = Array.isArray(rootIds) && rootIds.length > 0 ? new Set(rootIds) : null;
-  let ids = [];
-  try {
-    const open = JSON.parse(outputs[openListIdx]);
-    ids = Array.isArray(open)
-      ? open.filter(x => subtree.has(x.id) && (!rootSet || rootSet.has(x.id)) && x.p <= threshold).map(x => x.id)
-      : [];
-  } catch { ids = []; }
-  return { count: ids.length, ids };
-}
-
-// parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks by model.
-function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
-  if (!Array.isArray(outputs) || outputs.length < readyListIdx + 1) return { totalCount: 0, streaks: [] };
-  const subtree = collectSubtreeIds(outputs, rootCount);
-  let readyTasks = [];
-  try {
-    const all = JSON.parse(outputs[readyListIdx]);
-    readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
-  } catch { readyTasks = []; }
-
-  const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
-  const MODEL_TO_TIER = Object.fromEntries(Object.entries(TIER_TO_MODEL).map(([t, id]) => [id, t]));
-
-  const byModel = {};
-  for (const t of readyTasks) {
-    const rawModel = t.m || defaultModel;
-    let model = rawModel;
-    if (!KNOWN_TIERS.has(rawModel)) {
-      const tier = MODEL_TO_TIER[rawModel];
-      if (tier) {
-        model = tier;
-        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: pre-migration model '${rawModel}' normalised to tier '${model}'`);
-      } else {
-        model = defaultModel;
-        typeof console !== 'undefined' && console.warn(`[apra-pm] Task ${t.id}: unrecognised model '${rawModel}', defaulting to '${defaultModel}'`);
-      }
-    }
-    if (!byModel[model]) byModel[model] = [];
-    byModel[model].push({ id: t.id, priority: t.p });
-  }
-  const streaks = Object.entries(byModel).map(([model, tasks]) => ({
-    model,
-    ids: tasks.slice().sort((a, b) => a.priority - b.priority).map(x => x.id),
-    _min: Math.min(...tasks.map(x => x.priority)),
-  })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
-
-  return { totalCount: readyTasks.length, streaks };
-}
-
-// parseCycleState: contract {planDone, inProgressIds, allIssues}.
-function parseCycleState(outputs, rootCount) {
-  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { planDone: false, inProgressIds: [], allIssues: [] };
-  const inProgressIds = String(outputs[rootCount] || '').trim().split(/\s+/).filter(Boolean);
-  
-  const issueMap = new Map();
-  const planDone = Array.from({ length: rootCount }).every((_, i) => {
-    try {
-      const issues = JSON.parse(outputs[i]);
-      if (!Array.isArray(issues)) return false;
-      issues.forEach(x => issueMap.set(x.id, x));
-      const features = issues.filter(x => x.t === 'feature' || x.t === 'epic');
-      const openFts = features.filter(x => x.s !== 'closed');
-      const tasks = issues.filter(x => x.t === 'task');
-      
-      if (features.length === 0 && tasks.length === 0) return false;
-      if (openFts.length > 0) return false;
-      if (tasks.length === 0) return false;
-      return tasks.every(x => x.d);
-    } catch { return false; }
-  });
-  return { planDone, inProgressIds, allIssues: Array.from(issueMap.values()) };
-}
-
-// truncateStreakToCeiling: returns the longest in-order prefix of streakIds whose
-// summed estimated doer output tokens stays at/under calibration.doer_token_ceiling[tier].
-// Always returns at least one task. Never truncates when no ceiling is configured.
-function truncateStreakToCeiling(streakIds, bucketById, calibration, tier) {
-  if (!Array.isArray(streakIds) || streakIds.length === 0) return [];
-  // Hard limit to 1 task per batch to prevent long prompts from timing out
-  // the AGY backend MCP execution limit (120 seconds).
-  return [streakIds[0]];
-}
-
-// approved: returns true if review has verdict === 'APPROVED'.
-function approved(review) {
-  return review && typeof review.verdict === 'string' && review.verdict.trim() === 'APPROVED';
-}
-
-// labelTaskIds: returns up to 3 IDs joined by space; appends '+Nmore' when more than 3.
-function labelTaskIds(ids) {
-  if (!Array.isArray(ids) || ids.length === 0) return '';
-  if (ids.length <= 3) return ids.join(' ');
-  return ids.slice(0, 3).join(' ') + ` +${ids.length - 3}more`;
-}
-// ---------------------------------------------------------------------------
-// Fleet dispatch wrapper
-// ---------------------------------------------------------------------------
-
-// dispatchLedger: accumulates cost entries across all cycles.
-const dispatchLedger = [];
-const dispatchOutputs = {};
-
-// PURE_FUNCTIONS_BEGIN
-
-function estimateCost(tier, inTokens, outTokens) {
-  if (!tier || tier === 'native') return 0;
-  if (tier.includes('cheap') || tier === 'haiku') return (inTokens * 0.25 + outTokens * 1.25) / 1000000;
-  if (tier.includes('standard') || tier === 'sonnet') return (inTokens * 3.00 + outTokens * 15.00) / 1000000;
-  if (tier.includes('prem') || tier === 'opus') return (inTokens * 15.00 + outTokens * 75.00) / 1000000;
-  return (inTokens * 3.00 + outTokens * 15.00) / 1000000;
-}
-// PURE_FUNCTIONS_END
+// Pure parsers moved to lib/pure.js
 
 // dispatchFleet: async wrapper around the apra-fleet execute_prompt MCP tool.
 // If opts.schema is set, appends a RESPOND WITH ONLY VALID JSON block and
@@ -1331,64 +1240,7 @@ if (fs.existsSync(costJsPath)) {
   }
 }
 
-if (!DEFAULT_CALIBRATION) {
-  DEFAULT_CALIBRATION = {
-    schema_version: 1,
-    model_prices_per_1m_output_tokens: {
-      [TIER_CHEAP]:    5.00,
-      [TIER_STANDARD]: 15.00,
-      [TIER_PREMIUM]:  25.00,
-    },
-    role_models: {
-      'setup':             TIER_CHEAP,
-      'planner':           TIER_PREMIUM,
-      'plan-reviewer':     TIER_STANDARD,
-      'deployer':          TIER_STANDARD,
-      'integ-test-runner': TIER_STANDARD,
-      'ci-watcher':        TIER_CHEAP,
-      'harvester':         TIER_STANDARD,
-      'log-flush':         TIER_CHEAP,
-      'check-blockers':    TIER_CHEAP,
-      'ready-streaks':     TIER_CHEAP,
-    },
-    doer_model_fallback: { model: TIER_STANDARD },
-    reviewer_model_rule: { minimum: TIER_STANDARD },
-    complexity_buckets: {
-      S: { doer_tokens:  600 },
-      M: { doer_tokens: 1400 },
-      L: { doer_tokens: 2800 },
-    },
-    reviewer_ratio:    { value: 0.4 },
-    cycle_assumptions: { optimistic: 1.0, expected: 1.5, pessimistic: 2.5 },
-    fixed_overhead_tokens: {
-      setup: 200, planner: 2000, plan_reviewer: 1500,
-      harvester: 3000, ci_watcher: 300, log_flush_per_cycle: 100,
-    },
-    input_cost_multiplier: { value: 3.0 },
-    outlier_thresholds:    { outlier_pct: 200, calibration_failure_pct: 500 },
-    doer_token_ceiling:    {},
-    historical:            {},
-  };
-}
-
-if (!computeSprintQuote) {
-  computeSprintQuote = function(taskAssignments, calibration) {
-    return { tasks: taskAssignments || [], calibrationSource: 'defaults',
-      inputMultiplier: 3.0, scenarios: {
-        optimistic:  { outputOnly: 0, total: 0 },
-        expected:    { outputOnly: 0, total: 0 },
-        pessimistic: { outputOnly: 0, total: 0 },
-      }};
-  };
-}
-if (!computeUpdatedCalibration) {
-  computeUpdatedCalibration = function(cal) { return cal; };
-}
-if (!buildSprintSummary) {
-  buildSprintSummary = function(analysis, quote, cal, opts) {
-    return { summaryText: '(cost.js not loaded -- summary unavailable)' };
-  };
-}
+// Pure cost functions fallback logic moved to lib/pure.js
 
 // ---------------------------------------------------------------------------
 // Main async entry point
@@ -1416,18 +1268,6 @@ function writeStaticHtmlReport() {
     const finalStateJson = JSON.stringify(_liveState);
     let finalHtml = STATUS_HTML.replace(
       "const res = await fetch('/state');",
-      "const res = { json: async () => (" + finalStateJson + ") };"
-    ).replace(
-      "setInterval(poll, 2000);",
-      "poll(); // static report"
-    );
-    safeWriteFile(htmlPath, finalHtml, 'Static HTML sprint report');
-    log('Static HTML report saved: ' + htmlPath);
-  } catch (e) {
-    log('Failed to write HTML report: ' + e.message);
-  }
-}
-
 (async function main() {
   updateLiveState({ startedAt: Date.now() });
   // ---- Setup block ----
@@ -1435,49 +1275,21 @@ function writeStaticHtmlReport() {
   // ---- Browser status server (T3.6) ----
   const _statusPort = 3000 + Math.floor(Math.random() * 1000);
   let _statusServer = null;
-  try {
-    _statusServer = http.createServer(function(req, res) {
-      if (req.url === '/state') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        const _repo = typeof repo === 'string' && repo ? repo : '.';
-        const deployMdExists = fs.existsSync(path.join(_repo, 'deploy.md'));
-        const playbookExists = fs.existsSync(path.join(_repo, 'integ-test-playbook.md'));
-        const statePayload = Object.assign({}, _liveState, { ledger: dispatchLedger, deployMdExists, playbookExists });
-        res.end(JSON.stringify(statePayload));
-        return;
-      }
-      if (req.url.startsWith('/log?label=')) {
-        const u = new URL(req.url, 'http://localhost');
-        const l = u.searchParams.get('label');
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end(dispatchOutputs[l] || 'No output found for task: ' + l);
-        return;
-      }
-      if (req.url === '/stop' && req.method === 'POST') {
-        global.abortRequested = true;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'stopping' }));
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(STATUS_HTML);
+  if (startStatusServer) {
+    _statusServer = startStatusServer({
+      port: _statusPort,
+      repo: repo || '.',
+      STATUS_HTML,
+      getLiveState: () => _liveState,
+      dispatchLedger,
+      dispatchOutputs,
+      fs: require('fs'),
+      pathJoin: require('path').join,
+      log,
+      setAbortRequested: (val) => { global.abortRequested = val; },
+      execSync: require('child_process').execSync,
+      platform: process.platform
     });
-    _statusServer.listen(_statusPort, '127.0.0.1', function() {
-      log('[STATUS] Sprint dashboard: http://127.0.0.1:' + _statusPort);
-      try {
-        const _openCmd = process.platform === 'win32'
-          ? 'start http://127.0.0.1:' + _statusPort
-          : process.platform === 'darwin'
-          ? 'open http://127.0.0.1:' + _statusPort
-          : 'xdg-open http://127.0.0.1:' + _statusPort;
-        execSync(_openCmd, { stdio: 'ignore', timeout: 5000 });
-      } catch {}
-    });
-    _statusServer.on('error', function(err) {
-      log('[WARN] Status server error: ' + err.message);
-    });
-  } catch (err) {
-    log('[WARN] Status server failed to start: ' + err.message);
   }
 
   // Derive repo from git.
@@ -1578,379 +1390,30 @@ function writeStaticHtmlReport() {
       break;
     }
     log('\n=== Cycle ' + cycleCount + '/' + maxCycles + ' | goal: ' + goal + ' ===');
-    updateLiveState({ phase: 'Plan', cycle: cycleCount });
-
-    writeSprintState(stateFileRel, {
-      type: 'cycle-start', cycle: cycleCount, branch, goal, rootIds, startedAt,
-    }, 'Plan', 'state-c' + cycleCount + '-plan');
-
-    // Check cycle state: planDone + in_progress orphans.
-    const makeBfsExtr = (rootsArr) => `const subtree=new Set('${rootsArr.join(' ')}'.split(' ').filter(Boolean));const q=Array.from(subtree);const nodes=g.layout&&g.layout.Nodes;if(nodes){while(q.length>0){const c=q.shift();const n=nodes[c];if(n&&n.DependsOn){for(const d of n.DependsOn)if(!subtree.has(d)){subtree.add(d);q.push(d);}}}}`;
-    
-    const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
-    const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const issues=(g.issues||[]).filter(i=>subtree.has(i.id));console.log(JSON.stringify(issues.map(i=>({id:i.id,title:i.title,t:i.issue_type,s:i.status,d:!!(i.description||'').trim(),children:(g.layout&&g.layout.Nodes[i.id]&&g.layout.Nodes[i.id].DependsOn)||[]}))))}catch{console.log('[]')}"`;
-    const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
-    const cycleStateCmds = [
-      ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
-      `bd list --status=in_progress --type=task --json | ${ipExtract}`,
-    ];
-    const cycleStateRaw = await dispatchShellFleet(cycleStateCmds, 'pm-doer-cheap', {
-      label: 'cycle-state', phase: 'Plan', cycle: cycleCount,
+    const planRes = await runPlanPhase({
+      cycleCount, branch, goal, rootIds, startedAt,
+      repo, base_branch, rootSummary, mission, requirementsFile,
+      TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM,
+      PLAN_REVIEW_SCHEMA,
+      updateLiveState, writeSprintState, dispatchShellFleet, dispatchFleet, stateFileRel,
+      parseCycleState, log, approved, computeSprintQuote, fs: require('fs'), execSync,
+      dispatchLedger, sprintQuote, calibration, taskAssignments, pathJoin: require('path').join
     });
-    const cycleState = parseCycleState(cycleStateRaw && cycleStateRaw.outputs,
-      rootIds.length);
-    updateLiveState({ sprintBeads: cycleState.allIssues || [] });
-    log('Cycle state: planDone=' + cycleState.planDone +
-        ' inProgress=[' + cycleState.inProgressIds.join(', ') + ']');
-
-    // Reset orphaned in_progress tasks.
-    if (cycleState.inProgressIds.length > 0) {
-      log('Resetting ' + cycleState.inProgressIds.length + ' orphaned in_progress task(s) to open');
-      const resetCmds = cycleState.inProgressIds.map(id => `bd update ${id} --status=open`);
-      await dispatchShellFleet(resetCmds, 'pm-doer-cheap', {
-        label: 'reset-orphans', phase: 'Plan', cycle: cycleCount,
-      });
-    }
-    // ---------------------------------------------------------------- PLAN
-
-    let planApproved = cycleState.planDone;
-    let planFeedback = '';
-    const MAX_PLAN_ITER = 3;
-
-    if (planApproved) {
-      log('Plan already complete -- skipping plan loop for cycle ' + cycleCount);
-    }
-
-    for (let pi = 0; pi < MAX_PLAN_ITER && !planApproved; pi++) {
-      const plannerLabel = `planner-c${cycleCount}-r${pi}`;
-
-      const plannerPrompt =
-        `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-        `Sprint goals: ${rootSummary}\n` +
-        (mission ? `SPRINT MISSION / OBJECTIVE:\n${mission}\n(Prioritize addressing this overarching objective when planning tasks).\n\n` : '') +
-        (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
-        `\n` +
-        (planFeedback
-          ? `Plan-reviewer feedback from the previous round (read feedback.md in ${repo} for full details):\n${planFeedback}\nAddress every item before proceeding.\n\n`
-          : '') +
-        `Inspect existing state first (DO NOT USE RUN_COMMAND FOR THIS):\n` +
-        `  Use the 'view_file' or 'grep_search' tool on ".beads/issues.jsonl" to read issue descriptions.\n` +
-        `  NEVER try to run "bd show <id>" in the shell. The Native agent cannot use interactive tools!\n` +
-        `  IMPORTANT: When using the 'call_mcp_tool' tool, the 'Arguments' field MUST be a JSON object, NOT a stringified JSON string! For example: {"command": "bd ready", "run_from": "C:/akhil/git/fleet-e2e-toy-agy", "member_name": "pm-planner"} (Do NOT use 'cwd', use 'run_from', and ALWAYS include 'member_name').\n` +
-        `Then build or complete the feature+task DAG -- create only what is missing:\n` +
-        `  - BEFORE creating any feature or task, read the existing issues in .beads/issues.jsonl.\n` +
-        `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
-        `\n` +
-        `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
-        `The correct wiring direction is: parents depend on children (children unblock first).\n` +
-        `\n` +
-        `  Step 1 -- wire sprint goal -> child (goal waits for children):\n` +
-        `    bd dep add <goal-id> <child-id>\n` +
-        `    After this: "bd ready" will NOT show the sprint goal (it's waiting). Children show as ready.\n` +
-        `\n` +
-        `  Step 2 -- wire feature -> tasks (feature waits for tasks):\n` +
-        `    bd dep add <feature-id> <impl-task-id>\n` +
-        `    bd dep add <feature-id> <test-task-id>\n` +
-        `    After this: "bd ready" will show impl-task (the leaf). Feature is now blocked.\n` +
-        `\n` +
-        `  Step 3 -- wire test after impl:\n` +
-        `    bd dep add <test-task-id> <impl-task-id>\n` +
-        `    After this: "bd ready" shows only impl-task. test-task unblocks once impl-task closes.\n` +
-        `\n` +
-        `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT sprint goals or blocked parents.\n` +
-        `  If sprint goals appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
-        `\n` +
-        `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
-        `\n` +
-        `  Break each sprint goal into child issues: bd create --parent <goal-id> (use type=feature for sub-goals, type=task for leaf work).\n` +
-        `  Create type=task issues for each feature: implementation tasks AND integration\n` +
-        `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
-        `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
-        `  Each task must be completable in one agent session (1-3 file changes max)\n` +
-        `  Every task needs clear acceptance criteria in its description\n` +
-        `  - Assign each task a tier AND complexity bucket based on complexity -- after creating or updating each\n` +
-        `    task, run: bd update <id> --set-metadata model=<tier>\n` +
-        `    Available tiers and when to use them:\n` +
-        `      ${TIER_CHEAP}    -- mechanical work: rename, config tweak, move file, simple wiring\n` +
-        `      ${TIER_STANDARD} -- standard work: new function, test suite, API endpoint, refactor\n` +
-        `      ${TIER_PREMIUM}  -- hard work: architecture, multi-file design, ambiguous requirements\n` +
-        `    Complexity buckets (S/M/L) are assigned by the plan-reviewer based on task scope.\n` +
-        `    Every task MUST receive a bucket assignment -- tasks without a bucket cannot be cost-estimated.\n` +
-        `  - Group tasks so consecutive tasks in dependency order share a tier where\n` +
-        `    possible -- this minimises tier-switching overhead during execution\n` +
-        (cycleCount > 1
-          ? `This is cycle ${cycleCount}. Focus on open issues only.\n` +
-            `Do NOT add new scope beyond the original sprint goals and open bugs/enhancements.\n` +
-            `Do NOT re-create tasks that are already closed.\n`
-          : '') +
-        `Confirm with any text when done.`;
-
-      const plannerResult = await dispatchFleet('pm-planner', plannerPrompt, {
-        label: plannerLabel, phase: 'Plan', cycle: cycleCount,
-      });
-
-      if (!plannerResult) {
-        log('Planner returned null on cycle ' + cycleCount + ' round ' + pi + ' -- retrying');
-        continue;
-      }
-
-      const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
-      const planReviewPrompt =
-        `Repo: ${repo}\nBranch: ${branch}\nSprint goals: ${rootSummary}\n` +
-        `Calibration file: ${repo}/sprint-logs/calibration.json (read this first if it exists)\n\n` +
-        `Review the beads DAG for these sprint goals ONLY: ${rootSummary}\n` +
-        `Run: ${rootIds.map(id => `bd show ${id}`).join(' && ')} to inspect each sprint goal.\n` +
-        `Run: ${rootIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
-        `Run: bd show <id> to inspect individual issues in depth.\n` +
-        `Run: bd ready -- this is your FIRST correctness check.\n` +
-        `Do NOT review or comment on issues outside these sprint goals.\n\n` +
-        `Follow your runbook (plan-reviewer.md) step by step:\n` +
-        `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
-        `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
-        `    from beads metadata. If a task has no model metadata, note it in your verdict\n` +
-        `    notes as a warning but do NOT return CHANGES NEEDED for it -- the workflow has a fallback.\n` +
-        `  Step 4: return verdict, notes, and taskAssignments (id + bucket + model per task).\n\n` +
-        `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
-        `any dependency direction problems.`;
-
-      const planReview = await dispatchFleet('pm-reviewer', planReviewPrompt, {
-        label: planReviewerLabel, phase: 'Plan', cycle: cycleCount,
-        schema: PLAN_REVIEW_SCHEMA,
-      });
-
-      if (approved(planReview)) {
-        planApproved = true;
-        log('Plan APPROVED on cycle ' + cycleCount + ' round ' + (pi + 1));
-        taskAssignments = (planReview && planReview.taskAssignments) || [];
-
-        // Compute sprint cost quote in pure JS.
-        sprintQuote = computeSprintQuote(taskAssignments, calibration);
-        const sc = sprintQuote.scenarios;
-        log('Sprint quote (' + sprintQuote.calibrationSource + ', ' + taskAssignments.length + ' tasks): ' +
-            'exp=$' + sc.expected.outputOnly.toFixed(3));
-
-        // Commit plan snapshot via shell dispatch.
-        const planCommitCmds = [
-          ...((sprintQuote && sprintQuote.tasks) ? sprintQuote.tasks.map(t =>
-            `bd update ${t.id} --notes="cost-estimate: bucket=${t.bucket} model=${t.model} ` +
-            `doer_tokens=${t.doerTokens || 0} output_usd=${t.outputUsd ? t.outputUsd.toFixed(4) : '0.0000'}"`
-          ) : []),
-          `bd export -o "${repo}/.beads/issues.jsonl"`,
-          `git -C "${repo}" add .beads/issues.jsonl`,
-          `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "plan: approve task DAG"`,
-        ];
-        await dispatchShellFleet(planCommitCmds, 'pm-doer-cheap', {
-          label: 'plan-commit-c' + cycleCount, phase: 'Plan', cycle: cycleCount,
-        });
-
-      } else if (planReview && planReview.verdict === 'CHANGES NEEDED') {
-        planFeedback = (planReview && planReview.notes) || '';
-        log('Plan CHANGES NEEDED (round ' + (pi + 1) + '): ' + planFeedback.slice(0, 120));
-
-        // Write feedback.md and commit natively so planner can read it.
-        const fbLabel = 'feedback-commit-plan-c' + cycleCount + '-r' + pi;
-        const fbStart = Date.now();
-        updateLiveState({ currentAgent: fbLabel, currentModel: 'native', currentPhase: 'Plan', currentCycle: cycleCount, currentStartTime: fbStart });
-        fs.writeFileSync(require('path').join(repo, 'feedback.md'), planFeedback);
-        try {
-          require('child_process').execSync('git add feedback.md', { cwd: repo, stdio: 'ignore' });
-          require('child_process').execSync('git -c user.name="pm-reviewer" -c user.email="pm-reviewer@pm.local" commit -m "feedback: plan-reviewer-c' + cycleCount + '-r' + pi + '"', { cwd: repo, stdio: 'ignore' });
-        } catch (e) {
-          log('Warning: Feedback commit failed (possibly empty diff): ' + e.message);
-        }
-        dispatchLedger.push({ cycle: cycleCount, phase: 'Plan', label: fbLabel, model: 'native', outTokens: 0, costUsd: 0, durationMs: Date.now() - fbStart });
-      } else {
-        log('Plan reviewer returned null or unexpected verdict on round ' + (pi + 1));
-      }
-    }
-
-    if (!planApproved) {
-      log('Plan not approved after ' + MAX_PLAN_ITER + ' rounds -- proceeding anyway');
-      planApproved = true;
-    }
-
-    writeSprintState(stateFileRel, {
-      type: 'checkpoint', cycle: cycleCount, phase: 'Plan', planApproved: true, branch, goal, rootIds, startedAt,
-    }, 'Plan', 'state-c' + cycleCount + '-plan-done');
-    updateLiveState({ phase: 'Develop', cycle: cycleCount });
-    // ---------------------------------------------------------------- DEVELOP
-
-    // ---- phase_label for Develop phase
-    let phase_label = 'Develop';
-    writeSprintState(stateFileRel, {
-      type: 'checkpoint', cycle: cycleCount, phase: 'Develop', planApproved: true, branch, goal, rootIds, startedAt,
-    }, 'Develop', 'state-c' + cycleCount + '-dev');
-
-    const MAX_DEV_ITER = 20;
-    let devIter  = 0;
-    let devFeedback = '';
-
-    // id->bucket map derived from last approved taskAssignments.
-    const bucketById = Object.fromEntries((taskAssignments || []).map(t => [t.id, t.bucket]));
-
-    while (devIter < MAX_DEV_ITER) {
-      // Get ready streaks via fleet shell dispatch.
-      // Use the graph to accurately determine which tasks have 0 open blockers, bypassing bd list --ready filtering.
-      const graphReadyExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const readyIds=[];if(nodes){for(const id of Array.from(subtree)){const n=nodes[id];if(!n||n.Issue.status!=='open')continue;let blocked=false;if(n.DependsOn){for(const depId of n.DependsOn){const dep=nodes[depId];if(dep&&dep.Issue.status!=='closed'&&dep.Issue.status!=='deferred'){blocked=true;break;}}}if(!blocked)readyIds.push(id);}}console.log(readyIds.join(' '));}catch(e){}"`;
-      const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
-      const readyCmds = [
-        ...rootIds.map(id => `bd graph --json ${id} | ${graphReadyExtract}`),
-        `bd list --status=open --type=task --json | ${taskExtract}`,
-      ];
-      const streakRaw = await dispatchShellFleet(readyCmds, 'pm-doer-cheap', {
-        label: 'ready-streaks', phase: 'Develop', cycle: cycleCount,
-      });
-      const streakResult = parseReadyStreaks(
-        streakRaw && streakRaw.outputs, rootIds.length, rootIds.length, TIER_STANDARD);
-
-      if (streakResult.totalCount === 0) {
-        // Deadlock check: if first iteration and open issues exist but none ready.
-        if (devIter === 0) {
-          const idExtractR = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
-          const openIdExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
-          const blockerCmds = [
-            ...rootIds.map(id => `bd graph --json ${id} | ${idExtractR}`),
-            `bd list --status=open --json | ${openIdExtract}`,
-          ];
-          const blockerRaw = await dispatchShellFleet(blockerCmds, 'pm-doer-cheap', {
-            label: 'check-blockers', phase: 'Develop', cycle: cycleCount,
-          });
-          const blockers = parseBlockers(
-            blockerRaw && blockerRaw.outputs, rootIds.length, rootIds.length, threshold, rootIds);
-          if (blockers.count > 0) {
-            log('ERROR: DEADLOCK -- ' + blockers.count + ' open issue(s) at/above ' + goal +
-                ' in the sprint subtree but NONE are ready on the first develop iteration. ' +
-                'The dependency DAG is blocked (commonly backwards or parent-child edges).');
-            abortReason = 'deadlock: open issues but none ready';
-            break;
-          }
-        }
-        log('No ready tasks -- develop phase complete (' + devIter + ' iterations)');
-        break;
-      }
-      log('Dev iter ' + devIter + ' c' + cycleCount + ': ' + streakResult.totalCount +
-          ' ready task(s) across ' + streakResult.streaks.length + ' model streak(s)');
-
-      // Dispatch one doer per model streak.
-      const workedIds = [];
-      let streakAbort   = false;
-      let doerNullReset = false;
-
-      for (const streak of streakResult.streaks) {
-        // Truncate streak to token ceiling for this tier.
-        const fittedIds = truncateStreakToCeiling(streak.ids, bucketById, calibration, streak.model);
-        if (fittedIds.length < streak.ids.length) {
-          log('Streak ' + streak.model + ' truncated to token ceiling: working ' +
-              fittedIds.length + '/' + streak.ids.length + ' task(s) (' +
-              labelTaskIds(fittedIds) + '); ' + (streak.ids.length - fittedIds.length) + ' deferred');
-        }
-
-        // Resolve tier -> fleet member name.
-        let doerMember;
-        if (streak.model === TIER_CHEAP)    doerMember = 'pm-doer-cheap';
-        else if (streak.model === TIER_PREMIUM) doerMember = 'pm-doer-premium';
-        else                                    doerMember = 'pm-doer-std';
-
-        const doerLabel = `doer-c${cycleCount}-r${devIter}: ${labelTaskIds(fittedIds)}`;
-        log('Doer c' + cycleCount + '-r' + devIter + ': ' + labelTaskIds(fittedIds) +
-            ' [model=' + streak.model + ']');
-
-        const doerPrompt =
-          `Repo: ${repo}\nBranch: ${branch}\n\n` +
-          (devFeedback
-            ? `Reviewer feedback from the previous iteration (read feedback.md in ${repo} for full details):\n${devFeedback}\nAddress every finding before closing tasks.\n\n`
-            : '') +
-          `Work ONLY these tasks (in order): ${fittedIds.join(', ')}\n` +
-          `Confirm each is still unblocked with: bd show <id>\n` +
-          `For each task:\n` +
-          `  - Run: bd update <id> --claim\n` +
-          `  - Implement the work described (code, tests, config -- whatever the task requires)\n` +
-          `  - Run: bd close <id> immediately after verify and commit, BEFORE claiming the next task\n` +
-          `  - Closed tasks are durable even if the doer crashes mid-streak\n` +
-          `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
-          `Work all listed tasks then stop and return status "VERIFY".\n` +
-          `Always return VERIFY -- never return anything else.`;
-
-        const doerResult = await dispatchFleet(doerMember, doerPrompt, {
-          label: doerLabel, phase: 'Develop', cycle: cycleCount,
-          schema: DOER_STATUS_SCHEMA,
-        });
-
-        if (!doerResult) {
-          log('Doer returned null (streak ' + streak.model + ') -- resetting orphaned in_progress tasks and retrying');
-          const ipExtractD = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
-          const ipResult = await dispatchShellFleet(
-            [`bd list --status=in_progress --type=task --json | ${ipExtractD}`],
-            'pm-doer-cheap',
-            { label: 'reset-orphans-c' + cycleCount + '-r' + devIter, phase: 'Develop', cycle: cycleCount }
-          );
-          const ipIds = ((ipResult && ipResult.outputs && ipResult.outputs[0]) || '')
-            .trim().split(/\s+/).filter(Boolean);
-          if (ipIds.length > 0) {
-            const resetCmds = ipIds.map(id => `bd update ${id} --status=open`);
-            await dispatchShellFleet(resetCmds, 'pm-doer-cheap', {
-              label: 'reset-open-c' + cycleCount + '-r' + devIter, phase: 'Develop', cycle: cycleCount,
-            });
-            log('Reset ' + ipIds.length + ' in_progress task(s) to open: ' + ipIds.join(', '));
-          }
-          doerNullReset = true;
-          break;
-        }
-
-        if (doerResult.status !== 'VERIFY') {
-          log('Unexpected doer status "' + doerResult.status + '" -- aborting');
-          abortReason = 'unexpected doer status';
-          streakAbort = true;
-          break;
-        }
-        workedIds.push(...fittedIds);
-      }
-
-      devIter++;
-      if (doerNullReset) continue;
-      if (streakAbort) break;
-
-      // Reviewer tier: any premium -> premium; otherwise standard.
-      const usedModels = streakResult.streaks.map(s => s.model);
-      const reviewerModel = usedModels.includes(TIER_PREMIUM) ? TIER_PREMIUM : TIER_STANDARD;
-      const reviewerLabel = `reviewer-c${cycleCount}-r${devIter}: ${labelTaskIds(workedIds)}`;
-
-      const reviewerPrompt =
-        `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
-        `Sprint goals: ${rootSummary}\nTasks worked this iteration: ${workedIds.join(', ')}\n\n` +
-        `Review ONLY the work done for the tasks listed above.\n` +
-        `Run: bd show <id> for each task to read its acceptance criteria.\n` +
-        `Run: git -C "${repo}" diff ${base_branch}...${branch} to see the changes.\n` +
-        `Do NOT comment on code or issues outside the listed tasks.\n` +
-        `Check: code correctness, test coverage, adherence to each task's acceptance criteria.\n` +
-        `If a task needs rework, reopen it: bd update <id> --status=open\n` +
-        `CHANGES NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
-        `APPROVED means all committed work meets acceptance criteria.`;
-
-      const review = await dispatchFleet('pm-reviewer', reviewerPrompt, {
-        label: reviewerLabel, phase: 'Develop', cycle: cycleCount,
-        schema: REVIEW_SCHEMA,
-      });
-      log('Reviewer c' + cycleCount + '-r' + devIter + ': ' +
-          ((review && review.verdict) || 'null') + ' -- ' + labelTaskIds(workedIds));
-
-      if (!approved(review)) {
-        devFeedback = (review && review.notes) || '';
-        log('Reviewer feedback: ' + devFeedback.slice(0, 120));
-        // Write feedback.md to disk synchronously to avoid race conditions.
-        const devFbLabel = 'feedback-write-' + reviewerLabel;
-        const devFbStart = Date.now();
-        updateLiveState({ currentAgent: devFbLabel, currentModel: 'native', currentPhase: 'Develop', currentCycle: cycleCount, currentStartTime: devFbStart });
-        fs.writeFileSync(require('path').join(repo, 'feedback.md'), devFeedback);
-        dispatchLedger.push({ cycle: cycleCount, phase: 'Develop', label: devFbLabel, model: 'native', outTokens: 0, costUsd: 0, durationMs: Date.now() - devFbStart });
-      } else {
-        devFeedback = '';
-      }
-
-      writeSprintState(stateFileRel, {
-        type: 'checkpoint', cycle: cycleCount, phase: 'Develop', devIter, branch, goal, rootIds, startedAt,
-      }, 'Develop', 'state-c' + cycleCount + '-dev-r' + devIter);
-    }
+    
+    planApproved = planRes.planApproved;
+    planFeedback = planRes.planFeedback;
+    sprintQuote = planRes.sprintQuote || sprintQuote;
+    taskAssignments = planRes.taskAssignments || taskAssignments;
+    const devRes = await runDevelopPhase({
+      cycleCount, branch, goal, rootIds, startedAt, repo, base_branch, rootSummary,
+      TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM, DOER_STATUS_SCHEMA, REVIEW_SCHEMA,
+      taskAssignments, calibration, threshold,
+      updateLiveState, writeSprintState, dispatchShellFleet, dispatchFleet, stateFileRel,
+      parseReadyStreaks, truncateStreakToCeiling, labelTaskIds, parseBlockers, approved,
+      log, fs: require('fs'), pathJoin: require('path').join, dispatchLedger
+    });
+    abortReason = devRes.abortReason;
+    let devFeedback = devRes.devFeedback;
 
     if (abortReason) break;
 
@@ -2091,194 +1554,21 @@ function writeStaticHtmlReport() {
   updateLiveState({ phase: 'Harvest', cycle: cycleCount });
   // ---------------------------------------------------------------- HARVEST (T3.3)
 
-  const finalReviewPrompt =
-    'Repo: ' + repo + '\nBranch: ' + branch + '\nBase branch: ' + base_branch + '\n' +
-    'Sprint goals: ' + rootSummary + '\nGoal: ' + goal + '\n' +
-    (abortReason ? 'Sprint ended early: ' + abortReason + '. Review what was completed.\n' : '') +
-    (goalMet ? 'Goal was met: all P<=' + threshold + ' issues resolved.\n' : 'Goal not yet met.\n') +
-    '\nReview the overall output of this sprint:\n' +
-    '  - Does the work address the original sprint goals?\n' +
-    '  - Are there obvious gaps or regressions?\n' +
-    '  - Is the codebase in a releasable state for what was completed?\n' +
-    'APPROVED means the work is ready to harvest and raise as a PR.\n' +
-    'CHANGES NEEDED means critical issues were found; include specific findings in notes.';
-
-  const finalReview = await dispatchFleet('pm-reviewer', finalReviewPrompt, {
-    label: 'final-reviewer', phase: 'Harvest', cycle: cycleCount,
-    schema: REVIEW_SCHEMA,
+  const harvestRes = await runHarvestPhase({
+    cycleCount, branch, goal, rootIds, startedAt, repo, base_branch, rootSummary, threshold,
+    abortReason, goalMet, prevOpenIds, sprintQuote, calibration, taskAssignments, opts, safeBranch, calibPath,
+    updateLiveState, dispatchFleet, clearSprintState, buildSprintSummary, safeWriteFile,
+    computeUpdatedCalibration, log, runCiWatcher, pathJoin: path.join.bind(path), REVIEW_SCHEMA, HARVEST_SCHEMA, approved, stateFileRel
   });
-  log('Final review: ' + ((finalReview && finalReview.verdict) || 'null'));
 
-  if (!approved(finalReview)) {
-    const notes = (finalReview && finalReview.notes) || '';
-    log('Final review not approved -- aborting before harvest. Notes: ' + notes.slice(0, 300));
-    clearSprintState(stateFileRel, 'state-clear-finalrejected');
+  if (!harvestRes.harvestSuccess) {
     return {
       cycles: cycleCount, goalMet, goal,
-      abortReason: abortReason || 'final review rejected',
-      finalReviewNotes: notes,
+      abortReason: harvestRes.abortReason || abortReason || 'final review rejected',
+      finalReviewNotes: harvestRes.finalReviewNotes || '',
     };
   }
-
-  // Build sprint summary via cost.js (pure JS).
-  const sprintSummary = buildSprintSummary(null, sprintQuote, calibration, {
-    branch, goal, goalMet, cycleCount,
-    tasksCompleted: goalMet ? (sprintQuote ? sprintQuote.tasks.length : 0) : 0,
-    tasksOpen: prevOpenIds.length,
-    startedAt,
-  });
-
-  // Write analysis artifact (sprint-logs/<branch>.analysis.md).
-  const analysisFile = path.join(repo, 'sprint-logs', safeBranch + '.analysis.md');
-  safeWriteFile(analysisFile, sprintSummary.summaryText || '', 'analysis.md');
-  log('Sprint analysis written to: ' + analysisFile);
-
-  const harvesterPrompt =
-    'Repo: ' + repo + '\nBranch: ' + branch + '\nBase branch: ' + base_branch + '\n' +
-    'Sprint goals: ' + rootSummary + '\nCycles completed: ' + cycleCount +
-    '\nGoal met: ' + goalMet + '\n\n' +
-    'The sprint is complete. Harvest the sprint artefacts.\n' +
-    'Follow your runbook (agents/harvester.md).\n\n' +
-    'IMPORTANT: Your FIRST action is to commit the analysis artifact below before doing anything else.\n\n' +
-    'analysisText (write verbatim to sprint-logs/' + safeBranch + '.analysis.md):\n' +
-    (sprintSummary.summaryText || '(no summary)') + '\n\n' +
-    'Final review notes to include in CHANGELOG:\n' +
-    ((finalReview && finalReview.notes) || '(none)') + '\n\n' +
-    'Steps:\n' +
-    '  1. Update docs/ and README if API or usage changed.\n' +
-    '  2. Append sprint summary to CHANGELOG.md under [Unreleased].\n' +
-    '  3. Export beads state: git -C "' + repo + '" add .beads/issues.jsonl\n' +
-    '     git -C "' + repo + '" diff --cached --quiet || ' +
-    '     git -C "' + repo + '" -c user.name=\'pm\' -c user.email=\'pm@pm.local\' commit -m "chore: export beads state"\n' +
-    '  4. Remove sprint scaffold files from PR diff (requirements.md, feedback.md).\n' +
-    '  5. Stage sprint-logs/ and push: git -C "' + repo + '" add sprint-logs/ && ' +
-    '     git -C "' + repo + '" push origin ' + branch + '\n' +
-    '  6. Close delivered sprint goals in beads:\n' +
-    rootIds.map(id => '     bd close ' + id + ' --reason="implemented in sprint ' + branch + '"').join('\n') + '\n\n' +
-    'Return status "OK" if successful, "FAILED" with notes otherwise.';
-
-  const harvestResult = await dispatchFleet('pm-harvester', harvesterPrompt, {
-    label: 'harvester', phase: 'Harvest', cycle: cycleCount,
-    schema: HARVEST_SCHEMA,
-  });
-
-  if (!harvestResult || harvestResult.status !== 'OK') {
-    log('Harvest failed: ' + ((harvestResult && harvestResult.notes) || 'null'));
-  }
-
-  // Calibration update (pure JS then write file).
-  const updatedCalibration = computeUpdatedCalibration(calibration, null, startedAt, taskAssignments, []);
-  safeWriteFile(calibPath, JSON.stringify(updatedCalibration, null, 2) + '\n', 'calibration.json');
-  log('Calibration updated: ' + calibPath);
-
-  // Dolt push (non-fatal, can be skipped for tests).
-  if (!opts.skip_dolt_push) {
-    const doltPushPrompt =
-      'Sync beads state to the Dolt remote.\n\n' +
-      'Run:\n' +
-      '  bd dolt push\n\n' +
-      'Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n' +
-      'If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n' +
-      '  "bd dolt push failed (non-fatal): <reason>"\n' +
-      'and continue -- do NOT throw, return an error, or abort.\n\n' +
-      'Return "OK" when done (regardless of whether the push succeeded or failed).';
-    try {
-      await dispatchFleet('pm-harvester', doltPushPrompt, {
-        label: 'dolt-push', phase: 'Harvest', cycle: cycleCount,
-      });
-    } catch (err) {
-      log('WARN: dolt push dispatch failed (non-fatal): ' + String(err).slice(0, 120));
-    }
-  } else {
-    log('Skipping dolt push as requested by opts.skip_dolt_push.');
-  }
-
-  // ---------------------------------------------------------------- PR + CI (T3.4)
-
-  const prPrompt =
-    'In repo ' + repo + ' on branch ' + branch +
-    ', create a GitHub pull request targeting ' + base_branch + '.\n' +
-    'Command: gh pr create --base ' + base_branch + ' --head ' + branch + '\n' +
-    'Title: summarise what was implemented across ' + cycleCount + ' cycle(s).\n' +
-    'Body:\n' +
-    '  - What was built (per sprint goal)\n' +
-    '  - Sprint goal: ' + goal + ' -- ' + (goalMet ? 'MET' : 'NOT MET (partial delivery)') + '\n' +
-    '  - Cycles run: ' + cycleCount + '\n' +
-    '  - Open items carried forward (if any): bd list --status=open and summarise\n' +
-    '  - Final review notes: ' + ((finalReview && finalReview.notes) || '(none)') + '\n' +
-    '  - Token cost summary from: bd memories auto-sprint\n\n' +
-    'After creating the PR, return its number as prNumber (integer).';
-
-  const harvestPr = await dispatchFleet('pm-harvester', prPrompt, {
-    label: 'harvest-pr', phase: 'Harvest', cycle: cycleCount,
-    schema: {
-      type: 'object', required: ['prNumber'],
-      properties: { prNumber: { type: 'number' }, prUrl: { type: 'string' } },
-    },
-  });
-  const prNumber = harvestPr && harvestPr.prNumber;
-  log('PR number: ' + (prNumber || 'none'));
-
-  if (prNumber) {
-    const ciPrompt =
-      'Check CI status for PR #' + prNumber + ' on branch ' + branch + '.\n' +
-      'Run: gh run list --pr ' + prNumber + ' --limit 3 --json status,conclusion,databaseId\n' +
-      'If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n' +
-      'If runs exist and conclusion is "success": return status "green".\n' +
-      'If runs exist and conclusion is "failure": return status "red" with notes (include run URL).\n' +
-      'If no runs found: return status "not_configured".\n' +
-      'Do not block for more than 10 minutes total.';
-
-    const ciResult = await dispatchFleet('pm-doer-cheap', ciPrompt, {
-      label: 'ci-watcher', phase: 'Harvest', cycle: cycleCount,
-      schema: CI_SCHEMA,
-    });
-
-    if (ciResult) {
-      log('CI status: ' + ciResult.status);
-
-      if (ciResult.status === 'not_configured') {
-        log('CI not configured -- checking for existing open CI pipeline task');
-        const dedupSchema = {
-          type: 'object', required: ['exists', 'id'],
-          properties: { exists: { type: 'boolean' }, id: { type: 'string' } },
-        };
-        const dedupResult = await dispatchFleet('pm-doer-cheap',
-          'Run: bd search "Add CI pipeline" --status=open --json\n' +
-          'Parse the JSON output and look for any issue whose title matches ' +
-          '"Add CI pipeline to project" (exact or close variant, case-insensitive).\n' +
-          'If a matching OPEN issue is found, return JSON: {"exists": true, "id": "<issue-id>"}\n' +
-          'If no matching open issue is found (or the command returns empty/no results), ' +
-          'return JSON: {"exists": false, "id": null}',
-          { label: 'ci-task-dedup', phase: 'Harvest', cycle: cycleCount, schema: dedupSchema });
-
-        if (dedupResult && dedupResult.exists) {
-          log('CI pipeline task already exists: ' + dedupResult.id + ' -- skipping creation');
-        } else {
-          await dispatchFleet('pm-doer-cheap',
-            'Run: bd create --title="Add CI pipeline to project" ' +
-            '--description="The auto-sprint workflow found no CI runs for branch ' + branch + '. ' +
-            'CI is required for the sprint exit gate. ' +
-            'This task covers: choosing a CI provider, writing the workflow config, and verifying it triggers on push." ' +
-            '--type=task --priority=2\n' +
-            'Then run: bd show <new-id> and confirm it was created.',
-            { label: 'ci-task-create', phase: 'Harvest', cycle: cycleCount });
-          log('ACTION REQUIRED: Set up CI for this project. Task created in beads.');
-        }
-      } else if (ciResult.status === 'red') {
-        log('CI FAILED: ' + ((ciResult.notes || '').slice(0, 200)));
-      }
-
-      if (ciResult.status !== 'green') {
-        const ciNotes = ciResult.notes ? '\\n\\n' + ciResult.notes : '';
-        await dispatchFleet('pm-doer-cheap',
-          'Annotate PR #' + prNumber + ' with the CI status result.\n\n' +
-          'Run: gh pr comment ' + prNumber + ' --body "**CI status: ' +
-          ciResult.status + '**' + ciNotes + '"',
-          { label: 'ci-pr-annotate', phase: 'Harvest', cycle: cycleCount });
-      }
-    }
-  }
+  const prNumber = harvestRes.prNumber;
 
   // ---------------------------------------------------------------- COST SUMMARY (T3.5)
 
