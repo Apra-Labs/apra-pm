@@ -472,12 +472,25 @@ const STATUS_HTML = `<!DOCTYPE html>
     
     .capability-pill {
       display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 12px;
-      background: rgba(255,255,255,0.05);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
       margin-right: 6px;
       margin-top: 4px;
+      transition: all 0.2s ease;
+    }
+    .task-row {
+      padding: 8px 10px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+    .task-row:hover {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: rgba(255, 255, 255, 0.05);
+      transform: translateX(2px);
     }
     .capability-pill.yes { color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
     .capability-pill.no { color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); }
@@ -651,12 +664,15 @@ const STATUS_HTML = `<!DOCTYPE html>
           for (const b of sprintBeads) {
              const isClosed = b.s === 'closed';
              const isIp = b.s === 'in_progress';
-             const icon = b.t === 'feature' ? '&#128194;' : '&#128196;';
+             const icon = b.t === 'feature' ? '📦' : '📄';
              const color = isClosed ? 'var(--text-muted)' : (isIp ? 'var(--accent)' : 'var(--text)');
-             const style = isClosed ? 'text-decoration:line-through; opacity:0.6;' : '';
-             bHtml += '<div style="margin-bottom:8px; color:' + color + '; ' + style + '">' +
-                        '<span style="margin-right:6px; font-size:11px;">' + icon + '</span>' +
-                        '<strong>' + b.id + '</strong><br/><span style="opacity:0.8; font-size:11px; padding-left:20px; display:inline-block;">' + (b.title || '').replace(/</g, '&lt;') + '</span>' +
+             const style = isClosed ? 'text-decoration:line-through; opacity:0.5; filter: grayscale(100%);' : '';
+             bHtml += '<div class="task-row" style="color:' + color + '; ' + style + '">' +
+                        '<div style="display:flex; align-items:center; gap:8px;">' +
+                          '<span style="font-size:14px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">' + icon + '</span>' +
+                          '<strong style="letter-spacing: 0.5px;">' + b.id + '</strong>' +
+                        '</div>' +
+                        '<div style="opacity:0.85; font-size:11px; padding-left:26px; margin-top:2px; display:inline-block;">' + (b.title || '').replace(/</g, '&lt;') + '</div>' +
                       '</div>';
           }
           if (beadsContainer.innerHTML !== bHtml) beadsContainer.innerHTML = bHtml;
