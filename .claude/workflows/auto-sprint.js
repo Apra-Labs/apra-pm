@@ -294,6 +294,11 @@ const DEFAULT_CALIBRATION = {
     per_task_input_overhead_tokens: 3500,// per-task prompt + accumulated tool-result growth
     output_expansion_factor: 1.0,        // multiplier on estimated output tokens counted against context
   },
+  parallelism: {
+    _doc: 'Doer concurrency. When max_doers>1, independent bd-ready tasks are fanned out into isolated git worktrees, worked by one doer each in parallel, then merged back into the sprint branch sequentially with a conflict->re-queue fallback. Set max_doers to 1 to force the serial path (identical to pre-parallelism behavior). Actual width is also capped by the harness concurrency limit and the number of ready tasks. Project-agnostic: no assumptions about language, layout, or task shape.',
+    max_doers: 4,
+    worktree_root: '.auto-sprint/wt',
+  },
   historical: {
     _doc: 'Written by harvester after each sprint. Contains actual per-role output token averages from sprint-log JSONL files. Used by auto-sprint.js computeSprintQuote() to improve future estimates. Do not edit manually.',
     max_sprints_in_sample: 5,
@@ -1008,6 +1013,7 @@ function assertCalibrationComplete(calibration, defaults) {
     'context_limits.autocompact_headroom_fraction',
     'context_limits.base_prompt_tokens',
     'context_limits.per_task_input_overhead_tokens',
+    'parallelism.max_doers',
   ];
   const healed = [];
   const result = Object.assign({}, calibration);
@@ -1064,6 +1070,42 @@ function fitStreakToContext(streakIds, bucketById, calibration, tier) {
     kept.push(id); sum += cost;
   }
   return { fittedIds: kept, estContext: sum, available, wouldOverflow: kept.length < streakIds.length };
+}
+
+// Flatten ready streaks into a deterministic, de-duplicated task batch for parallel doers.
+// Each parallel doer works exactly ONE task in its own worktree, so the per-doer context is a
+// single task (no context-fit split needed here -- that split only matters when one doer chains
+// multiple tasks, which the parallel path does not do). We simply take up to `maxDoers` ready
+// tasks. Ordering is by task id so the later sequential merge is reproducible run-to-run.
+// Leftover ready tasks are returned as `deferred` and resurface on the next getReadyStreaks call.
+// Pure -- no I/O, no Date/Math.random.
+function computeDoerBatch(streaks, maxDoers) {
+  const seen = {};
+  const tasks = [];
+  for (const s of (streaks || [])) {
+    const model = s && s.model;
+    for (const id of ((s && s.ids) || [])) {
+      if (id != null && !seen[id]) { seen[id] = true; tasks.push({ id, model }); }
+    }
+  }
+  tasks.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const cap = Math.max(1, maxDoers || 1);
+  const width = Math.min(cap, tasks.length || 1);
+  return { batch: tasks.slice(0, width), deferred: tasks.slice(width), width, readyCount: tasks.length };
+}
+
+// Derive the filesystem-safe worktree path and temp branch name for a parallel doer's task.
+// The temp branch is namespaced by the sprint branch so concurrent sprints never collide.
+// Both are sanitized so arbitrary bd ids / branch names (any of hundreds of projects) are safe
+// as path and ref components. Pure.
+function worktreeNamesFor(sprintBranch, taskId, worktreeRoot) {
+  const safeId = String(taskId).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const safeBranch = String(sprintBranch).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const root = (worktreeRoot || '.auto-sprint/wt').replace(/\/+$/g, '');
+  return {
+    path: `${root}/${safeId}`,
+    branch: `auto-sprint/wt/${safeBranch}/${safeId}`,
+  };
 }
 
 // PURE_FUNCTIONS_END
@@ -1796,6 +1838,15 @@ while (cycleCount < maxCycles) {
   const MAX_DEV_ITER = 20;
   let devIter = 0;
   let devFeedback = '';
+  // Parallel-doer config (per-cycle, read once from healed calibration).
+  const _par = (calibration && calibration.parallelism) || {};
+  const maxDoers = Math.max(1, _par.max_doers || 1);
+  const worktreeRoot = _par.worktree_root || '.auto-sprint/wt';
+  // If a parallel iteration makes zero progress (every doer failed or every merge conflicted),
+  // force the NEXT iteration onto the serial path. Serial doers commit directly on the sprint
+  // branch (no cross-branch merge -> no merge conflict), guaranteeing forward progress and
+  // preventing a same-batch conflict loop. Cleared as soon as a serial iteration runs.
+  let forceSerialIter = false;
 
   while (devIter < MAX_DEV_ITER) {
     const streakResult = await getReadyStreaks(rootIds);
@@ -1831,7 +1882,7 @@ while (cycleCount < maxCycles) {
     }
     log(`Dev iter ${devIter} c${cycleCount}: ${streakResult.totalCount} ready task(s) across ${streakResult.streaks.length} model streak(s)`);
 
-    // Dispatch one doer per model streak; collect all worked task IDs for the reviewer.
+    // Dispatch doers; collect all worked task IDs for the reviewer.
     const workedIds = [];
     let streakAbort = false;
     let doerNullReset = false;
@@ -1840,7 +1891,126 @@ while (cycleCount < maxCycles) {
     // last approved plan-review's taskAssignments held at workflow scope.
     const bucketById = Object.fromEntries((taskAssignments || []).map(t => [t.id, t.bucket]));
 
-    for (const streak of streakResult.streaks) {
+    // ---- PARALLEL DOERS (worktree fan-out) ---------------------------------
+    // When more than one bd-ready task exists and calibration allows width>1, work independent
+    // ready tasks CONCURRENTLY, each in its own git worktree + temp branch off the current sprint
+    // HEAD, then merge back sequentially with a conflict->re-queue fallback. bd-ready tasks are
+    // DAG-independent, so the only risk is physical file overlap, handled at merge time. All beads
+    // state transitions stay centralized here (doers run NO bd) so concurrent worktrees never
+    // diverge the .beads DB. Degrades to the serial path for width==1, all-worktree-create-fail,
+    // or after a zero-progress parallel iteration (forceSerialIter). Never worse than serial.
+    const _effMaxDoers = forceSerialIter ? 1 : maxDoers;
+    forceSerialIter = false;
+    const _plan = computeDoerBatch(streakResult.streaks, _effMaxDoers);
+    let parallelHandled = false;
+
+    if (_plan.width > 1) {
+      const wt = _plan.batch.map(t => ({ ...t, ...worktreeNamesFor(branch, t.id, worktreeRoot) }));
+      log(`Parallel develop: ${_plan.width} doer(s) in worktrees (${labelTaskIds(wt.map(w => w.id))})${_plan.deferred.length ? `; ${_plan.deferred.length} task(s) deferred to next iter` : ''}`);
+
+      // Create one worktree + temp branch per task (idempotent: clear any leaked prior worktree/
+      // branch first). Each command echoes OK/FAIL <id> so we only work tasks that isolated cleanly.
+      const createRes = await dispatchShell(
+        wt.map(w =>
+          `git -C "${repo}" worktree remove --force "${repo}/${w.path}" 2>/dev/null; ` +
+          `git -C "${repo}" branch -D "${w.branch}" 2>/dev/null; ` +
+          `git -C "${repo}" worktree add -b "${w.branch}" "${repo}/${w.path}" "${branch}" >/dev/null 2>&1 && echo "OK ${w.id}" || echo "FAIL ${w.id}"`
+        ),
+        { model: MODEL_HAIKU, label: `wt-create-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: wt.length + 2 }
+      );
+      const createdOk = {};
+      (createRes?.outputs || []).forEach((o, i) => { if (/\bOK\b/.test(o || '')) createdOk[wt[i].id] = true; });
+      const okWt = wt.filter(w => createdOk[w.id]);
+
+      if (okWt.length === 0) {
+        log(`All worktree creations failed -- falling back to serial for this iteration`);
+        await dispatchShell(
+          wt.flatMap(w => [
+            `git -C "${repo}" worktree remove --force "${repo}/${w.path}" 2>/dev/null || true`,
+            `git -C "${repo}" branch -D "${w.branch}" 2>/dev/null || true`,
+          ]),
+          { model: MODEL_HAIKU, label: `wt-cleanup-c${cycleCount}-i${devIter}`, phase: 'Develop' }
+        );
+      } else {
+        parallelHandled = true;
+        // Read each task's spec centrally (human-readable bd show) and INLINE it into the doer
+        // prompt, so doers need no bd access inside their worktree (worktree .beads DB may be
+        // stale or absent across the hundreds of projects this runs on).
+        const specRes = await dispatchShell(
+          okWt.map(w => `bd show ${w.id}`),
+          { model: MODEL_HAIKU, label: `spec-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: okWt.length + 2 }
+        );
+        const specById = {};
+        okWt.forEach((w, i) => { specById[w.id] = ((specRes?.outputs?.[i]) || '').trim().slice(0, 4000); });
+
+        // Claim the batch centrally (single source of truth), then fan out doers.
+        await dispatchShell(okWt.map(w => `bd update ${w.id} --claim`),
+          { model: MODEL_HAIKU, label: `claim-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: okWt.length + 2 });
+
+        const doerOutcomes = await parallel(okWt.map(w =>
+          dispatch(
+            `You are working in an ISOLATED git worktree -- other doers run concurrently in their own worktrees.\n` +
+            `Worktree path: ${repo}/${w.path}  (cd into it first; you are on temp branch ${w.branch})\n` +
+            `Work ONLY task ${w.id}. Do NOT work any other task.\n\n` +
+            (devFeedback
+              ? `Reviewer feedback from the previous iteration (also in feedback.md at ${repo}):\n${devFeedback}\nAddress every relevant finding.\n\n`
+              : '') +
+            `Task ${w.id} specification:\n${specById[w.id] || '(spec unavailable; infer from the repo and task id)'}\n\n` +
+            `Steps:\n` +
+            `  - Implement the work for task ${w.id} INSIDE ${repo}/${w.path} ONLY (code, tests, config -- whatever it requires).\n` +
+            `  - Commit in that worktree: git -C "${repo}/${w.path}" add -A && git -C "${repo}/${w.path}" -c user.name='doer' -c user.email='doer@pm.local' commit -m "impl ${w.id}"\n` +
+            `  - Do NOT run ANY bd command. Do NOT touch the main checkout or the ${branch} branch. Do NOT push. Do NOT run git merge.\n` +
+            `Return status "VERIFY". Always return VERIFY -- never anything else.`,
+            { model: w.model, label: `doer-c${cycleCount}-i${devIter}-${w.id}`, phase: 'Develop', schema: DOER_STATUS_SCHEMA,
+              agentType: 'doer', context: `task ${w.id} (worktree)` }
+          ).then(r => ({ w, ok: !!r && r.status === 'VERIFY' })).catch(() => ({ w, ok: false }))
+        ));
+
+        // Merge sequentially into the sprint branch (deterministic id order from computeDoerBatch).
+        // Clean merge -> close centrally; conflict or doer failure -> re-queue centrally.
+        for (const { w, ok } of doerOutcomes) {
+          if (!ok) {
+            await dispatchShell([`bd update ${w.id} --status=open`],
+              { model: MODEL_HAIKU, label: `requeue-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' });
+            log(`Doer failed for ${w.id} -- re-queued (will retry next iter)`);
+            continue;
+          }
+          const mres = await dispatchShell(
+            [`git -C "${repo}" merge --no-ff --no-edit "${w.branch}" >/dev/null 2>&1 && echo MERGE_OK || (git -C "${repo}" merge --abort >/dev/null 2>&1; echo MERGE_CONFLICT)`],
+            { model: MODEL_HAIKU, label: `merge-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' }
+          );
+          if (/MERGE_OK/.test((mres?.outputs?.[0]) || '')) {
+            await dispatchShell([`bd close ${w.id}`],
+              { model: MODEL_HAIKU, label: `close-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' });
+            workedIds.push(w.id);
+            log(`Merged + closed ${w.id}`);
+          } else {
+            await dispatchShell([`bd update ${w.id} --status=open`],
+              { model: MODEL_HAIKU, label: `conflict-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' });
+            log(`Merge conflict for ${w.id} -- aborted, re-queued (degrades to serial as ready count drops)`);
+          }
+        }
+
+        // Always tear down every worktree + temp branch (even failed ones): a leak must never
+        // block the next iteration's idempotent create.
+        await dispatchShell(
+          wt.flatMap(w => [
+            `git -C "${repo}" worktree remove --force "${repo}/${w.path}" 2>/dev/null || true`,
+            `git -C "${repo}" branch -D "${w.branch}" 2>/dev/null || true`,
+          ]),
+          { model: MODEL_HAIKU, label: `wt-cleanup-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: wt.length * 2 + 2 }
+        );
+
+        // Zero progress this parallel iteration (all failed / all conflicted): force serial next
+        // iteration so a same-batch conflict cannot loop forever.
+        if (workedIds.length === 0) {
+          forceSerialIter = true;
+          log(`Parallel iteration closed 0 tasks -- forcing serial path next iteration to guarantee progress`);
+        }
+      }
+    }
+
+    for (const streak of (parallelHandled ? [] : streakResult.streaks)) {
       // Truncate the streak to the longest prefix that fits the doer token ceiling for
       // this tier. Remaining IDs are left unworked and resurface on the next
       // getReadyStreaks iteration.
@@ -1915,6 +2085,13 @@ while (cycleCount < maxCycles) {
     devIter++;
     if (doerNullReset) continue;
     if (streakAbort) break;
+    if (workedIds.length === 0) {
+      // No task merged this iteration (e.g. every parallel merge conflicted and re-queued).
+      // Nothing to review; loop back -- getReadyStreaks re-derives work and forceSerialIter
+      // (set above) guarantees the next iteration makes progress.
+      log(`No tasks merged this iteration -- skipping reviewer, re-deriving ready work`);
+      continue;
+    }
 
     // Reviewer tier matches the highest tier used across all streaks:
     // any premium streak -> premium; otherwise standard (cheap work reviewed at standard minimum).
