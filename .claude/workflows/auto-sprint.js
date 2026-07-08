@@ -1282,10 +1282,23 @@ async function parallel(tasks) {
   return Promise.all(tasks);
 }
 
+// bd may prepend a `warning: ...` line to its --json stdout (notably bd 1.1.0's
+// "warning: beads.role not configured (GH#2950)"). In a normal terminal that goes to
+// stderr, but inside the workflow's sandboxed shell-dispatch subagents stderr merges
+// into the captured stdout, so the warning is glued in front of the JSON. Feeding that
+// straight into JSON.parse() throws; the surrounding catch then silently returns an empty
+// ready/blocker set, and Develop concludes "no ready tasks" (spurious deadlock / skipped
+// develop with zero doers -- the s10 win32 failure). BD_JSON extracts just the JSON span
+// (first '['/'{' to the last ']'/'}') so parsing tolerates leading/trailing non-JSON noise.
+// Deliberately backslash-free (indexOf/lastIndexOf on literal bracket chars) so it survives
+// the backtick -> shell(double-quote) -> node round-trip with no escaping. Interpolated as
+// `JSON.parse(${BD_JSON})` inside the node -e extractor strings below.
+const BD_JSON = `(()=>{const s=d.indexOf('['),o=d.indexOf('{');let a=s<0?o:(o<0?s:Math.min(s,o));const e=Math.max(d.lastIndexOf(']'),d.lastIndexOf('}'));return a>=0&&e>=a?d.slice(a,e+1):d;})()`;
+
 async function countBeadsBlockers(thr, roots) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
-  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-  const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).issues.map(i=>i.id).join(' '))}catch{}"`;
+  const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
   const cmds = [
     ...roots.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --status=open --json | ${openExtract}`,
@@ -1296,8 +1309,8 @@ async function countBeadsBlockers(thr, roots) {
 
 async function getReadyStreaks(rootIds) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
-  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-  const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).issues.map(i=>i.id).join(' '))}catch{}"`;
+  const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
   const cmds = [
     ...rootIds.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --ready --type=task --json | ${taskExtract}`,
@@ -1321,8 +1334,8 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
 
 async function checkCycleState(rootIds) {
   // Extract only the fields needed for planDone check to keep output small.
-  const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(d).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
-  const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
+  const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(${BD_JSON}).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
+  const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).map(i=>i.id).join(' '))}catch{}"`;
   const cmds = [
     ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
     `bd list --status=in_progress --type=task --json | ${ipExtract}`,
@@ -1967,7 +1980,7 @@ while (cycleCount < maxCycles) {
         const _open = await countBeadsBlockers(threshold, rootIds);
         if (_open.count > 0) {
           const _diag = await dispatchShell(
-            [`bd list --status=open --type=task --json | node -e "const d=require('fs').readFileSync(0,'utf8');try{const a=JSON.parse(d).map(i=>({id:i.id,blocked_by:i.blocked_by||i.dependencies||[]}));process.stdout.write(JSON.stringify(a).slice(0,1200))}catch{process.stdout.write('[]')}"`],
+            [`bd list --status=open --type=task --json | node -e "const d=require('fs').readFileSync(0,'utf8');try{const a=JSON.parse(${BD_JSON}).map(i=>({id:i.id,blocked_by:i.blocked_by||i.dependencies||[]}));process.stdout.write(JSON.stringify(a).slice(0,1200))}catch{process.stdout.write('[]')}"`],
             { model: MODEL_HAIKU, label: `deadlock-diag-c${cycleCount}`, phase: 'Develop' }
           );
           const _diagText = `${_open.count} open issue(s) at/above ${goal} in the sprint subtree but NONE are ready on the first develop iteration. The dependency DAG may be blocked (commonly backwards or parent-child edges; note 'bd dep cycles' MISSES parent-child deadlocks -- inspect blocked_by on leaf tasks). Open leaf tasks + blocked_by: ${(_diag?.outputs?.[0] || '[]').trim()}`;
@@ -2161,7 +2174,7 @@ while (cycleCount < maxCycles) {
 
       if (!doerResult) {
         log(`Doer returned null (streak ${streak.model}) -- resetting orphaned in_progress tasks and retrying`);
-        const _ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
+        const _ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).map(i=>i.id).join(' '))}catch{}"`;
         const ipResult = await dispatchShell(
           [`bd list --status=in_progress --type=task --json | ${_ipExtract}`],
           { model: MODEL_HAIKU, label: `reset-orphans-c${cycleCount}-i${devIter}`, phase: 'Develop' }
@@ -2338,9 +2351,9 @@ while (cycleCount < maxCycles) {
 
   let blockers;
   {
-    const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-    const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
-    const _taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
+    const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).issues.map(i=>i.id).join(' '))}catch{}"`;
+    const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+    const _taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
     const exitCmds = [
       ...rootIds.map(id => `bd graph --json ${id} | ${_idExtract}`),
       `bd list --status=open --json | ${_openExtract}`,
