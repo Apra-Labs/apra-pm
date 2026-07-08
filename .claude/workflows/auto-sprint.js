@@ -1396,7 +1396,10 @@ phase('Plan');
 // Fixed output indices (always 8 elements regardless of branch/no-branch):
 //   0: repo root (git rev-parse --show-toplevel)
 //   1: fetch result (FETCHED / FETCH_FAIL) -- run BEFORE checkout so a new sprint
-//      branch is cut from the freshest origin/<base_branch> (guards stale-main branching)
+//      branch is cut from the freshest origin/<base_branch> (guards stale-main branching).
+//      Also (side effect, no stdout) registers the sprint scaffolding dirs in the repo's
+//      local git exclude so the state file and any worktree roots never leak into a doer's
+//      `git add -A` / the committed sprint-logs/ tree and pollute the PR diff.
 //   2: branch checkout result (or "no-op" when branch was not specified)
 //   3: confirmed branch name (git rev-parse --abbrev-ref HEAD)
 //   4: startedAt timestamp (date +%Y%m%d_%H%M%S)
@@ -1412,7 +1415,14 @@ const setupShellCmds = [
   `git rev-parse --show-toplevel`,
   // Fetch first so branch creation below can base a NEW sprint branch on the freshest
   // origin/<base_branch> instead of a possibly-stale local HEAD (stale-main guard).
-  `git fetch origin --quiet && echo FETCHED || echo FETCH_FAIL`,
+  // The `{ ... }` block writes only to a file (no stdout), so the slot's stdout stays
+  // exactly FETCHED/FETCH_FAIL. Uses `git rev-parse --git-path` so it resolves correctly
+  // in linked worktrees too; the trailing `;` guarantees the fetch runs regardless.
+  `EXCL=$(git rev-parse --git-path info/exclude 2>/dev/null); ` +
+    `if [ -n "$EXCL" ]; then mkdir -p "$(dirname "$EXCL")"; ` +
+    `grep -qxF 'sprint-logs/.state/' "$EXCL" 2>/dev/null || ` +
+    `printf 'sprint-logs/.state/\\n.auto-sprint/\\n' >> "$EXCL"; fi; ` +
+    `git fetch origin --quiet && echo FETCHED || echo FETCH_FAIL`,
   branch
     // Prefer the freshest origin/<base_branch> as the new branch's base (stale-main guard), but if
     // that ref is absent (repo's default is e.g. master, or fetch failed) fall back to creating from
@@ -1532,14 +1542,12 @@ if (branch === 'main' || branch === 'master') {
 // is a NO-OP when no state file exists -- a fresh run follows the exact prior code path.
 const stateFileRel = sprintStateFileFor(branch);
 const _priorState = await readSprintState(stateFileRel, 'state-read');
-let resuming = false;
 let effectiveStartedAt = setup.startedAt;
 if (_priorState.exists && typeof _priorState.ageS === 'number' && _priorState.ageS < SPRINT_STATE_TTL_S) {
   log(`ERROR: preflight -- another auto-sprint run appears active on branch "${branch}" (state updated ${_priorState.ageS}s ago < ${SPRINT_STATE_TTL_S}s TTL). Refusing to start a second overlapping run (guards concurrent-checkout corruption). If the prior run truly crashed, wait out the TTL or delete ${repo}/${stateFileRel}.`);
   return { error: 'preflight: sprint already running' };
 }
 if (_priorState.exists && _priorState.state) {
-  resuming = true;
   const _rc = Number(_priorState.state.cycle) || 0;
   if (_priorState.state.startedAt) effectiveStartedAt = _priorState.state.startedAt;  // keep log-file continuity
   if (_rc > 0) cycleCount = _rc - 1;  // re-enter the loop at the crashed cycle (loop increments first)
@@ -1622,10 +1630,15 @@ const sprintTs = effectiveStartedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2
 let flushedCount = 0;  // how many dispatchLedger entries have been appended to sprintLogFile
 
 // Snapshot of the resolved setup, reused when writing phase checkpoints below.
+// NOTE: deliberately does NOT carry calibrationRaw. The checkpoint is hex-encoded onto a
+// `node -e` command line (writeSprintState); the full calibration JSON there pushed the
+// command length toward the Windows ~32KB limit for no benefit -- resume never reads it
+// (it re-derives calibration from the fresh Phase-2 setup, see _parsedCalib). Keep this
+// object small: every field here is embedded in every heartbeat write.
 const _stateBase = {
   schema_version: 1, branch, base_branch, rootIds,
   startedAt: effectiveStartedAt, repo, transcriptDir: setup.transcriptDir || '',
-  integTestEnabled, calibrationRaw: setup.calibrationRaw || '',
+  integTestEnabled,
 };
 // Acquire the lock / record the initial checkpoint now that setup has resolved.
 await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Plan', planApproved: false }, 'Plan', 'state-init');
@@ -1928,6 +1941,17 @@ while (cycleCount < maxCycles) {
   let forceSerialIter = false;
 
   while (devIter < MAX_DEV_ITER) {
+    // Lock heartbeat: refresh the state file's mtime every develop iteration. A single
+    // develop iteration (a doer batch + review) can exceed SPRINT_STATE_TTL_S; without a
+    // heartbeat here the lock would "expire" mid-run and a second invocation on the same
+    // branch could start concurrently and corrupt the shared checkout. Cheap relative to
+    // the per-iteration doer/review dispatches.
+    await writeSprintState(
+      stateFileRel,
+      { ..._stateBase, cycle: cycleCount, phase: 'Develop', planApproved: true },
+      'Develop',
+      `heartbeat-c${cycleCount}-i${devIter}`,
+    );
     const streakResult = await getReadyStreaks(rootIds);
     if (streakResult.totalCount === 0) {
       // Distinguish genuine completion from a dependency DEADLOCK. If the sprint subtree
