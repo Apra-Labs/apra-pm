@@ -62,7 +62,7 @@ function safeWriteFile(fp, content, label) {
 // Logging
 // ---------------------------------------------------------------------------
 function log(msg) {
-  const line = '[RUNNER] ' + new Date().toISOString() + ' ' + msg;
+  const line = new Date().toISOString() + ' ' + msg;
   process.stdout.write(line + '\n');
   _liveState.log.push(line);
   if (_liveState.log.length > 200) _liveState.log.shift();
@@ -409,11 +409,6 @@ const STATUS_HTML = `<!DOCTYPE html>
       margin-bottom: 16px;
       color: var(--text-muted);
     }
-    .task-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
     .task-item {
       background: var(--bg-glass);
       border: 1px solid var(--border);
@@ -447,70 +442,122 @@ const STATUS_HTML = `<!DOCTYPE html>
       color: #a1a1aa;
       height: 300px;
       overflow-y: auto;
+      margin: 0; font-size: 16px; font-weight: 500; color: var(--text-muted);
+      display: flex; align-items: center; gap: 8px;
     }
-    .terminal .log-line { border-bottom: 1px solid rgba(255,255,255,0.02); padding: 2px 0; }
-    .terminal .log-time { color: #52525b; margin-right: 12px; display: inline-block; min-width: 65px; }
-    .terminal .log-msg { color: #d4d4d8; }
-    .terminal .log-msg.highlight { color: #3b82f6; }
-    .terminal .log-msg.error { color: #ef4444; }
+    .compact-stats {
+      display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-muted);
+      background: rgba(255,255,255,0.03); padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
+    }
+    .compact-stats strong { color: var(--text); font-weight: 600; margin-left: 4px; }
     
-    @keyframes slideIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.9); }
+      100% { opacity: 1; transform: scale(1); }
     }
+    
+    .btn-stop {
+      background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid var(--danger);
+      padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600;
+      transition: all 0.2s ease; display: flex; align-items: center; gap: 6px;
+    }
+    .btn-stop:hover { background: rgba(239, 68, 68, 0.2); transform: translateY(-1px); }
+    .btn-stop:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
     
     .banner {
-      padding: 16px 20px;
-      border-radius: 12px;
-      margin-bottom: 24px;
-      font-weight: 600;
-      display: none;
-      animation: slideIn 0.5s ease;
+      padding: 8px 16px; text-align: center; font-weight: 500; font-size: 13px;
+      display: none; border-bottom: 1px solid var(--border);
     }
-    .banner.success { background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); color: var(--success); }
-    .banner.error { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); color: var(--danger); }
+    .banner.success { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+    .banner.error { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+    .banner.mission { background: rgba(59, 130, 246, 0.1); color: var(--accent); }
+
+    .main-content {
+      flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 16px 24px; gap: 16px;
+    }
+    
+    .top-panels {
+      display: flex; gap: 16px; height: 35vh; min-height: 200px;
+    }
+    
+    .panel {
+      background: var(--bg-glass); border: 1px solid var(--border); border-radius: 8px;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .panel-header {
+      padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--text-muted);
+      border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.02);
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .panel-body {
+      flex: 1; overflow-y: auto;
+    }
+    
+    .activity-panel { flex: 1; }
+    .tree-panel {
+      flex: 0 0 350px; resize: horizontal; overflow: hidden; min-width: 250px; max-width: 50vw;
+    }
+    .tree-panel::-webkit-resizer { background-color: var(--border); }
+    
+    table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+    th, td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    th { position: sticky; top: 0; background: #18181b; font-weight: 500; color: var(--text-muted); z-index: 10; }
+    td { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+    
+    .task-row {
+      padding: 6px 12px; border-bottom: 1px solid rgba(255,255,255,0.03); transition: background 0.2s;
+    }
+    .task-row:hover { background: rgba(255,255,255,0.02); }
+    
+    .terminal-panel {
+      flex: 1; display: flex; flex-direction: column; min-height: 200px;
+    }
+    .terminal {
+      flex: 1; background: #000; padding: 12px; overflow-y: auto;
+      font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: #d4d4d8;
+      border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+    }
+    .log-line { display: flex; gap: 12px; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+    .log-line:hover { background: rgba(255,255,255,0.02); }
+    .log-time { color: #52525b; user-select: none; flex-shrink: 0; width: 65px; }
+    .log-msg { word-break: break-all; white-space: pre-wrap; flex: 1; }
+    .log-msg.highlight { color: #60a5fa; font-weight: 500; }
+    .log-msg.error { color: #f87171; }
+    .log-msg.success { color: #34d399; font-weight: 500; }
+    .log-msg.warning { color: #fbbf24; font-weight: 500; }
     
     .capability-pill {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 600;
-      margin-right: 6px;
-      margin-top: 4px;
-      transition: all 0.2s ease;
+      display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase;
     }
-    .task-row {
-      padding: 8px 10px;
-      border-radius: 6px;
-      margin-bottom: 4px;
-      transition: all 0.2s ease;
-      border: 1px solid transparent;
-    }
-    .task-row:hover {
-      background: rgba(255, 255, 255, 0.03);
-      border-color: rgba(255, 255, 255, 0.05);
-      transform: translateX(2px);
-    }
-    .capability-pill.yes { color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
-    .capability-pill.no { color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); }
+    .capability-pill.yes { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .capability-pill.no { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); border: 1px solid rgba(255, 255, 255, 0.1); }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1>Auto-Sprint <span id="root-badge" style="color:var(--text);font-weight:700"></span> <span style="font-size:14px;color:var(--text-muted);font-weight:400;margin:0 4px">on</span> <span id="branch-badge">loading...</span></h1>
-    <div id="connection-status" style="font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 12px;">
-      <button id="btn-stop" onclick="fetch('/stop',{method:'POST'}).then(()=>{this.disabled=true;this.innerText='Stopping...';this.style.opacity='0.6';})" style="background:var(--error);color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Stop Sprint</button>
-      <div style="display:flex;align-items:center;gap:6px;"><div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live</div>
+    <h1>Auto-Sprint <span id="root-badge" style="color:var(--text);font-weight:700"></span> <span style="font-size:14px;color:var(--text-muted);font-weight:400;margin:0 4px">on</span> <span id="branch-badge" style="color:var(--text)">loading...</span></h1>
+    
+    <div class="compact-stats">
+      <div>Phase: <strong id="stat-phase" style="text-transform: capitalize;">-</strong></div>
+      <div>Cycle: <strong id="stat-cycle">-</strong></div>
+      <div>Open Tasks: <strong id="stat-open">-</strong></div>
+      <div>Cost: <strong id="stat-cost">-</strong></div>
+      <div>Calls/Tokens: <strong id="stat-calls-tokens">-</strong></div>
+      <div id="cap-deploy" class="capability-pill">Deploy</div>
+      <div id="cap-integ" class="capability-pill">Integ Tests</div>
+    </div>
+    
+    <div id="connection-status" style="font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 16px;">
+      <button id="btn-stop" class="btn-stop" onclick="fetch('/stop',{method:'POST'}).then(()=>{this.disabled=true;this.innerHTML='<span style=\\'display:inline-block;animation:pulse 1.5s infinite;\\'>◼</span> Stopping...';})">◼ Stop</button>
+      <div style="display:flex;align-items:center;gap:6px;font-weight:600;"><div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live</div>
     </div>
   </div>
   
+  <div class="banner mission" id="mission-banner">Mission: <span id="mission-text"></span></div>
+  <div class="banner" id="banner"></div>
+
   <div class="main-content">
-    <div class="sidebar">
-      <div class="section-title" style="margin-bottom: 20px;">Sprint Phases</div>
-      <ul class="phase-list" id="phase-list">
-        <li class="phase-item" data-phase="setup">Setup</li>
-        <li class="phase-item" data-phase="Plan">Plan</li>
         <li class="phase-item" data-phase="Develop">Develop</li>
         <li class="phase-item" data-phase="Test">Test</li>
         <li class="phase-item" data-phase="Harvest">Harvest</li>
@@ -559,15 +606,15 @@ const STATUS_HTML = `<!DOCTYPE html>
         </div>
       </div>
       
-      <div class="section-title">Terminal Log</div>
-      <div class="terminal" id="terminal"></div>
-      
-      <div class="section-title" style="margin-top: 30px; margin-bottom: 16px;">Task Activity</div>
-      <div style="max-height: 25vh; overflow-y: auto; background: var(--bg-glass); border: 1px solid var(--border); border-radius: 8px;">
+      <div class="section-title" style="margin-top: 20px; margin-bottom: 16px;">Task Activity</div>
+      <div style="max-height: 35vh; overflow-y: auto; background: var(--bg-glass); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 30px;">
         <table id="task-list" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
           <!-- Table rows injected here -->
         </table>
       </div>
+      
+      <div class="section-title">Terminal Log</div>
+      <div class="terminal" id="terminal"></div>
     </div>
   </div>
 
@@ -576,13 +623,22 @@ const STATUS_HTML = `<!DOCTYPE html>
     let lastLogCount = 0;
 
     function formatDuration(ms) {
-      if (!ms) return '-';
+      if (!ms || ms < 0) return '-';
       const s = Math.floor(ms / 1000);
       const m = Math.floor(s / 60);
       const h = Math.floor(m / 60);
       if (h > 0) return h + 'h ' + (m%60) + 'm ' + (s%60) + 's';
       if (m > 0) return m + 'm ' + (s%60) + 's';
       return s + 's';
+    }
+    
+    function parseCycleRound(label, fallbackCycle) {
+      const match = label.match(/-c(\\d+)-r(\\d+)/);
+      if (match) return 'C' + match[1] + ' R' + match[2];
+      const matchC = label.match(/-c(\\d+)/);
+      if (matchC) return 'C' + matchC[1];
+      if (fallbackCycle === 'setup') return 'C0';
+      return 'C' + (fallbackCycle || '?');
     }
 
     async function poll() {
@@ -601,21 +657,29 @@ const STATUS_HTML = `<!DOCTYPE html>
           missionBanner.style.display = 'none';
         }
         
-        const currentPhase = s.phase || 'setup';
-        document.querySelectorAll('.phase-item').forEach(el => {
-          el.classList.remove('active');
-          if (el.dataset.phase.toLowerCase() === currentPhase.toLowerCase()) {
-            el.classList.add('active');
-          }
-        });
+        const currentPhase = s.currentPhase || s.phase || 'setup';
+        const phaseEl = document.getElementById('stat-phase');
+        if (phaseEl) phaseEl.textContent = currentPhase;
+        
+        const sprintBeads = s.sprintBeads || [];
+        const openTasks = sprintBeads.filter(b => b.t === 'task' && b.s === 'open').length;
         
         document.getElementById('stat-cycle').textContent = (s.cycle || 0) + '/' + (s.maxCycles || '?');
-        document.getElementById('stat-open').textContent = s.openCount != null ? s.openCount : '-';
-        document.getElementById('stat-cost').textContent = '$' + (s.costUsd || 0).toFixed(4);
-        document.getElementById('stat-agent').textContent = s.currentAgent || 'Idle';
+        document.getElementById('stat-open').textContent = openTasks > 0 ? openTasks : (s.openCount != null ? s.openCount : '-');
+        const actualCost = s.costUsd || 0;
+        const budget = 10.00;
+        document.getElementById('stat-cost').textContent = '$' + actualCost.toFixed(2) + ' / $' + budget.toFixed(2);
+        
+        const agentEl = document.getElementById('stat-agent');
+        if (agentEl) agentEl.textContent = s.currentAgent || 'Idle';
         
         const ledger = s.ledger || [];
-        const totalCalls = ledger.length;
+        const callsTokensEl = document.getElementById('stat-calls-tokens');
+        if (callsTokensEl) {
+          const totalTokens = ledger.reduce((sum, item) => sum + (item.outTokens || 0), 0);
+          callsTokensEl.textContent = ledger.length + ' / ' + totalTokens;
+        }
+        const totalCalls = ledger.length + (s.currentAgent && !s.goalMet && !s.abortReason ? 1 : 0);
         const totalTokens = ledger.reduce((acc, l) => acc + (l.outTokens || 0), 0);
         document.getElementById('stat-calls-tokens').textContent = totalCalls + ' / ' + totalTokens.toLocaleString();
         
@@ -650,39 +714,84 @@ const STATUS_HTML = `<!DOCTYPE html>
           }
         }
         
-        const taskList = document.getElementById('task-list');
-        if (!ledger.length) {
-          if (taskList.innerHTML !== '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>') taskList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Waiting for tasks...</div>';
-        } else {
-          const byPhase = {};
-          
         const sprintBeads = s.sprintBeads || [];
         const beadsContainer = document.getElementById('sprint-beads');
         if (sprintBeads.length > 0) {
-          sprintBeads.sort((a,b) => (a.t === 'feature' ? -1 : 1) || a.id.localeCompare(b.id));
           let bHtml = '';
-          for (const b of sprintBeads) {
+          const rendered = new Set();
+          const typeLevel = { 'epic': 3, 'feature': 2, 'task': 1 };
+          
+          function renderNode(b, depth) {
+             if (rendered.has(b.id)) return;
+             rendered.add(b.id);
              const isClosed = b.s === 'closed';
              const isIp = b.s === 'in_progress';
-             const icon = b.t === 'feature' ? '📦' : '📄';
+             const icon = b.t === 'epic' ? '🌟' : (b.t === 'feature' ? '📦' : '📄');
              const color = isClosed ? 'var(--text-muted)' : (isIp ? 'var(--accent)' : 'var(--text)');
              const style = isClosed ? 'text-decoration:line-through; opacity:0.5; filter: grayscale(100%);' : '';
-             bHtml += '<div class="task-row" style="color:' + color + '; ' + style + '">' +
-                        '<div style="display:flex; align-items:center; gap:8px;">' +
+             const titleSafe = (b.title || '').replace(/"/g, '&quot;');
+             bHtml += '<div class="task-row" style="color:' + color + '; ' + style + '; padding-left:' + (depth*16) + 'px;" title="' + titleSafe + '">' +
+                        '<div style="display:flex; align-items:center; gap:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' +
                           '<span style="font-size:14px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">' + icon + '</span>' +
-                          '<strong style="letter-spacing: 0.5px;">' + b.id + '</strong>' +
+                          '<strong style="letter-spacing: 0.5px; flex-shrink: 0;">' + b.id + '</strong>' +
+                          '<span style="opacity:0.85; font-size:11px; margin-top:2px; text-overflow:ellipsis; overflow:hidden;">' + (b.title || '').replace(/</g, '&lt;') + '</span>' +
                         '</div>' +
-                        '<div style="opacity:0.85; font-size:11px; padding-left:26px; margin-top:2px; display:inline-block;">' + (b.title || '').replace(/</g, '&lt;') + '</div>' +
                       '</div>';
+             if (b.children && b.children.length > 0) {
+                 b.children.forEach(cId => {
+                     const child = sprintBeads.find(x => x.id === cId);
+                     // Only render as a visual child if it's strictly a lower hierarchical level
+                     // This prevents external blockers (e.g. task -> feature) from rendering as children
+                     if (child && (typeLevel[b.t] || 0) > (typeLevel[child.t] || 0)) {
+                         renderNode(child, depth + 1);
+                     }
+                 });
+             }
+          }
+          
+          // 1. Render all primary sprint issues first
+          const sprintIssueIds = s.issues || [];
+          const sprintRoots = sprintBeads.filter(b => sprintIssueIds.includes(b.id));
+          sprintRoots.forEach(r => renderNode(r, 0));
+          
+          // 2. Anything remaining is an external blocker or unrelated task
+          const leftovers = sprintBeads.filter(b => !rendered.has(b.id));
+          if (leftovers.length > 0) {
+              bHtml += '<div style="color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; margin-top:16px; margin-bottom:8px; padding-left:12px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px;">Other Dependencies</div>';
+              leftovers.forEach(b => renderNode(b, 0));
           }
           if (beadsContainer.innerHTML !== bHtml) beadsContainer.innerHTML = bHtml;
+        } else {
+          beadsContainer.innerHTML = '<div style="color:var(--text-muted);">No issues tracked yet...</div>';
         }
-          ledger.forEach((act, idx) => {
+        
+        const taskList = document.getElementById('task-list');
+        
+        // Merge ledger with currently running task
+        const mergedActs = [...ledger];
+        if (s.currentAgent && !s.goalMet && !s.abortReason) {
+           const isAlreadyInLedger = ledger.length > 0 && ledger[ledger.length - 1].label === s.currentAgent && !ledger[ledger.length - 1].durationMs;
+           if (!isAlreadyInLedger) {
+             mergedActs.push({
+               phase: s.currentPhase || s.phase || '?',
+               label: s.currentAgent,
+               model: s.currentModel || '...',
+               cycle: s.currentCycle || s.cycle || '?',
+               durationMs: Date.now() - (s.currentStartTime || Date.now()),
+               isRunning: true
+             });
+           }
+        }
+        
+        if (!mergedActs.length) {
+          if (taskList.innerHTML !== '<div style="color:var(--text-muted);font-size:13px;padding:20px;">Waiting for tasks...</div>') 
+            taskList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:20px;">Waiting for tasks...</div>';
+        } else {
+          const byPhase = {};
+          mergedActs.forEach((act, idx) => {
              const phase = act.phase || '?';
              if (!byPhase[phase]) byPhase[phase] = [];
-             // If it's the very last ledger entry, it's 'running' unless sprint is done
-             const isRunning = (idx === ledger.length - 1) && !s.goalMet && !s.abortReason;
-             byPhase[phase].push({ ...act, isRunning });
+             byPhase[phase].push(act);
           });
           
           let html = '<thead style="color:var(--text-muted); border-bottom:1px solid var(--border); position:sticky; top:0; background:#18181b; z-index:10;"><tr style="background:rgba(255,255,255,0.02);">' +
@@ -691,21 +800,42 @@ const STATUS_HTML = `<!DOCTYPE html>
                      '<th style="padding:10px 12px; font-weight:500;">Agent</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Duration</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Tokens</th>' +
-                     '<th style="padding:10px 12px; font-weight:500;">Cycle</th></tr></thead><tbody>';
+                     '<th style="padding:10px 12px; font-weight:500;">Cycle/Round</th></tr></thead><tbody>';
           
           for (const phase of phases) {
             const acts = byPhase[phase];
             if (acts && acts.length > 0) {
                acts.forEach(act => {
-                 const statusStyle = act.isRunning ? 'color:var(--accent); font-weight:bold;' : 'color:var(--success);';
-                 const bgStyle = act.isRunning ? 'background: rgba(59, 130, 246, 0.05);' : '';
+                 let isWarning = false;
+                 if (act.verdict) {
+                    const v = String(act.verdict).toUpperCase();
+                    if (v === 'CHANGES NEEDED' || v === 'FAILED' || v === 'RED' || v.includes('BUGS')) isWarning = true;
+                 }
+                 const statusStyle = act.isRunning ? 'color:var(--accent); font-weight:bold;' : (isWarning ? 'color:var(--warning); font-weight:500;' : 'color:var(--success);');
+                 const bgStyle = act.isRunning ? 'background: rgba(59, 130, 246, 0.05);' : (isWarning ? 'background: rgba(245, 158, 11, 0.05);' : '');
+                 const icon = act.isRunning ? '<span style="display:inline-block; animation: pulse 1.5s infinite;">⚡</span> ' : (isWarning ? '⚠️ ' : '✓ ');
+                 
+                 // Insight subtext
+                 let insight = '';
+                 if (act.label.includes('planner')) insight = 'Breaking down features into actionable tasks';
+                 else if (act.label.includes('reviewer')) insight = 'Evaluating code/plan quality and correctness';
+                 else if (act.label.includes('doer')) insight = 'Writing code and implementing requirements';
+                 else if (act.label.includes('integ')) insight = 'Running integration test playbook';
+                 else if (act.label.includes('harvester')) insight = 'Committing changes, closing tasks, syncing DB';
+                 
                  html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05); ' + bgStyle + '">' +
-                         '<td style="padding:10px 12px; width:120px; ' + statusStyle + '">' + phase + (act.isRunning ? ' (Running)' : ' (Done)') + '</td>' +
-                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);">' + act.label + '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + act.model + '</td>' +
+                         '<td style="padding:10px 12px; width:130px; ' + statusStyle + '">' + icon + phase + (act.isRunning ? ' (Running)' : ' (Done)') + '</td>' +
+                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);">' + act.label + 
+                           '<div style="font-weight:400; font-size:11px; color:var(--text-muted); margin-top:2px;">' + insight + '</div></td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + 
+                           (act.model === "pm-doer-std" ? "Standard" : 
+                           (act.model === "pm-doer-cheap" ? "Cheap" : 
+                           (act.model === "pm-doer-prem" ? "Premium" : 
+                           (act.model === "native" ? "Orchestrator" : act.model)))) + 
+                         '</td>' +
                          '<td style="padding:10px 12px; color:var(--text-muted);">' + formatDuration(act.durationMs) + '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + (act.outTokens || 0) + '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">C' + (act.cycle === 'setup' ? '0' : act.cycle) + '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + (act.outTokens || (act.isRunning ? '-' : '0')) + ' <a href="/log?label=' + act.label + '" target="_blank" title="View LLM details" style="text-decoration:none; margin-left:4px;">🔍</a></td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + parseCycleRound(act.label, act.cycle) + '</td>' +
                          '</tr>';
                });
             }
@@ -719,14 +849,25 @@ const STATUS_HTML = `<!DOCTYPE html>
           const term = document.getElementById('terminal');
           term.innerHTML = s.log.map(line => {
             function escapeHTML(str) { return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+            // Extract the GMT timestamp
             const timeMatch = line.match(/202\\d-[\\d\\-T:.]+Z/);
-            const time = timeMatch ? timeMatch[0].split('T')[1].split('.')[0] : '';
-            let msg = line.replace(/\[RUNNER\] 202\\d-[\\d\\-T:.]+Z /, '');
-            msg = escapeHTML(msg);
+            let localTime = '';
+            if (timeMatch) {
+               const dateObj = new Date(timeMatch[0]);
+               localTime = dateObj.toLocaleTimeString([], { hour12: false });
+            }
+            let msg = line.replace(/^.*?Z /, '');
+            msg = escapeHTML(msg.trim());
             const isHighlight = msg.includes('dispatch:') || msg.includes('===');
             const isError = msg.includes('ERROR') || msg.includes('FATAL') || msg.includes('failed');
-            const cls = isError ? 'error' : (isHighlight ? 'highlight' : '');
-            return '<div class="log-line"><span class="log-time">' + time + '</span><span class="log-msg ' + cls + '">' + msg + '</span></div>';
+            const isWarning = msg.includes('CHANGES NEEDED') || msg.includes('BUGS');
+            const isSuccess = msg.includes('APPROVED');
+            let cls = '';
+            if (isError) cls = 'error';
+            else if (isWarning) cls = 'warning';
+            else if (isSuccess) cls = 'success';
+            else if (isHighlight) cls = 'highlight';
+            return '<div class="log-line"><span class="log-time">' + localTime + '</span><span class="log-msg ' + cls + '">' + msg + '</span></div>';
           }).join('');
           term.scrollTop = term.scrollHeight;
         }
@@ -812,24 +953,28 @@ function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
   return { totalCount: readyTasks.length, streaks };
 }
 
-// parseCycleState: contract {planDone, inProgressIds}.
+// parseCycleState: contract {planDone, inProgressIds, allIssues}.
 function parseCycleState(outputs, rootCount) {
-  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { planDone: false, inProgressIds: [] };
+  if (!Array.isArray(outputs) || outputs.length < rootCount + 1) return { planDone: false, inProgressIds: [], allIssues: [] };
   const inProgressIds = String(outputs[rootCount] || '').trim().split(/\s+/).filter(Boolean);
+  
+  const issueMap = new Map();
   const planDone = Array.from({ length: rootCount }).every((_, i) => {
     try {
       const issues = JSON.parse(outputs[i]);
       if (!Array.isArray(issues)) return false;
-      const features = issues.filter(x => x.t === 'feature');
-      if (features.length === 0) return false;
+      issues.forEach(x => issueMap.set(x.id, x));
+      const features = issues.filter(x => x.t === 'feature' || x.t === 'epic');
       const openFts = features.filter(x => x.s !== 'closed');
-      if (openFts.length === 0) return true;
       const tasks = issues.filter(x => x.t === 'task');
+      
+      if (features.length === 0 && tasks.length === 0) return false;
+      if (openFts.length > 0) return false;
       if (tasks.length === 0) return false;
       return tasks.every(x => x.d);
     } catch { return false; }
   });
-  return { planDone, inProgressIds };
+  return { planDone, inProgressIds, allIssues: Array.from(issueMap.values()) };
 }
 
 // truncateStreakToCeiling: returns the longest in-order prefix of streakIds whose
@@ -859,12 +1004,20 @@ function labelTaskIds(ids) {
 
 // dispatchLedger: accumulates cost entries across all cycles.
 const dispatchLedger = [];
+const dispatchOutputs = {};
+
+function estimateCost(tier, inTokens, outTokens) {
+  if (!tier || tier === 'native') return 0;
+  if (tier.includes('cheap') || tier === 'haiku') return (inTokens * 0.25 + outTokens * 1.25) / 1000000;
+  if (tier.includes('standard') || tier === 'sonnet') return (inTokens * 3.00 + outTokens * 15.00) / 1000000;
+  if (tier.includes('premium') || tier === 'opus') return (inTokens * 15.00 + outTokens * 75.00) / 1000000;
+  return (inTokens * 3.00 + outTokens * 15.00) / 1000000;
+}
 
 // dispatchFleet: async wrapper around the apra-fleet execute_prompt MCP tool.
 // If opts.schema is set, appends a RESPOND WITH ONLY VALID JSON block and
 // retries up to 3 times on JSON parse failure.
-async function dispatchFleet(memberName, prompt, opts) {
-  opts = opts || {};
+async function dispatchFleet(memberName, prompt, opts = {}) {
   const schema = opts.schema || null;
   const label  = opts.label  || memberName;
   const phase  = opts.phase  || '?';
@@ -904,9 +1057,13 @@ async function dispatchFleet(memberName, prompt, opts) {
         await new Promise(r => setTimeout(r, 5000));
         continue;
       }
+      const inTokens = Math.ceil(fullPrompt.length / 4);
+      const outTokens = Math.ceil(raw.length / 4);
+      const costUsd = estimateCost(memberName, inTokens, outTokens);
       // No schema needed -- record entry and return raw string.
-      dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0, durationMs: Date.now() - startTime });
+      dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens, costUsd, durationMs: Date.now() - startTime });
       updateLiveState({ costUsd: dispatchLedger.reduce(function(s,e){return s+(e.costUsd||0);},0) });
+      dispatchOutputs[label] = raw;
       return raw;
     }
 
@@ -934,8 +1091,14 @@ async function dispatchFleet(memberName, prompt, opts) {
         }
       }
       const parsed = JSON.parse(stripped);
+      const inTokens = Math.ceil(fullPrompt.length / 4);
+      const outTokens = Math.ceil(raw.length / 4);
+      const costUsd = estimateCost(memberName, inTokens, outTokens);
       dispatchLedger.push({ cycle, phase, label, model: memberName,
-        outTokens: Math.ceil(raw.length / 4), costUsd: 0, durationMs: Date.now() - startTime });
+        outTokens, costUsd, durationMs: Date.now() - startTime,
+        verdict: parsed.verdict || parsed.status || null });
+      updateLiveState({ costUsd: dispatchLedger.reduce(function(s,e){return s+(e.costUsd||0);},0) });
+      dispatchOutputs[label] = raw;
       return parsed;
     } catch {
       if (attempt < MAX_RETRIES - 1) {
@@ -948,6 +1111,7 @@ async function dispatchFleet(memberName, prompt, opts) {
   log('ERROR: JSON parse failed after ' + MAX_RETRIES + ' retries [' + label + ']. Raw: ' +
     lastRaw.slice(0, 200));
   dispatchLedger.push({ cycle, phase, label, model: memberName, outTokens: 0, costUsd: 0, durationMs: Date.now() - startTime });
+  updateLiveState({ costUsd: dispatchLedger.reduce(function(s,e){return s+(e.costUsd||0);},0) });
   return null;
 }
 
@@ -1238,6 +1402,29 @@ process.on('uncaughtException', function(err) {
   updateLiveState({ phase: 'ERROR', abortReason: err.message });
 });
 
+let _globalRepo = process.cwd();
+let _globalSafeBranch = 'unknown';
+let _globalStartedAt = new Date().toISOString();
+
+function writeStaticHtmlReport() {
+  try {
+    const ts = new Date(_globalStartedAt).toISOString().replace(/[:.]/g, '-');
+    const htmlPath = require('path').join(_globalRepo, 'sprint-logs', 'sprint-status-' + ts + '.html');
+    const finalStateJson = JSON.stringify(_liveState);
+    let finalHtml = STATUS_HTML.replace(
+      "const res = await fetch('/state');",
+      "const res = { json: async () => (" + finalStateJson + ") };"
+    ).replace(
+      "setInterval(poll, 2000);",
+      "poll(); // static report"
+    );
+    safeWriteFile(htmlPath, finalHtml, 'Static HTML sprint report');
+    log('Static HTML report saved: ' + htmlPath);
+  } catch (e) {
+    log('Failed to write HTML report: ' + e.message);
+  }
+}
+
 (async function main() {
   updateLiveState({ startedAt: Date.now() });
   // ---- Setup block ----
@@ -1254,6 +1441,13 @@ process.on('uncaughtException', function(err) {
         const playbookExists = fs.existsSync(path.join(_repo, 'integ-test-playbook.md'));
         const statePayload = Object.assign({}, _liveState, { ledger: dispatchLedger, deployMdExists, playbookExists });
         res.end(JSON.stringify(statePayload));
+        return;
+      }
+      if (req.url.startsWith('/log?label=')) {
+        const u = new URL(req.url, 'http://localhost');
+        const l = u.searchParams.get('label');
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(dispatchOutputs[l] || 'No output found for task: ' + l);
         return;
       }
       if (req.url === '/stop' && req.method === 'POST') {
@@ -1318,6 +1512,9 @@ process.on('uncaughtException', function(err) {
 
   // Build state file path (branch-keyed).
   const safeBranch = branch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'default';
+  _globalRepo = repo;
+  _globalSafeBranch = safeBranch;
+  _globalStartedAt = startedAt;
   const stateFileRel = path.join(repo, 'sprint-logs', '.state', safeBranch + '.state.json');
 
   // Load calibration.json if present; fall back to DEFAULT_CALIBRATION.
@@ -1367,9 +1564,16 @@ process.on('uncaughtException', function(err) {
   let prevOpenIds     = [];
 
   // ---- SPRINT LOOP ----
+  const sprintBudget = 10.00;
   while (cycleCount < maxCycles && !goalMet && !abortReason) {
-    try {
     cycleCount++;
+    
+    const currentCost = dispatchLedger.reduce((s, e) => s + (e.costUsd || 0), 0);
+    if (currentCost > sprintBudget * 2) {
+      abortReason = 'Cost limit exceeded ($' + currentCost.toFixed(2) + ' / $' + sprintBudget.toFixed(2) + ')';
+      log('ABORT: ' + abortReason);
+      break;
+    }
     log('\n=== Cycle ' + cycleCount + '/' + maxCycles + ' | goal: ' + goal + ' ===');
     updateLiveState({ phase: 'Plan', cycle: cycleCount });
 
@@ -1381,7 +1585,7 @@ process.on('uncaughtException', function(err) {
     const makeBfsExtr = (rootsArr) => `const subtree=new Set('${rootsArr.join(' ')}'.split(' ').filter(Boolean));const q=Array.from(subtree);const nodes=g.layout&&g.layout.Nodes;if(nodes){while(q.length>0){const c=q.shift();const n=nodes[c];if(n&&n.DependsOn){for(const d of n.DependsOn)if(!subtree.has(d)){subtree.add(d);q.push(d);}}}}`;
     
     const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
-    const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const issues=(g.issues||[]).filter(i=>subtree.has(i.id));console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
+    const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const issues=(g.issues||[]).filter(i=>subtree.has(i.id));console.log(JSON.stringify(issues.map(i=>({id:i.id,title:i.title,t:i.issue_type,s:i.status,d:!!(i.description||'').trim(),children:(g.layout&&g.layout.Nodes[i.id]&&g.layout.Nodes[i.id].DependsOn)||[]}))))}catch{console.log('[]')}"`;
     const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
     const cycleStateCmds = [
       ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
@@ -1392,6 +1596,7 @@ process.on('uncaughtException', function(err) {
     });
     const cycleState = parseCycleState(cycleStateRaw && cycleStateRaw.outputs,
       rootIds.length);
+    updateLiveState({ sprintBeads: cycleState.allIssues || [] });
     log('Cycle state: planDone=' + cycleState.planDone +
         ' inProgress=[' + cycleState.inProgressIds.join(', ') + ']');
 
@@ -1539,17 +1744,18 @@ process.on('uncaughtException', function(err) {
         planFeedback = (planReview && planReview.notes) || '';
         log('Plan CHANGES NEEDED (round ' + (pi + 1) + '): ' + planFeedback.slice(0, 120));
 
-        // Write feedback.md and commit so planner can read it.
-        await dispatchFleet('pm-doer-cheap',
-          `Repo: ${repo}\nBranch: ${branch}\n\n` +
-          `Write the following plan-reviewer feedback to feedback.md (overwrite if it exists):\n\n` +
-          `${planFeedback}\n\n` +
-          `Then commit:\n` +
-          `  git -C "${repo}" add feedback.md\n` +
-          `  git -C "${repo}" -c user.name='pm-reviewer' -c user.email='pm-reviewer@pm.local' commit -m "feedback: plan-reviewer-c${cycleCount}-r${pi}"\n` +
-          `Do not push. Return "OK" when done.`,
-          { label: 'feedback-commit-plan-c' + cycleCount + '-r' + pi, phase: 'Plan', cycle: cycleCount }
-        );
+        // Write feedback.md and commit natively so planner can read it.
+        const fbLabel = 'feedback-commit-plan-c' + cycleCount + '-r' + pi;
+        const fbStart = Date.now();
+        updateLiveState({ currentAgent: fbLabel, currentModel: 'native', currentPhase: 'Plan', currentCycle: cycleCount, currentStartTime: fbStart });
+        fs.writeFileSync(require('path').join(repo, 'feedback.md'), planFeedback);
+        try {
+          require('child_process').execSync('git add feedback.md', { cwd: repo, stdio: 'ignore' });
+          require('child_process').execSync('git -c user.name="pm-reviewer" -c user.email="pm-reviewer@pm.local" commit -m "feedback: plan-reviewer-c' + cycleCount + '-r' + pi + '"', { cwd: repo, stdio: 'ignore' });
+        } catch (e) {
+          log('Warning: Feedback commit failed (possibly empty diff): ' + e.message);
+        }
+        dispatchLedger.push({ cycle: cycleCount, phase: 'Plan', label: fbLabel, model: 'native', outTokens: 0, costUsd: 0, durationMs: Date.now() - fbStart });
       } else {
         log('Plan reviewer returned null or unexpected verdict on round ' + (pi + 1));
       }
@@ -1642,8 +1848,8 @@ process.on('uncaughtException', function(err) {
         else if (streak.model === TIER_PREMIUM) doerMember = 'pm-doer-premium';
         else                                    doerMember = 'pm-doer-std';
 
-        const doerLabel = `doer-c${cycleCount}-i${devIter}: ${labelTaskIds(fittedIds)}`;
-        log('Doer c' + cycleCount + '-i' + devIter + ': ' + labelTaskIds(fittedIds) +
+        const doerLabel = `doer-c${cycleCount}-r${devIter}: ${labelTaskIds(fittedIds)}`;
+        log('Doer c' + cycleCount + '-r' + devIter + ': ' + labelTaskIds(fittedIds) +
             ' [model=' + streak.model + ']');
 
         const doerPrompt =
@@ -1673,14 +1879,14 @@ process.on('uncaughtException', function(err) {
           const ipResult = await dispatchShellFleet(
             [`bd list --status=in_progress --type=task --json | ${ipExtractD}`],
             'pm-doer-cheap',
-            { label: 'reset-orphans-c' + cycleCount + '-i' + devIter, phase: 'Develop', cycle: cycleCount }
+            { label: 'reset-orphans-c' + cycleCount + '-r' + devIter, phase: 'Develop', cycle: cycleCount }
           );
           const ipIds = ((ipResult && ipResult.outputs && ipResult.outputs[0]) || '')
             .trim().split(/\s+/).filter(Boolean);
           if (ipIds.length > 0) {
             const resetCmds = ipIds.map(id => `bd update ${id} --status=open`);
             await dispatchShellFleet(resetCmds, 'pm-doer-cheap', {
-              label: 'reset-open-c' + cycleCount + '-i' + devIter, phase: 'Develop', cycle: cycleCount,
+              label: 'reset-open-c' + cycleCount + '-r' + devIter, phase: 'Develop', cycle: cycleCount,
             });
             log('Reset ' + ipIds.length + ' in_progress task(s) to open: ' + ipIds.join(', '));
           }
@@ -1704,7 +1910,7 @@ process.on('uncaughtException', function(err) {
       // Reviewer tier: any premium -> premium; otherwise standard.
       const usedModels = streakResult.streaks.map(s => s.model);
       const reviewerModel = usedModels.includes(TIER_PREMIUM) ? TIER_PREMIUM : TIER_STANDARD;
-      const reviewerLabel = `reviewer-c${cycleCount}-i${devIter}: ${labelTaskIds(workedIds)}`;
+      const reviewerLabel = `reviewer-c${cycleCount}-r${devIter}: ${labelTaskIds(workedIds)}`;
 
       const reviewerPrompt =
         `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
@@ -1722,27 +1928,25 @@ process.on('uncaughtException', function(err) {
         label: reviewerLabel, phase: 'Develop', cycle: cycleCount,
         schema: REVIEW_SCHEMA,
       });
-      log('Reviewer c' + cycleCount + '-i' + devIter + ': ' +
+      log('Reviewer c' + cycleCount + '-r' + devIter + ': ' +
           ((review && review.verdict) || 'null') + ' -- ' + labelTaskIds(workedIds));
 
       if (!approved(review)) {
         devFeedback = (review && review.notes) || '';
         log('Reviewer feedback: ' + devFeedback.slice(0, 120));
-        // Write feedback.md to disk (fire-and-forget; next doer's git add picks it up).
-        dispatchFleet('pm-doer-cheap',
-          `Repo: ${repo}\nBranch: ${branch}\n\n` +
-          `Write the following reviewer feedback to feedback.md (overwrite if it exists):\n\n` +
-          `${devFeedback}\n\n` +
-          `Do not commit, push, or run any other command. Write the file to disk and stop.`,
-          { label: 'feedback-write-' + reviewerLabel, phase: 'Develop', cycle: cycleCount }
-        );  // intentionally NOT awaited
+        // Write feedback.md to disk synchronously to avoid race conditions.
+        const devFbLabel = 'feedback-write-' + reviewerLabel;
+        const devFbStart = Date.now();
+        updateLiveState({ currentAgent: devFbLabel, currentModel: 'native', currentPhase: 'Develop', currentCycle: cycleCount, currentStartTime: devFbStart });
+        fs.writeFileSync(require('path').join(repo, 'feedback.md'), devFeedback);
+        dispatchLedger.push({ cycle: cycleCount, phase: 'Develop', label: devFbLabel, model: 'native', outTokens: 0, costUsd: 0, durationMs: Date.now() - devFbStart });
       } else {
         devFeedback = '';
       }
 
       writeSprintState(stateFileRel, {
         type: 'checkpoint', cycle: cycleCount, phase: 'Develop', devIter, branch, goal, rootIds, startedAt,
-      }, 'Develop', 'state-c' + cycleCount + '-dev-i' + devIter);
+      }, 'Develop', 'state-c' + cycleCount + '-dev-r' + devIter);
     }
 
     if (abortReason) break;
@@ -1783,8 +1987,9 @@ process.on('uncaughtException', function(err) {
           const integTestPrompt =
             'Repo: ' + repo + '\nBranch: ' + branch + '\nCycle: ' + cycleCount + '\n' +
             'Sprint goals: ' + rootSummary + '\n\n' +
-            'Run: bd list --type=feature --status=open\n' +
-            'For each open feature, execute its integration tests.\n\n' +
+            'The target features for this sprint are: ' + rootIds.join(', ') + '\n' +
+            'For each of these target features, execute its integration tests.\n' +
+            'Do NOT query or test features outside of this target list.\n\n' +
             'For each feature:\n' +
             '  PASS: all tests pass -> bd close <feature-id>\n' +
             '  FAIL: tests fail -> bd create --title="[integ] <description>" ' +
@@ -1963,22 +2168,26 @@ process.on('uncaughtException', function(err) {
   safeWriteFile(calibPath, JSON.stringify(updatedCalibration, null, 2) + '\n', 'calibration.json');
   log('Calibration updated: ' + calibPath);
 
-  // Dolt push (non-fatal).
-  const doltPushPrompt =
-    'Sync beads state to the Dolt remote.\n\n' +
-    'Run:\n' +
-    '  bd dolt push\n\n' +
-    'Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n' +
-    'If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n' +
-    '  "bd dolt push failed (non-fatal): <reason>"\n' +
-    'and continue -- do NOT throw, return an error, or abort.\n\n' +
-    'Return "OK" when done (regardless of whether the push succeeded or failed).';
-  try {
-    await dispatchFleet('pm-harvester', doltPushPrompt, {
-      label: 'dolt-push', phase: 'Harvest', cycle: cycleCount,
-    });
-  } catch (err) {
-    log('WARN: dolt push dispatch failed (non-fatal): ' + String(err).slice(0, 120));
+  // Dolt push (non-fatal, can be skipped for tests).
+  if (!opts.skip_dolt_push) {
+    const doltPushPrompt =
+      'Sync beads state to the Dolt remote.\n\n' +
+      'Run:\n' +
+      '  bd dolt push\n\n' +
+      'Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n' +
+      'If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n' +
+      '  "bd dolt push failed (non-fatal): <reason>"\n' +
+      'and continue -- do NOT throw, return an error, or abort.\n\n' +
+      'Return "OK" when done (regardless of whether the push succeeded or failed).';
+    try {
+      await dispatchFleet('pm-harvester', doltPushPrompt, {
+        label: 'dolt-push', phase: 'Harvest', cycle: cycleCount,
+      });
+    } catch (err) {
+      log('WARN: dolt push dispatch failed (non-fatal): ' + String(err).slice(0, 120));
+    }
+  } else {
+    log('Skipping dolt push as requested by opts.skip_dolt_push.');
   }
 
   // ---------------------------------------------------------------- PR + CI (T3.4)
@@ -2091,11 +2300,7 @@ process.on('uncaughtException', function(err) {
   log('  (input token cost not included -- see ' + stateFileRel + ' for per-dispatch detail)');
   log('================================================\n');
 
-  // Write HTML sprint report (T3.6).
-  const _htmlTs = startedAt.replace(/[:.]/g, '-');
-  const _htmlPath = path.join(repo, 'sprint-logs', safeBranch + '-' + _htmlTs + '.html');
-  safeWriteFile(_htmlPath, STATUS_HTML, 'HTML sprint report');
-  log('HTML report: ' + _htmlPath);
+  writeStaticHtmlReport();
 
   // Close browser status server.
   try { if (_statusServer) _statusServer.close(); } catch {}
@@ -2125,6 +2330,7 @@ process.on('uncaughtException', function(err) {
         'crash-report'
       );
     } catch {}
+    writeStaticHtmlReport();
     try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
     setTimeout(() => process.exit(1), 3000);
     return;
@@ -2140,6 +2346,8 @@ process.on('uncaughtException', function(err) {
       'crash-report'
     );
   } catch {}
+  writeStaticHtmlReport();
+  try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
   try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
   process.exit(1);
 });
