@@ -1540,6 +1540,32 @@ if (_priorState.exists && _priorState.state) {
   log(`RESUME: stale state for "${branch}" (age ${_priorState.ageS}s, lastGoodPhase=${_priorState.state.phase || '?'}, cycle=${_rc}) -- resuming from cycle ${_rc} instead of restarting. Beads state (durable closed tasks, planDone detection, orphan reset) drives intra-cycle correctness; no junk issues are re-created.`);
 }
 
+// ---- PREFLIGHT: beads schema gate (bd remote-migrate block, #4259) ----
+// If the repo's beads DB is remote-backed and its Dolt schema is BEHIND the installed bd, bd
+// refuses to auto-migrate the shared remote (independent migration forks the schema), and every
+// write the sprint makes -- planner `bd create`, doer `bd update --claim` / `bd close` -- is
+// blocked. Left undetected the sprint dies mid-run with a cryptic error and no PR. A read-only
+// `bd ready` still surfaces the gate as a warning, so probe for it up front and fail fast with
+// the exact fix. Signature strings are matched loosely so this survives minor bd wording changes;
+// a repo with no bd DB yet ("no beads database found") does NOT match, so there is no false abort.
+const _bdGate = await dispatchShell(
+  [`bd ready 2>&1 | grep -iE "refusing to auto-apply|writes are blocked|remote-backed database|forks the schema|BD_ALLOW_REMOTE_MIGRATE" | head -3 || true`],
+  { model: MODEL_HAIKU, label: 'preflight-bd-schema', phase: 'Plan' }
+);
+const _gateHit = ((_bdGate && _bdGate.outputs && _bdGate.outputs[0]) || '').trim();
+if (_gateHit) {
+  log(
+    `ERROR: preflight -- BEADS SCHEMA GATE. This repo's bd database is remote-backed and its Dolt ` +
+    `schema is behind the installed bd, so bd is blocking all writes to avoid forking the shared ` +
+    `remote (#4259). A sprint cannot claim/close/create issues in this state. Detected: ` +
+    `"${_gateHit.slice(0, 180)}". FIX (single-owner DB, the common case): on the OLD bd run ` +
+    `\`bd dolt push\`; install the new bd; then \`BD_ALLOW_REMOTE_MIGRATE=1 bd migrate && bd dolt push\`. ` +
+    `Full runbook (incl. the multi-clone case): docs/beads-1.1.0-migration.md. Aborting before any ` +
+    `work so no partial sprint or PR is produced.`
+  );
+  return { error: 'preflight: beads schema gate (remote-migrate block)' };
+}
+
 // Parse calibration from the raw string the setup agent returned verbatim.
 // Deep-merge with DEFAULT_CALIBRATION so any missing/new field always has a valid value.
 // historical gets its own merge because it accumulates real sprint history on top of the zeros.
