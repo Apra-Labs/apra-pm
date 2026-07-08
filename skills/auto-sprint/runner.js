@@ -926,8 +926,7 @@ async function _fleetCall(memberName, prompt, opts) {
     const tempPromptPath = path.join(os.tmpdir(), `agy-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
     fs.writeFileSync(tempPromptPath, subagentPrompt, 'utf-8');
     
-    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested.
-CRITICAL INSTRUCTION: You are running headlessly. DO NOT use the native "run_command" tool (or Bash tool) as it will hang indefinitely waiting for user approval. If you absolutely must execute a shell command, you MUST use the "execute_command" tool on the "apra-fleet" MCP server. All other tools (read_file, write_file, grep_search, etc.) are safe to use normally.`;
+    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested. CRITICAL INSTRUCTION: You are running headlessly. DO NOT use the native "run_command" tool (or Bash tool) as it will hang indefinitely waiting for user approval. If you absolutely must execute a shell command, you MUST use the "execute_command" tool on the "apra-fleet" MCP server. All other tools (read_file, write_file, grep_search, etc.) are safe to use normally.`;
     if (useGatewayMode) {
       instruction = `Read the file at "${tempPromptPath}". It contains instructions to call an MCP tool. Call the tool and return its exact output with no extra conversational text.`;
     }
