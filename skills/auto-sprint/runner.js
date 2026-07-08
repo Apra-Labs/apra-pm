@@ -1323,8 +1323,10 @@ process.on('uncaughtException', function(err) {
     }, 'Plan', 'state-c' + cycleCount + '-plan');
 
     // Check cycle state: planDone + in_progress orphans.
-    const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-    const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(d).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
+    const makeBfsExtr = (rootsArr) => `const subtree=new Set('${rootsArr.join(' ')}'.split(' ').filter(Boolean));const q=Array.from(subtree);const nodes=g.layout&&g.layout.Nodes;if(nodes){while(q.length>0){const c=q.shift();const n=nodes[c];if(n&&n.DependsOn){for(const d of n.DependsOn)if(!subtree.has(d)){subtree.add(d);q.push(d);}}}}`;
+    
+    const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
+    const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const issues=(g.issues||[]).filter(i=>subtree.has(i.id));console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
     const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
     const cycleStateCmds = [
       ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
@@ -1525,7 +1527,7 @@ process.on('uncaughtException', function(err) {
     while (devIter < MAX_DEV_ITER) {
       // Get ready streaks via fleet shell dispatch.
       // Use the graph to accurately determine which tasks have 0 open blockers, bypassing bd list --ready filtering.
-      const graphReadyExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);const nodes=g.layout.Nodes;const readyIds=[];for(const id in nodes){const n=nodes[id];if(n.Issue.status!=='open')continue;let blocked=false;if(n.DependsOn){for(const depId of n.DependsOn){const dep=nodes[depId];if(dep&&dep.Issue.status!=='closed'&&dep.Issue.status!=='deferred'){blocked=true;break;}}}if(!blocked)readyIds.push(id);}console.log(readyIds.join(' '));}catch(e){}"`;
+      const graphReadyExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const nodes=g.layout&&g.layout.Nodes;const readyIds=[];if(nodes){for(const id of Array.from(subtree)){const n=nodes[id];if(!n||n.Issue.status!=='open')continue;let blocked=false;if(n.DependsOn){for(const depId of n.DependsOn){const dep=nodes[depId];if(dep&&dep.Issue.status!=='closed'&&dep.Issue.status!=='deferred'){blocked=true;break;}}}if(!blocked)readyIds.push(id);}}console.log(readyIds.join(' '));}catch(e){}"`;
       const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
       const readyCmds = [
         ...rootIds.map(id => `bd graph --json ${id} | ${graphReadyExtract}`),
@@ -1540,7 +1542,7 @@ process.on('uncaughtException', function(err) {
       if (streakResult.totalCount === 0) {
         // Deadlock check: if first iteration and open issues exist but none ready.
         if (devIter === 0) {
-          const idExtractR = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(Object.keys(JSON.parse(d).layout.Nodes).join(' '))}catch{}"`;
+          const idExtractR = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
           const openIdExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
           const blockerCmds = [
             ...rootIds.map(id => `bd graph --json ${id} | ${idExtractR}`),
@@ -1762,9 +1764,10 @@ process.on('uncaughtException', function(err) {
     }, 'Test', 'state-c' + cycleCount + '-test');
 
     // ---------------------------------------------------------------- CYCLE EXIT GATE (T3.2)
+    const makeBfsExtrExit = (rootsArr) => `const subtree=new Set('${rootsArr.join(' ')}'.split(' ').filter(Boolean));const q=Array.from(subtree);const nodes=g.layout&&g.layout.Nodes;if(nodes){while(q.length>0){const c=q.shift();const n=nodes[c];if(n&&n.DependsOn){for(const d of n.DependsOn)if(!subtree.has(d)){subtree.add(d);q.push(d);}}}}`;
 
     const _openIdExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
-    const _idExtract2    = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
+    const _idExtract2    = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtrExit(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
     const _exitCmds = [
       ...rootIds.map(id => 'bd graph --json ' + id + ' | ' + _idExtract2),
       'bd list --status=open --json | ' + _openIdExtract,
