@@ -1006,13 +1006,16 @@ function labelTaskIds(ids) {
 const dispatchLedger = [];
 const dispatchOutputs = {};
 
+// PURE_FUNCTIONS_BEGIN
+
 function estimateCost(tier, inTokens, outTokens) {
   if (!tier || tier === 'native') return 0;
   if (tier.includes('cheap') || tier === 'haiku') return (inTokens * 0.25 + outTokens * 1.25) / 1000000;
   if (tier.includes('standard') || tier === 'sonnet') return (inTokens * 3.00 + outTokens * 15.00) / 1000000;
-  if (tier.includes('premium') || tier === 'opus') return (inTokens * 15.00 + outTokens * 75.00) / 1000000;
+  if (tier.includes('prem') || tier === 'opus') return (inTokens * 15.00 + outTokens * 75.00) / 1000000;
   return (inTokens * 3.00 + outTokens * 15.00) / 1000000;
 }
+// PURE_FUNCTIONS_END
 
 // dispatchFleet: async wrapper around the apra-fleet execute_prompt MCP tool.
 // If opts.schema is set, appends a RESPOND WITH ONLY VALID JSON block and
