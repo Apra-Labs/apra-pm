@@ -486,8 +486,9 @@ const STATUS_HTML = `<!DOCTYPE html>
 <body>
   <div class="header">
     <h1>Auto-Sprint <span id="root-badge" style="color:var(--text);font-weight:700"></span> <span style="font-size:14px;color:var(--text-muted);font-weight:400;margin:0 4px">on</span> <span id="branch-badge">loading...</span></h1>
-    <div id="connection-status" style="font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 6px;">
-      <div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live
+    <div id="connection-status" style="font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 12px;">
+      <button id="btn-stop" onclick="fetch('/stop',{method:'POST'}).then(()=>{this.disabled=true;this.innerText='Stopping...';this.style.opacity='0.6';})" style="background:var(--error);color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">Stop Sprint</button>
+      <div style="display:flex;align-items:center;gap:6px;"><div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live</div>
     </div>
   </div>
   
@@ -1006,6 +1007,14 @@ async function _fleetCall(memberName, prompt, opts) {
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     let lastPos = 0;
     while (true) {
+        if (global.abortRequested) {
+            try {
+               const stopPromptPath = path.join(os.tmpdir(), `agy-stop-${Date.now()}.txt`);
+               fs.writeFileSync(stopPromptPath, `Call the call_mcp_tool tool. ServerName: apra-fleet. ToolName: stop_prompt. Arguments: {"member_name": "${memberName}"}. Return OK.`, 'utf-8');
+               require('node:child_process').exec(`agy agentapi new-conversation --model=${agyModel} "Read the file at \\"${stopPromptPath}\\". Call the MCP tool and return."`);
+            } catch(e) {}
+            throw new Error('ABORT_REQUESTED');
+        }
         if (!fs.existsSync(logPath)) {
             await sleep(500);
             continue;
@@ -1229,6 +1238,12 @@ process.on('uncaughtException', function(err) {
         const playbookExists = fs.existsSync(path.join(_repo, 'integ-test-playbook.md'));
         const statePayload = Object.assign({}, _liveState, { ledger: dispatchLedger, deployMdExists, playbookExists });
         res.end(JSON.stringify(statePayload));
+        return;
+      }
+      if (req.url === '/stop' && req.method === 'POST') {
+        global.abortRequested = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'stopping' }));
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -2070,6 +2085,9 @@ process.on('uncaughtException', function(err) {
   try { if (_statusServer) _statusServer.close(); } catch {}
 
   clearSprintState(stateFileRel, 'state-clear-done');
+  
+  // Let UI fetch the final state before exiting organically
+  setTimeout(() => process.exit(0), 3000);
 
   return {
     cycles:        cycleCount,
@@ -2080,6 +2098,22 @@ process.on('uncaughtException', function(err) {
   };
 
 })().catch(function(err) {
+  if (err.message === 'ABORT_REQUESTED') {
+    log('\n[STOP] Sprint aborted by user via UI.');
+    updateLiveState({ phase: 'ABORTED', endedAt: Date.now() });
+    try {
+      var _crashDir = (typeof repo !== 'undefined' && repo) ? path.join(repo, 'sprint-logs') : '.';
+      safeWriteFile(
+        path.join(_crashDir, 'crash-report.json'),
+        JSON.stringify({ aborted: true, ts: new Date().toISOString() }, null, 2),
+        'crash-report'
+      );
+    } catch {}
+    try { if (typeof _statusServer !== 'undefined' && _statusServer) _statusServer.close(); } catch {}
+    setTimeout(() => process.exit(1), 3000);
+    return;
+  }
+  
   log('[FATAL] Unhandled: ' + String(err));
   updateLiveState({ phase: 'CRASHED', abortReason: String(err) });
   try {
