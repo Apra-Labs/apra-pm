@@ -116,4 +116,3 @@ parallel win with numbers.
 - Cross-issue parallelism beyond what `bd ready` already exposes (the DAG governs it).
 - Auto-resolving merge conflicts (we re-queue instead -- deterministic and safe).
 - Parallel reviewers (review stays a single pass; it is not the dominant cost).
-</content>

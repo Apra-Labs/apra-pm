@@ -1402,7 +1402,7 @@ phase('Plan');
 //   4: startedAt timestamp (date +%Y%m%d_%H%M%S)
 //   5: deploy.md exists (YES/NO)
 //   6: integ-test-playbook.md exists (YES/NO)
-//   7: comma-joined list of permission entries declared in deploy.md /
+//   7: newline-joined list of permission entries declared in deploy.md /
 //      integ-test-playbook.md's "## Permissions" sections that are NOT yet
 //      in .claude/settings.json's permissions.allow (empty string if none --
 //      computed deterministically here so Step 5's prompt to the agent never
@@ -1414,7 +1414,10 @@ const setupShellCmds = [
   // origin/<base_branch> instead of a possibly-stale local HEAD (stale-main guard).
   `git fetch origin --quiet && echo FETCHED || echo FETCH_FAIL`,
   branch
-    ? `git checkout "${branch}" 2>/dev/null || git checkout --track "origin/${branch}" 2>/dev/null || git checkout -b "${branch}" "origin/${base_branch}"`
+    // Prefer the freshest origin/<base_branch> as the new branch's base (stale-main guard), but if
+    // that ref is absent (repo's default is e.g. master, or fetch failed) fall back to creating from
+    // local HEAD -- never leave HEAD on the wrong branch, which would silently run the sprint there.
+    ? `git checkout "${branch}" 2>/dev/null || git checkout --track "origin/${branch}" 2>/dev/null || git checkout -b "${branch}" "origin/${base_branch}" 2>/dev/null || git checkout -b "${branch}"`
     : `echo "no-op"`,
   `git rev-parse --abbrev-ref HEAD`,
   `date +%Y%m%d_%H%M%S`,
@@ -1430,13 +1433,16 @@ const setupShellCmds = [
       `const rest=text.slice(idx);` +
       `const next=rest.indexOf('\\n## ',3);` +
       `const section=next>=0?rest.slice(0,next):rest;` +
-      `return(section.match(/^Bash\\([^)]*\\)$/gm)||[]).map(s=>s.trim());` +
+      // Any Tool(...) entry (not just flush-left Bash): allow a leading bullet/indent and inner ')'.
+      `return(section.match(/^[ \\t]*[-*]?[ \\t]*[A-Za-z_][A-Za-z0-9_]*\\([^\\n]*\\)[ \\t]*$/gm)||[])` +
+        `.map(s=>s.replace(/^[ \\t]*[-*]?[ \\t]*/,'').trim());` +
     `}` +
     `const declared=[...new Set([...permsFrom('deploy.md'),...permsFrom('integ-test-playbook.md')])];` +
     `let existing=[];` +
     `try{existing=(JSON.parse(fs.readFileSync('.claude/settings.json','utf8')).permissions||{}).allow||[];}catch(e){}` +
     `const missing=declared.filter(p=>!existing.includes(p));` +
-    `console.log(missing.join(','));` +
+    // Newline-delimited, not comma: a permission pattern may contain commas, e.g. Bash(cmd --a=1,2).
+    `console.log(missing.join(String.fromCharCode(10)));` +
   `"`,
 ];
 const setupShell = await dispatchShell(setupShellCmds, {
@@ -1450,7 +1456,7 @@ const _detectedBranch  = (_outs[3] || '').trim();
 const _detectedTs      = (_outs[4] || '').trim();
 const _deployExists    = (_outs[5] || '').trim() === 'YES';
 const _playbookExists  = (_outs[6] || '').trim() === 'YES';
-const _missingPerms    = (_outs[7] || '').trim().split(',').map(s => s.trim()).filter(Boolean);
+const _missingPerms    = (_outs[7] || '').trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
 if (!_detectedRepo || !_detectedBranch) {
   log('ERROR: setup-shell failed -- could not detect repo root or branch');
@@ -1695,7 +1701,14 @@ const phaseTimeline = [];
 // Arrow (not `async function`) on purpose: appendNewEntries is asserted to be the LAST top-level
 // `async function` in this file by test/sprint-log-flush.test.mjs, which slices to the next one.
 const stamp = async (name) => {
-  const r = await dispatchShell(['date +%s'], { model: MODEL_HAIKU, label: `stamp-${name}`, phase: 'Plan' });
+  // Attribute the timing probe to the phase it actually marks (name prefix), not always 'Plan',
+  // so the per-phase cost ledger buildPhaseTiming reports stays trustworthy.
+  const _ph = /^plan/.test(name) ? 'Plan'
+    : /^develop/.test(name) ? 'Develop'
+    : /^test/.test(name) ? 'Test'
+    : /^(harvest|end)/.test(name) ? 'Harvest'
+    : 'Plan';
+  const r = await dispatchShell(['date +%s'], { model: MODEL_HAIKU, label: `stamp-${name}`, phase: _ph });
   const epoch = parseInt(((r?.outputs?.[0]) || '').trim(), 10);
   if (Number.isFinite(epoch)) phaseTimeline.push({ name, epoch });
 };
@@ -2365,7 +2378,7 @@ await stamp('harvest');
 // them, but that runs only AFTER an APPROVED review, so the cleanup must also happen up front.
 await dispatchShell(
   [
-    `git -C "${repo}" rm -f feedback.md requirements.md 2>/dev/null; ` +
+    `git -C "${repo}" rm -f --ignore-unmatch feedback.md requirements.md 2>/dev/null; ` +
     `rm -f "${repo}/feedback.md" "${repo}/requirements.md" 2>/dev/null; ` +
     `if git -C "${repo}" diff --cached --quiet; then echo "no process files staged"; else ` +
     `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: remove sprint process files before harvest" && ` +
@@ -2501,7 +2514,7 @@ await dispatch(
   `Persist beads state and clean sprint scaffolding from the PR diff.\n\n` +
   `Step 1 -- Stage sprint-logs and evict scaffold files from the working tree (unconditional):\n` +
   `  git -C "${repo}" add sprint-logs/\n` +
-  `  git -C "${repo}" rm -f feedback.md requirements.md 2>/dev/null || true\n` +
+  `  git -C "${repo}" rm -f --ignore-unmatch feedback.md requirements.md 2>/dev/null || true\n` +
   `  rm -f "${repo}/feedback.md" "${repo}/requirements.md" 2>/dev/null || true\n\n` +
   `Step 2 -- Export beads state:\n` +
   `  bd export -o "${repo}/.beads/issues.jsonl"\n` +

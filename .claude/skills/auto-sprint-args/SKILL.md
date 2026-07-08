@@ -76,7 +76,7 @@ explicit `branch`.
 | Mistake | Error emitted |
 |---------|---------------|
 | Args passed as escaped-JSON string or wrong shape | `invalid args: issues` -- `"issues" must be a non-empty array of beads IDs. Expected a JSON OBJECT, e.g. {"issues":["BD-7"],"branch":"feat/x"}. Received: <your raw args>` |
-| No issues at all | `missing issues` -- `at least one beads issue ID is required` |
+| No issues at all | `invalid args: issues` -- `"issues" must be a non-empty array of beads IDs` |
 | Non-string entries in `issues` | `invalid args: issues entries` |
 | Bad `goal` / `max_cycles` / `branch` / `base_branch` value | `invalid args: <field>` with the expected type/values |
 | Root issue doesn't exist | `preflight: root <id> not found` |

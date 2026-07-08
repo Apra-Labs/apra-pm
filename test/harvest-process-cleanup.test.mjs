@@ -20,8 +20,8 @@ test('a harvest process-file cleanup dispatch exists and removes feedback.md/req
     'a harvest pre-review process-file cleanup dispatch must exist');
   const idx = src.indexOf('harvest-clean-process-files');
   const region = src.slice(Math.max(0, idx - 900), idx);
-  assert.match(region, /rm -f feedback\.md requirements\.md/,
-    'the cleanup must git rm feedback.md and requirements.md');
+  assert.match(region, /rm -f --ignore-unmatch feedback\.md requirements\.md/,
+    'the cleanup must git rm --ignore-unmatch feedback.md and requirements.md (atomic-abort safe)');
 });
 
 test('process-file cleanup runs BEFORE the final-reviewer dispatch', () => {

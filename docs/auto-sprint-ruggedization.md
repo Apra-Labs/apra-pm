@@ -266,5 +266,3 @@ pure function sits above `PURE_FUNCTIONS_END`.
 
 - Per-phase wall-clock timing (ledger `ts` field) -- mode E, separate issue.
 - Cross-epic dependency validation in the planner -- mode G, separate issue.
-</content>
-</invoke>
