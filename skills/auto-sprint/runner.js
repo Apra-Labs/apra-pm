@@ -894,18 +894,83 @@ async function _fleetCall(memberName, prompt, opts) {
     'pm-reviewer': 'Gemini 3.1 Pro (High)',
     'pm-harvester': 'Gemini 3.1 Pro (High)'
   };
-  const model = modelMap[memberName] || 'Gemini 3.1 Pro (High)';
+  // Fallback: if running in a background shell without MCP, use `agentapi` local proxy
+  const modelMapAgy = {
+    'pm-doer-cheap': 'flash',
+    'pm-doer-std': 'pro',
+    'pm-doer-premium': 'pro',
+    'pm-planner': 'pro',
+    'pm-reviewer': 'pro',
+    'pm-harvester': 'pro'
+  };
   const child_process = require('node:child_process');
-  const execFileAsync = require('util').promisify(child_process.execFile);
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  
+  const useGatewayMode = process.env.AGY_GATEWAY_MODE === 'true';
+  const agyModel = modelMapAgy[memberName] || 'pro';
+  
+  let subagentPrompt = '';
+  if (useGatewayMode) {
+    // VERSION B: Gateway Mode (use subagent to execute apra-fleet MCP tool)
+    const mcpArgs = JSON.stringify({ member_name: memberName, prompt: prompt });
+    subagentPrompt = `Call the "execute_prompt" tool on the "apra-fleet" MCP server with these exact arguments:\n${mcpArgs}\n\nReturn EXACTLY the raw output of the tool execution and absolutely no other text.`;
+  } else {
+    // VERSION A: Native AGY Mode (use subagent to fulfill the prompt natively)
+    subagentPrompt = prompt;
+  }
   
   try {
-    const { stdout } = await execFileAsync('agy', ['--model', model, '--dangerously-skip-permissions', '--print', prompt], {
-      encoding: 'utf-8',
-      maxBuffer: 1024 * 1024 * 50
-    });
-    return stdout;
+    // Write the actual payload to a temp file to avoid Windows 8191-byte command line limits
+    const tempPromptPath = path.join(os.tmpdir(), `agy-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+    fs.writeFileSync(tempPromptPath, subagentPrompt, 'utf-8');
+    
+    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested.`;
+    if (useGatewayMode) {
+      instruction = `Read the file at "${tempPromptPath}". It contains instructions to call an MCP tool. Call the tool and return its exact output with no extra conversational text.`;
+    }
+    
+    // Spawn the subagent asynchronously via the local API proxy (bypasses DB lock)
+    const cmd = `agy agentapi new-conversation --model=${agyModel} "${instruction.replace(/"/g, '\\"')}"`;
+    const out = child_process.execSync(cmd, { encoding: 'utf-8' });
+    const parsed = JSON.parse(out);
+    const convId = parsed.response.newConversation.conversationId;
+    
+    // Poll the transcript log synchronously to get the response
+    const logPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
+    
+    let lastPos = 0;
+    while (true) {
+        if (!fs.existsSync(logPath)) {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+            continue;
+        }
+        const fd = fs.openSync(logPath, 'r');
+        const stat = fs.fstatSync(fd);
+        if (stat.size > lastPos) {
+            const buf = Buffer.alloc(stat.size - lastPos);
+            fs.readSync(fd, buf, 0, stat.size - lastPos, lastPos);
+            lastPos = stat.size;
+            fs.closeSync(fd);
+            
+            const lines = buf.toString('utf-8').split('\n').filter(l => l.trim());
+            for (const line of lines) {
+                try {
+                    const event = JSON.parse(line);
+                    if (event.type === 'PLANNER_RESPONSE' && event.status === 'DONE' && (!event.tool_calls || event.tool_calls.length === 0)) {
+                        try { fs.unlinkSync(tempPromptPath); } catch(e) {}
+                        return event.content;
+                    }
+                } catch (e) {}
+            }
+        } else {
+            fs.closeSync(fd);
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    }
   } catch (err) {
-    throw new Error('Fallback agy --print failed: ' + (err.stderr || err.message));
+    throw new Error('Fallback agentapi execution failed: ' + (err.stderr || err.message));
   }
 }
 
