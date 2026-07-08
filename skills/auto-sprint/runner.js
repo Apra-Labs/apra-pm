@@ -41,7 +41,7 @@ const FLEET_TOOL    = 'execute_prompt';
 // Live state (shared by log(), updateLiveState(), and HTTP status server)
 // ---------------------------------------------------------------------------
 let _liveState = {
-  phase: 'starting', cycle: 0, maxCycles: 5, goal: '', rootIds: [],
+  phase: 'starting', cycle: 0, maxCycles: 5, goal: '', rootIds: [], mission: '',
   startedAt: new Date().toISOString(), currentAgent: '', openCount: null,
   goalMet: false, abortReason: '', costUsd: 0, phaseError: '', log: [],
 };
@@ -107,6 +107,7 @@ const rawIssues        = opts.issues            || [];
 const rootIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
 const goal             = opts.goal             || 'P1/P2';
 const maxCycles        = Number(opts.max_cycles) || 5;
+const mission          = opts.mission           || '';
 const requirementsFile = opts.requirementsFile  || '';
 const base_branch      = opts.base_branch       || 'main';
 
@@ -484,7 +485,7 @@ const STATUS_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div class="header">
-    <h1>Auto-Sprint <span id="branch-badge">loading...</span></h1>
+    <h1>Auto-Sprint <span id="root-badge" style="color:var(--text);font-weight:700"></span> <span style="font-size:14px;color:var(--text-muted);font-weight:400;margin:0 4px">on</span> <span id="branch-badge">loading...</span></h1>
     <div id="connection-status" style="font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 6px;">
       <div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live
     </div>
@@ -507,6 +508,10 @@ const STATUS_HTML = `<!DOCTYPE html>
     </div>
     
     <div class="content-area">
+      <div id="mission-banner" class="banner" style="background: rgba(59, 130, 246, 0.1); border: 1px solid var(--accent); color: #93c5fd; display: none; margin-bottom: 20px;">
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 4px;">Sprint Mission</div>
+        <div id="mission-text" style="color: #fff; font-size: 15px; font-weight: 500;"></div>
+      </div>
       <div id="banner" class="banner"></div>
       
       <div class="stats-grid">
@@ -554,6 +559,15 @@ const STATUS_HTML = `<!DOCTYPE html>
         const s = await res.json();
         
         document.getElementById('branch-badge').textContent = s.branch || '?';
+        document.getElementById('root-badge').textContent = Array.isArray(s.rootIds) ? s.rootIds.join(', ') : '?';
+        
+        const missionBanner = document.getElementById('mission-banner');
+        if (s.mission) {
+          missionBanner.style.display = 'block';
+          document.getElementById('mission-text').textContent = s.mission;
+        } else {
+          missionBanner.style.display = 'none';
+        }
         
         const currentPhase = s.phase || 'setup';
         document.querySelectorAll('.phase-item').forEach(el => {
@@ -1079,7 +1093,7 @@ process.on('uncaughtException', function(err) {
 
   const startedAt = _liveState.startedAt;
   log('Repo: ' + repo + ' | Branch: ' + branch);
-  updateLiveState({ phase: 'setup', goal, rootIds, maxCycles, branch, startedAt });
+  updateLiveState({ phase: 'setup', goal, rootIds, maxCycles, branch, startedAt, mission });
 
   // Ensure sprint-logs/ directory exists.
   const sprintLogsDir = path.join(repo, 'sprint-logs');
@@ -1194,6 +1208,7 @@ process.on('uncaughtException', function(err) {
       const plannerPrompt =
         `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
         `Sprint goals: ${rootSummary}\n` +
+        (mission ? `SPRINT MISSION / OBJECTIVE:\n${mission}\n(Prioritize addressing this overarching objective when planning tasks).\n\n` : '') +
         (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
         `\n` +
         (planFeedback
