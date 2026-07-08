@@ -295,8 +295,8 @@ const DEFAULT_CALIBRATION = {
     output_expansion_factor: 1.0,        // multiplier on estimated output tokens counted against context
   },
   parallelism: {
-    _doc: 'Doer concurrency. When max_doers>1, independent bd-ready tasks are fanned out into isolated git worktrees, worked by one doer each in parallel, then merged back into the sprint branch sequentially with a conflict->re-queue fallback. Set max_doers to 1 to force the serial path (identical to pre-parallelism behavior). Actual width is also capped by the harness concurrency limit and the number of ready tasks. Project-agnostic: no assumptions about language, layout, or task shape.',
-    max_doers: 4,
+    _doc: 'Doer concurrency (EXPERIMENTAL -- default 1 = proven serial path). When max_doers>1, independent bd-ready tasks are fanned out into isolated git worktrees, worked by one doer each in parallel, then merged back into the sprint branch sequentially with a conflict->re-queue fallback. This path is NOT yet default: on s10 (win32) it hit cross-platform worktree fragility (worktree "already exists" leak on re-create, and worktree-branch merges landing nothing -> 0 commits). Until that is hardened and validated on all runner OSes, max_doers stays 1 so sprints use the pre-parallelism serial path (which commits doers directly on the sprint branch, no worktree/merge machinery). Set >1 to opt into the experimental parallel path. Width is also capped by the harness concurrency limit and the number of ready tasks. Project-agnostic: no assumptions about language, layout, or task shape.',
+    max_doers: 1,
     worktree_root: '.auto-sprint/wt',
   },
   historical: {
