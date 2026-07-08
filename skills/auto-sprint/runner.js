@@ -643,9 +643,11 @@ const STATUS_HTML = `<!DOCTYPE html>
           lastLogCount = s.log.length;
           const term = document.getElementById('terminal');
           term.innerHTML = s.log.map(line => {
+            function escapeHTML(str) { return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
             const timeMatch = line.match(/202\d-[\d-T:.]+Z/);
             const time = timeMatch ? timeMatch[0].split('T')[1].split('.')[0] : '';
-            const msg = line.replace(/\[RUNNER\] 202\d-[\d-T:.]+Z /, '');
+            let msg = line.replace(/\[RUNNER\] 202\d-[\d-T:.]+Z /, '');
+            msg = escapeHTML(msg);
             const isHighlight = msg.includes('dispatch:') || msg.includes('===');
             const isError = msg.includes('ERROR') || msg.includes('FATAL') || msg.includes('failed');
             const cls = isError ? 'error' : (isHighlight ? 'highlight' : '');
