@@ -1582,7 +1582,7 @@ process.on('uncaughtException', function(err) {
     while (devIter < MAX_DEV_ITER) {
       // Get ready streaks via fleet shell dispatch.
       // Use the graph to accurately determine which tasks have 0 open blockers, bypassing bd list --ready filtering.
-      const graphReadyExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const nodes=g.layout&&g.layout.Nodes;const readyIds=[];if(nodes){for(const id of Array.from(subtree)){const n=nodes[id];if(!n||n.Issue.status!=='open')continue;let blocked=false;if(n.DependsOn){for(const depId of n.DependsOn){const dep=nodes[depId];if(dep&&dep.Issue.status!=='closed'&&dep.Issue.status!=='deferred'){blocked=true;break;}}}if(!blocked)readyIds.push(id);}}console.log(readyIds.join(' '));}catch(e){}"`;
+      const graphReadyExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(d);${makeBfsExtr(rootIds)}const readyIds=[];if(nodes){for(const id of Array.from(subtree)){const n=nodes[id];if(!n||n.Issue.status!=='open')continue;let blocked=false;if(n.DependsOn){for(const depId of n.DependsOn){const dep=nodes[depId];if(dep&&dep.Issue.status!=='closed'&&dep.Issue.status!=='deferred'){blocked=true;break;}}}if(!blocked)readyIds.push(id);}}console.log(readyIds.join(' '));}catch(e){}"`;
       const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
       const readyCmds = [
         ...rootIds.map(id => `bd graph --json ${id} | ${graphReadyExtract}`),
