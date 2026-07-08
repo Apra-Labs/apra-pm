@@ -1295,9 +1295,38 @@ async function parallel(tasks) {
 // `JSON.parse(${BD_JSON})` inside the node -e extractor strings below.
 const BD_JSON = `(()=>{const s=d.indexOf('['),o=d.indexOf('{');let a=s<0?o:(o<0?s:Math.min(s,o));const e=Math.max(d.lastIndexOf(']'),d.lastIndexOf('}'));return a>=0&&e>=a?d.slice(a,e+1):d;})()`;
 
+// bdSubtreeSnippet: returns a JS snippet (embedded in a `node -e` extractor, AFTER
+// `const g = JSON.parse(...)`) that builds `subtree` = the STRICT sprint inventory for
+// `rootsArr`: the roots, their dotted-ID descendants (beads' <parent>.<n> hierarchy), and
+// anything transitively reachable from that set via DependsOn edges.
+//
+// Why: `bd graph --json <root>` returns the ENTIRE connected component -- including the
+// root's PARENT and therefore its SIBLINGS. The old extractors scraped every `.issues[].id`
+// out of that blob, so unrelated sibling tasks (e.g. gh-toy-4ef, a sibling of gh-toy-mi2
+// under a shared parent) leaked into the active sprint inventory, making getReadyStreaks
+// dispatch work outside the charter and the final reviewer hallucinate "missing" tasks.
+//
+// The ID-prefix pass is the wiring-independent core: beads always expresses parent->child
+// as `<parent>.<n>` IDs, so `id === r || id.startsWith(r + '.')` captures exactly a root's
+// descendants and never its siblings -- and it works even when DependsOn edges are absent
+// (verified: apra-pm's own DB has all-null DependsOn), so the subtree is never
+// under-inclusive (no false "no ready tasks" deadlock). The DependsOn BFS then additionally
+// pulls in explicitly-wired prerequisites. Backslash-free for the backtick->shell->node
+// round-trip. Reads `g` (the parsed graph) and `subtree` (a Set) from the enclosing scope.
+function bdSubtreeSnippet(rootsArr) {
+  const rootsLit = (rootsArr || []).join(' ');
+  return `const _roots='${rootsLit}'.split(' ').filter(Boolean);` +
+    `const subtree=new Set(_roots);` +
+    `const _nodes=(g.layout&&g.layout.Nodes)||{};` +
+    `const _ids=new Set([...Object.keys(_nodes),...((g.issues||[]).map(i=>i.id))]);` +
+    `for(const _id of _ids){for(const _r of _roots){if(_id===_r||_id.indexOf(_r+'.')===0){subtree.add(_id);break;}}}` +
+    `const _q=Array.from(subtree);` +
+    `while(_q.length>0){const _c=_q.shift();const _n=_nodes[_c];if(_n&&_n.DependsOn){for(const _dd of _n.DependsOn){if(!subtree.has(_dd)){subtree.add(_dd);_q.push(_dd);}}}}`;
+}
+
 async function countBeadsBlockers(thr, roots) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
-  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).issues.map(i=>i.id).join(' '))}catch{}"`;
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(roots)}console.log(Array.from(subtree).join(' '))}catch{}"`;
   const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
   const cmds = [
     ...roots.map(id => `bd graph --json ${id} | ${idExtract}`),
@@ -1309,7 +1338,7 @@ async function countBeadsBlockers(thr, roots) {
 
 async function getReadyStreaks(rootIds) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
-  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).issues.map(i=>i.id).join(' '))}catch{}"`;
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
   const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
   const cmds = [
     ...rootIds.map(id => `bd graph --json ${id} | ${idExtract}`),
@@ -1334,7 +1363,7 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
 
 async function checkCycleState(rootIds) {
   // Extract only the fields needed for planDone check to keep output small.
-  const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(${BD_JSON}).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
+  const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}const issues=(g.issues||[]).filter(i=>subtree.has(i.id));console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
   const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).map(i=>i.id).join(' '))}catch{}"`;
   const cmds = [
     ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
@@ -2351,7 +2380,7 @@ while (cycleCount < maxCycles) {
 
   let blockers;
   {
-    const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).issues.map(i=>i.id).join(' '))}catch{}"`;
+    const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
     const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
     const _taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
     const exitCmds = [
