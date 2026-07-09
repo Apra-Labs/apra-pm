@@ -157,6 +157,58 @@ function teardownInstall(provider, repoRoot) {
   }
 }
 
+// Restore the toy's shared Dolt seed (refs/dolt/data) to golden at teardown, so the
+// shared "issues without a database" state stays CONSTANT across runs. The committed
+// .beads/issues.jsonl on the toy's main is the single source of truth (exactly the 8
+// open issues the suites test, plus noise); we rebuild the Dolt DB from it and force-push.
+// Running this every teardown (rather than on a schedule) means any drift -- a stray push,
+// a bd version that ignored the init-time `dolt remote remove`, a manual mistake -- heals
+// on the very next run. Best effort: never fail a suite over the seed heal.
+// Opt out with PMLITE_E2E_NO_HEAL=1 (e.g. local debugging against a throwaway toy fork).
+function healDoltSeed(token) {
+  if (process.env.PMLITE_E2E_NO_HEAL === '1') { console.log('[heal-seed] PMLITE_E2E_NO_HEAL=1 -- skipping'); return; }
+  if (!token || !OWNER_REPO) { console.log('[heal-seed] no token/OWNER_REPO -- skipping'); return; }
+  let work;
+  try {
+    work = fs.mkdtempSync(path.join(os.tmpdir(), 'pmlite-e2e-heal-'));
+    const repo = path.join(work, 'gold');
+    // Fresh clone guarantees a PRISTINE .beads/issues.jsonl (the suite clone mutated its own
+    // DB and committed closures to its branch, so its tree is not golden).
+    const clone = git(['clone', cfg.toy, repo]);
+    if (clone.status !== 0) { console.log(`[heal-seed] clone failed: ${(clone.stderr || '').trim().slice(0, 150)}`); return; }
+    git(['-C', repo, 'config', 'user.email', 'e2e@pm']);
+    git(['-C', repo, 'config', 'user.name', 'pm-e2e']);
+    // CRITICAL: bd init adopts the Dolt seed from the git `origin` remote (NOT config.yaml).
+    // Remove origin first so init builds an EMPTY embedded Dolt DB -- no pollution pulled in --
+    // then import the committed clean JSONL to create all issues fresh (nothing "stale").
+    git(['-C', repo, 'remote', 'remove', 'origin']);
+    try { fs.rmSync(path.join(repo, '.beads', 'embeddeddolt'), { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(path.join(repo, '.beads', '.local_version'), { force: true }); } catch {}
+    spawnSync('bd', ['init', '-p', 'gh-toy', '--non-interactive'], { cwd: repo, encoding: 'utf-8' });
+    spawnSync('bd', ['import', '.beads/issues.jsonl'], { cwd: repo, encoding: 'utf-8' });
+    // Guard: refuse to push unless the rebuilt seed is all-open and non-empty. This stops a
+    // corrupt rebuild (e.g. a polluted JSONL) from being force-pushed over the good remote.
+    const listed = spawnSync('bd', ['list', '--status', 'all', '--json'], { cwd: repo, encoding: 'utf-8' });
+    let issues = [];
+    try { const j = JSON.parse(listed.stdout); issues = j.issues || j; } catch { issues = []; }
+    const openCount = issues.filter((i) => i.status !== 'closed').length;
+    if (issues.length === 0 || openCount !== issues.length) {
+      console.log(`[heal-seed] refusing to push -- rebuilt seed not all-open (total=${issues.length}, open=${openCount})`);
+      return;
+    }
+    // Force-push the golden seed, overwriting refs/dolt/data. bd dolt (git-backed) shells to
+    // git, so the token embeds in the remote URL just like the suite's git origin push.
+    spawnSync('bd', ['dolt', 'remote', 'add', 'origin', `git+https://x-access-token:${token}@github.com/${OWNER_REPO}`], { cwd: repo, encoding: 'utf-8' });
+    const push = spawnSync('bd', ['dolt', 'push', '--force', '--remote', 'origin'], { cwd: repo, encoding: 'utf-8' });
+    if (push.status === 0) console.log(`[heal-seed] golden seed restored (${issues.length} open issues)`);
+    else console.log(`[heal-seed] push failed (exit ${push.status}): ${((push.stderr || push.stdout) || '').trim().slice(0, 200)}`);
+  } catch (e) {
+    console.log(`[heal-seed] error: ${(e && e.message) || e}`);
+  } finally {
+    if (work) { try { fs.rmSync(work, { recursive: true, force: true }); } catch {} }
+  }
+}
+
 function selectSuites(a) {
   if (a.suites.length) return cfg.suites.filter((s) => a.suites.includes(s.id));
   let s = cfg.suites;
@@ -265,6 +317,8 @@ function runSuite(suite, timeoutS, keepPr, keepInstall) {
   // shared Dolt remote: remove the adopted Dolt remote so nothing can push to it. The sprint
   // still mutates its LOCAL Dolt DB and exports to the branch's .beads/issues.jsonl (which the
   // closure gates read); the toy's main config keeps sync.remote so future clones still adopt.
+  // Defense in depth: this prevents drift DURING the run; healDoltSeed() at teardown then
+  // force-restores the shared seed to golden, so any drift that slips through heals next run.
   spawnSync('bd', ['dolt', 'remote', 'remove', 'origin'], { cwd: repo, encoding: 'utf-8' });
 
   // The sprint pushes and raises a PR, so keep origin. If a token is provided, wire
@@ -320,6 +374,8 @@ function runSuite(suite, timeoutS, keepPr, keepInstall) {
 
   if (!keepPr) teardownPr(branch, token);
   if (!keepInstall) teardownInstall(suite.provider, path.join(E2E, '..'));
+  // Always heal the shared Dolt seed back to golden as part of teardown (all suites).
+  healDoltSeed(token);
   return res;
 }
 
