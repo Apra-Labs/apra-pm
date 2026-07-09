@@ -3,7 +3,7 @@ import http from 'node:http';
 export function startStatusServer({ 
   port, repo, STATUS_HTML, getLiveState, 
   dispatchLedger, dispatchOutputs, fs, pathJoin, log, 
-  setAbortRequested, execSync, platform 
+  setAbortRequested, execSync, platform, saveReport 
 }) {
   let server = null;
   try {
@@ -28,6 +28,17 @@ export function startStatusServer({
         setAbortRequested(true);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'stopping' }));
+        return;
+      }
+      if (req.url === '/save' && req.method === 'POST') {
+        if (typeof saveReport === 'function') {
+          saveReport();
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('HTML Report Saved to sprint-logs/');
+        } else {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('saveReport not wired');
+        }
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/html' });

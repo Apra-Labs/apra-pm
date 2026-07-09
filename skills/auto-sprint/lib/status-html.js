@@ -29,16 +29,20 @@ export const STATUS_HTML = `<!DOCTYPE html>
       background-image: radial-gradient(circle at 50% 0%, var(--accent-glow) 0%, transparent 50%);
     }
     .header {
-      padding: 20px 40px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid var(--border);
+      padding: 20px 40px;
       background: var(--bg-glass);
-      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
       position: sticky;
       top: 0;
       z-index: 100;
+    }
+    .header h1 {
+      margin: 0; font-size: 16px; font-weight: 500; color: var(--text-muted);
+      display: flex; align-items: center; gap: 8px;
     }
     .header h1 {
       font-size: 20px;
@@ -71,24 +75,26 @@ export const STATUS_HTML = `<!DOCTYPE html>
     }
     .phase-list { list-style: none; }
     .phase-item {
-      padding: 12px 16px;
-      margin-bottom: 8px;
-      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
       color: var(--text-muted);
-      font-weight: 500;
-      font-size: 14px;
-      transition: all 0.3s ease;
-      display: flex;
-      align-items: center;
-      gap: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+      margin-bottom: 2px;
     }
     .phase-item::before {
       content: '';
+      display: block;
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: currentColor;
-      opacity: 0.5;
+      background: transparent;
+      border: 1px solid currentColor;
+      margin-right: 8px;
+      display: inline-block;
+      vertical-align: middle;
     }
     .phase-item.active {
       background: rgba(255,255,255,0.05);
@@ -97,7 +103,7 @@ export const STATUS_HTML = `<!DOCTYPE html>
     }
     .phase-item.active::before {
       background: var(--accent);
-      opacity: 1;
+      border-color: var(--accent);
       box-shadow: 0 0 10px var(--accent);
     }
     .content-area {
@@ -105,38 +111,14 @@ export const STATUS_HTML = `<!DOCTYPE html>
       padding: 30px 40px;
       overflow-y: auto;
     }
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 20px;
-      margin-bottom: 40px;
-    }
-    .stat-card {
-      background: var(--bg-glass);
-      border: 1px solid var(--border);
-      padding: 24px;
-      border-radius: 16px;
-      backdrop-filter: blur(10px);
-      transition: transform 0.2s ease, border-color 0.2s ease;
-    }
-    .stat-card:hover {
-      transform: translateY(-2px);
-      border-color: rgba(255,255,255,0.2);
-    }
-    .stat-label {
-      font-size: 13px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
-    }
-    .stat-value {
-      font-size: 28px;
-      font-weight: 700;
-    }
     .tasks-section {
       margin-bottom: 40px;
     }
+    .compact-stats {
+      display: flex; align-items: center; gap: 16px; font-size: 11px; color: var(--text-muted);
+      margin-bottom: 24px; flex-wrap: wrap; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .compact-stats strong { color: var(--text); font-weight: 600; margin-left: 4px; font-size: 12px; }
     .section-title {
       font-size: 16px;
       font-weight: 600;
@@ -165,25 +147,24 @@ export const STATUS_HTML = `<!DOCTYPE html>
     .task-item.running .task-status { background: var(--accent-glow); color: var(--accent); }
     .task-item.done .task-status { background: rgba(16, 185, 129, 0.1); color: var(--success); border-left-color: var(--success); }
     
-    .terminal {
+    .terminal-container {
+      height: 300px;
+      min-height: 100px;
+      max-height: 80vh;
+      resize: vertical;
+      overflow-y: auto;
       background: #000;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
+      border-top: 1px solid var(--border);
       font-family: 'JetBrains Mono', monospace;
       font-size: 12px;
       line-height: 1.6;
+      overflow-x: hidden;
+      white-space: pre-wrap;
+      word-wrap: break-word;
       color: #a1a1aa;
-      height: 300px;
-      overflow-y: auto;
-      margin: 0; font-size: 16px; font-weight: 500; color: var(--text-muted);
-      display: flex; align-items: center; gap: 8px;
     }
-    .compact-stats {
-      display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-muted);
-      background: rgba(255,255,255,0.03); padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
-    }
-    .compact-stats strong { color: var(--text); font-weight: 600; margin-left: 4px; }
+    .log-line { margin-bottom: 2px; }
+
     
     @keyframes pulse {
       0% { opacity: 1; transform: scale(1); }
@@ -207,9 +188,7 @@ export const STATUS_HTML = `<!DOCTYPE html>
     .banner.error { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
     .banner.mission { background: rgba(59, 130, 246, 0.1); color: var(--accent); }
 
-    .main-content {
-      flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 16px 24px; gap: 16px;
-    }
+
     
     .top-panels {
       display: flex; gap: 16px; height: 35vh; min-height: 200px;
@@ -248,11 +227,13 @@ export const STATUS_HTML = `<!DOCTYPE html>
       flex: 1; display: flex; flex-direction: column; min-height: 200px;
     }
     .terminal {
-      flex: 1; background: #000; padding: 12px; overflow-y: auto;
+      flex: 1; background: #000; padding: 12px; overflow-y: auto; overflow-x: hidden;
       font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: #d4d4d8;
       border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+      display: block; white-space: pre-wrap; word-wrap: break-word;
     }
-    .log-line { display: flex; gap: 12px; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+    .log-line { display: flex; flex-direction: row; gap: 12px; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); width: 100%; }
+    .log-msg { flex: 1; word-break: break-all; }
     .log-line:hover { background: rgba(255,255,255,0.02); }
     .log-time { color: #52525b; user-select: none; flex-shrink: 0; width: 65px; }
     .log-msg { word-break: break-all; white-space: pre-wrap; flex: 1; }
@@ -271,20 +252,15 @@ export const STATUS_HTML = `<!DOCTYPE html>
 <body>
   <div class="header">
     <h1>Auto-Sprint <span id="root-badge" style="color:var(--text);font-weight:700"></span> <span style="font-size:14px;color:var(--text-muted);font-weight:400;margin:0 4px">on</span> <span id="branch-badge" style="color:var(--text)">loading...</span></h1>
-    
-    <div class="compact-stats">
-      <div>Phase: <strong id="stat-phase" style="text-transform: capitalize;">-</strong></div>
-      <div>Cycle: <strong id="stat-cycle">-</strong></div>
-      <div>Open Tasks: <strong id="stat-open">-</strong></div>
-      <div>Cost: <strong id="stat-cost">-</strong></div>
-      <div>Calls/Tokens: <strong id="stat-calls-tokens">-</strong></div>
-      <div id="cap-deploy" class="capability-pill">Deploy</div>
-      <div id="cap-integ" class="capability-pill">Integ Tests</div>
-    </div>
-    
     <div id="connection-status" style="font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 16px;">
-      <button id="btn-stop" class="btn-stop" onclick="fetch('/stop',{method:'POST'}).then(()=>{this.disabled=true;this.innerHTML='<span style=\\'display:inline-block;animation:pulse 1.5s infinite;\\'>◼</span> Stopping...';})">◼ Stop</button>
-      <div style="display:flex;align-items:center;gap:6px;font-weight:600;"><div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live</div>
+      <button id="btn-stop" class="btn-stop" onclick="if(confirm('Are you sure you want to stop the sprint?')){fetch('/stop',{method:'POST'}).then(()=>{this.disabled=true;this.innerHTML='<span style=\\'display:inline-block;animation:pulse 1.5s infinite;\\'>◼</span> Stopping...';})}">◼ Stop</button>
+      <div id="connection-status" style="font-size:13px; font-weight:500; display:flex; align-items:center; gap:6px; color:var(--success);">
+        <div style="width:8px;height:8px;background:var(--success);border-radius:50%;box-shadow:0 0 8px var(--success);"></div> Live
+      </div>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span id="save-notif" style="opacity:0; transition:opacity 0.3s; color:var(--success); font-weight:500; font-size:12px;">Saved!</span>
+        <button id="save-btn" onclick="fetch('/save', {method:'POST'}).then(r=>r.text()).then(t=>{const n=document.getElementById('save-notif');n.style.opacity='1';setTimeout(()=>n.style.opacity='0',3000);}).catch(e=>alert('Failed: '+e))" style="background:var(--accent); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif;">Save HTML Report</button>
+      </div>
     </div>
   </div>
   
@@ -292,12 +268,20 @@ export const STATUS_HTML = `<!DOCTYPE html>
   <div class="banner" id="banner"></div>
 
   <div class="main-content">
+    <div class="sidebar">
+      <div class="section-title" style="margin-top: 0;">Sprint Phase</div>
+      <ul class="phase-tracker">
+        <li class="phase-item active" data-phase="setup">Setup</li>
+        <li class="phase-item" data-phase="Plan">Plan</li>
         <li class="phase-item" data-phase="Develop">Develop</li>
         <li class="phase-item" data-phase="Test">Test</li>
         <li class="phase-item" data-phase="Harvest">Harvest</li>
       </ul>
       
-      <div class="section-title" style="margin-top: 40px; margin-bottom: 20px;">Active Sprint Tasks</div>
+      <div class="section-title" style="margin-top: 40px; margin-bottom: 20px; display:flex; justify-content:space-between; align-items:center;">
+        Active Sprint Tasks
+        <span id="stat-open" style="font-size:12px; font-weight:600; background:var(--accent); color:#fff; padding:2px 8px; border-radius:12px;" title="Open Tasks">-</span>
+      </div>
       <div id="sprint-beads" style="max-height: 60vh; overflow-y: auto; font-size: 13px; line-height: 1.4; padding-right: 8px;">
         <div style="color:var(--text-muted);">Loading tasks...</div>
       </div>
@@ -310,37 +294,15 @@ export const STATUS_HTML = `<!DOCTYPE html>
       </div>
       <div id="banner" class="banner"></div>
       
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">Cycle</div>
-          <div class="stat-value" id="stat-cycle">-</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Open Issues</div>
-          <div class="stat-value" id="stat-open">-</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Cost (USD)</div>
-          <div class="stat-value" id="stat-cost" style="color: var(--success);">-</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Calls / Tokens</div>
-          <div class="stat-value" id="stat-calls-tokens" style="font-size: 20px;">-</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Active Agent</div>
-          <div class="stat-value" id="stat-agent" style="font-size: 18px;">-</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Workspace Capabilities</div>
-          <div style="margin-top: 8px;">
-            <div id="cap-deploy" class="capability-pill">Deploy</div>
-            <div id="cap-integ" class="capability-pill">Integ Tests</div>
-          </div>
-        </div>
+      <div class="compact-stats">
+        <div>Cycle: <strong id="stat-cycle">-</strong></div>
+        <div>Cost: <strong id="stat-cost">-</strong></div>
+        <div>Calls/Tokens: <strong id="stat-calls-tokens">-</strong></div>
+        <div id="cap-deploy" class="capability-pill">Deploy</div>
+        <div id="cap-integ" class="capability-pill">Integ Tests</div>
       </div>
       
-      <div class="section-title" style="margin-top: 20px; margin-bottom: 16px;">Task Activity</div>
+      <div class="section-title" style="margin-top: 0; margin-bottom: 16px;">Task Activity</div>
       <div style="max-height: 35vh; overflow-y: auto; background: var(--bg-glass); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 30px;">
         <table id="task-list" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
           <!-- Table rows injected here -->
@@ -392,8 +354,11 @@ export const STATUS_HTML = `<!DOCTYPE html>
         }
         
         const currentPhase = s.currentPhase || s.phase || 'setup';
-        const phaseEl = document.getElementById('stat-phase');
-        if (phaseEl) phaseEl.textContent = currentPhase;
+        
+        document.querySelectorAll('.phase-item').forEach(el => {
+          if (el.dataset.phase.toLowerCase() === currentPhase.toLowerCase()) el.classList.add('active');
+          else el.classList.remove('active');
+        });
         
         const sprintBeads = s.sprintBeads || [];
         const openTasks = sprintBeads.filter(b => b.t === 'task' && b.s === 'open').length;
@@ -403,9 +368,6 @@ export const STATUS_HTML = `<!DOCTYPE html>
         const actualCost = s.costUsd || 0;
         const budget = 10.00;
         document.getElementById('stat-cost').textContent = '$' + actualCost.toFixed(2) + ' / $' + budget.toFixed(2);
-        
-        const agentEl = document.getElementById('stat-agent');
-        if (agentEl) agentEl.textContent = s.currentAgent || 'Idle';
         
         const ledger = s.ledger || [];
         const callsTokensEl = document.getElementById('stat-calls-tokens');
@@ -448,7 +410,6 @@ export const STATUS_HTML = `<!DOCTYPE html>
           }
         }
         
-        const sprintBeads = s.sprintBeads || [];
         const beadsContainer = document.getElementById('sprint-beads');
         if (sprintBeads.length > 0) {
           let bHtml = '';
@@ -471,24 +432,21 @@ export const STATUS_HTML = `<!DOCTYPE html>
                           '<span style="opacity:0.85; font-size:11px; margin-top:2px; text-overflow:ellipsis; overflow:hidden;">' + (b.title || '').replace(/</g, '&lt;') + '</span>' +
                         '</div>' +
                       '</div>';
-             if (b.children && b.children.length > 0) {
-                 b.children.forEach(cId => {
+             const kids = b.dependencies ? b.dependencies.map(d => d.depends_on_id) : [];
+             if (kids && kids.length > 0) {
+                 kids.forEach(cId => {
                      const child = sprintBeads.find(x => x.id === cId);
-                     // Only render as a visual child if it's strictly a lower hierarchical level
-                     // This prevents external blockers (e.g. task -> feature) from rendering as children
-                     if (child && (typeLevel[b.t] || 0) > (typeLevel[child.t] || 0)) {
+                     if (child) {
                          renderNode(child, depth + 1);
                      }
                  });
              }
           }
           
-          // 1. Render all primary sprint issues first
-          const sprintIssueIds = s.issues || [];
+          const sprintIssueIds = s.rootIds || s.issues || [];
           const sprintRoots = sprintBeads.filter(b => sprintIssueIds.includes(b.id));
           sprintRoots.forEach(r => renderNode(r, 0));
           
-          // 2. Anything remaining is an external blocker or unrelated task
           const leftovers = sprintBeads.filter(b => !rendered.has(b.id));
           if (leftovers.length > 0) {
               bHtml += '<div style="color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; margin-top:16px; margin-bottom:8px; padding-left:12px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px;">Other Dependencies</div>';
@@ -501,10 +459,10 @@ export const STATUS_HTML = `<!DOCTYPE html>
         
         const taskList = document.getElementById('task-list');
         
-        // Merge ledger with currently running task
-        const mergedActs = [...ledger];
+        const _ledger = s.ledger || [];
+        const mergedActs = [..._ledger];
         if (s.currentAgent && !s.goalMet && !s.abortReason) {
-           const isAlreadyInLedger = ledger.length > 0 && ledger[ledger.length - 1].label === s.currentAgent && !ledger[ledger.length - 1].durationMs;
+           const isAlreadyInLedger = _ledger.length > 0 && _ledger[_ledger.length - 1].label === s.currentAgent && !_ledger[_ledger.length - 1].durationMs;
            if (!isAlreadyInLedger) {
              mergedActs.push({
                phase: s.currentPhase || s.phase || '?',
@@ -530,11 +488,11 @@ export const STATUS_HTML = `<!DOCTYPE html>
           
           let html = '<thead style="color:var(--text-muted); border-bottom:1px solid var(--border); position:sticky; top:0; background:#18181b; z-index:10;"><tr style="background:rgba(255,255,255,0.02);">' +
                      '<th style="padding:10px 12px; font-weight:500;">Phase</th>' +
-                     '<th style="padding:10px 12px; font-weight:500;">Task</th>' +
-                     '<th style="padding:10px 12px; font-weight:500;">Agent</th>' +
+                     '<th style="padding:10px 12px; font-weight:500;">Action</th>' +
+                     '<th style="padding:10px 12px; font-weight:500;">Model</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Duration</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Tokens</th>' +
-                     '<th style="padding:10px 12px; font-weight:500;">Cycle/Round</th></tr></thead><tbody>';
+                     '<th style="padding:10px 12px; font-weight:500;">Round</th></tr></thead><tbody>';
           
           for (const phase of phases) {
             const acts = byPhase[phase];
@@ -549,7 +507,6 @@ export const STATUS_HTML = `<!DOCTYPE html>
                  const bgStyle = act.isRunning ? 'background: rgba(59, 130, 246, 0.05);' : (isWarning ? 'background: rgba(245, 158, 11, 0.05);' : '');
                  const icon = act.isRunning ? '<span style="display:inline-block; animation: pulse 1.5s infinite;">⚡</span> ' : (isWarning ? '⚠️ ' : '✓ ');
                  
-                 // Insight subtext
                  let insight = '';
                  if (act.label.includes('planner')) insight = 'Breaking down features into actionable tasks';
                  else if (act.label.includes('reviewer')) insight = 'Evaluating code/plan quality and correctness';
@@ -558,9 +515,8 @@ export const STATUS_HTML = `<!DOCTYPE html>
                  else if (act.label.includes('harvester')) insight = 'Committing changes, closing tasks, syncing DB';
                  
                  html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05); ' + bgStyle + '">' +
-                         '<td style="padding:10px 12px; width:130px; ' + statusStyle + '">' + icon + phase + (act.isRunning ? ' (Running)' : ' (Done)') + '</td>' +
-                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);">' + act.label + 
-                           '<div style="font-weight:400; font-size:11px; color:var(--text-muted); margin-top:2px;">' + insight + '</div></td>' +
+                         '<td style="padding:10px 12px; width:130px; ' + statusStyle + '">' + icon + phase + '</td>' +
+                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);" title="' + insight + '">' + act.label + '</td>' +
                          '<td style="padding:10px 12px; color:var(--text-muted);">' + 
                            (act.model === "pm-doer-std" ? "Standard" : 
                            (act.model === "pm-doer-cheap" ? "Cheap" : 
