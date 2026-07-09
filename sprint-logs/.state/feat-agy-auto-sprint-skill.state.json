@@ -1,0 +1,9 @@
+{
+  "type": "start",
+  "branch": "feat/agy-auto-sprint-skill",
+  "goal": "P1/P2",
+  "rootIds": [
+    "gh-toy-mi2"
+  ],
+  "startedAt": "2026-07-08T03:33:45.673Z"
+}

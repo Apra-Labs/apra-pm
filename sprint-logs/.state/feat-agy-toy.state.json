@@ -1,0 +1,12 @@
+{
+  "type": "cycle-start",
+  "cycle": 1,
+  "branch": "feat/agy-toy",
+  "goal": "P1",
+  "rootIds": [
+    "gh-toy-mi2",
+    "gh-toy-7rp",
+    "gh-toy-4ef"
+  ],
+  "startedAt": 1783577209161
+}

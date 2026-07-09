@@ -106,6 +106,6 @@ test('uninstall() is a safe no-op when nothing was ever installed', () => {
   const cfg = makeTmpCfg();
   fs.mkdirSync(cfg.configDir, { recursive: true });
   const removed = uninstall(cfg, agentsSrc);
-  assert.deepEqual(removed, { skill: false, agents: [], permsRemoved: 0, workflow: false });
+  assert.deepEqual(removed, { skill: false, agents: [], permsRemoved: 0, workflow: false, autoSprintSkill: false });
   fs.rmSync(cfg.configDir, { recursive: true, force: true });
 });
