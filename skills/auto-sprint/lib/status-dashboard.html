@@ -472,7 +472,8 @@
           if (beadsContainer.innerHTML !== bHtml) beadsContainer.innerHTML = bHtml;
         } else {
           beadsContainer.innerHTML = '<div style="color:var(--text-muted);">No issues tracked yet...</div>';
-              const taskList = document.getElementById('task-list');
+        }
+        const taskList = document.getElementById('task-list');
         
         let currentLogLabel = 'System';
         const logsByLabel = { 'System': [] };
@@ -602,7 +603,7 @@
                     
                     html += '<tr style="background:rgba(0,0,0,0.3); border-bottom:1px solid rgba(255,255,255,0.05);">' +
                             '<td colspan="6" style="padding: 0;">' +
-                            '<div class="terminal" style="max-height: 400px; margin: 0; border: none; border-radius: 0; font-size: 11px; padding: 12px 16px; font-family: 'JetBrains Mono', Consolas, monospace;">' + termInner + '</div>' +
+                            '<div class="terminal" style="max-height: 400px; margin: 0; border: none; border-radius: 0; font-size: 11px; padding: 12px 16px; font-family: \'JetBrains Mono\', Consolas, monospace;">' + termInner + '</div>' +
                             '</td></tr>';
                  }
                });
