@@ -356,6 +356,7 @@ async function dispatchFleet(memberName, prompt, opts = {}) {
       const result = await _fleetCall(memberName, fullPrompt, opts);
       raw = typeof result === 'string' ? result : JSON.stringify(result);
     } catch (err) {
+      if (err.message === 'ABORT_REQUESTED') throw err;
       log('dispatch error [' + label + '] attempt ' + attempt + ': ' + String(err).slice(0, 120));
       raw = '';
     }
