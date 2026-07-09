@@ -247,6 +247,9 @@
     .log-msg.success { color: #34d399; font-weight: 500; }
     .log-msg.warning { color: #fbbf24; font-weight: 500; }
     
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    
     .capability-pill {
       display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase;
     }
@@ -450,41 +453,54 @@
           const typeLevel = { 'epic': 3, 'feature': 2, 'task': 1 };
           
           function renderNode(b, depth) {
-             if (rendered.has(b.id)) return;
+             if (rendered.has(b.id)) return '';
              rendered.add(b.id);
+             
+             // Only traverse 'blocks' dependencies (children)
+             const kids = b.dependencies ? b.dependencies.filter(d => d.type === 'blocks').map(d => d.depends_on_id) : [];
+             const validKids = kids.map(cId => sprintBeads.find(x => x.id === cId)).filter(Boolean);
+             
              const isClosed = b.s === 'closed';
              const isIp = b.s === 'in_progress';
              const icon = b.t === 'epic' ? '🌟' : (b.t === 'feature' ? '📦' : '📄');
              const color = isClosed ? 'var(--text-muted)' : (isIp ? 'var(--accent)' : 'var(--text)');
              const style = isClosed ? 'text-decoration:line-through; opacity:0.5; filter: grayscale(100%);' : '';
              const titleSafe = (b.title || '').replace(/"/g, '&quot;');
-             bHtml += '<div class="task-row" style="color:' + color + '; ' + style + '; padding-left:' + (depth*16) + 'px;" title="' + titleSafe + '">' +
-                        '<div style="display:flex; align-items:center; gap:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' +
-                          '<span style="font-size:14px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">' + icon + '</span>' +
-                          '<strong style="letter-spacing: 0.5px; flex-shrink: 0;">' + b.id + '</strong>' +
-                          '<span style="opacity:0.85; font-size:11px; margin-top:2px; text-overflow:ellipsis; overflow:hidden;">' + (b.title || '').replace(/</g, '&lt;') + '</span>' +
-                        '</div>' +
-                      '</div>';
-             const kids = b.dependencies ? b.dependencies.map(d => d.depends_on_id) : [];
-             if (kids && kids.length > 0) {
-                 kids.forEach(cId => {
-                     const child = sprintBeads.find(x => x.id === cId);
-                     if (child) {
-                         renderNode(child, depth + 1);
-                     }
-                 });
+             const titleEscaped = (b.title || '').replace(/</g, '&lt;');
+             
+             let nodeHtml = '';
+             
+             if (validKids.length > 0) {
+               // Render collapsible node
+               nodeHtml += `<details open style="margin-left:${depth * 16}px;" title="${titleSafe}">`;
+               nodeHtml += `<summary class="task-row" style="color:${color}; ${style}; padding-left:0; cursor:pointer; user-select:none; display:flex; align-items:center; gap:8px;">`;
+               nodeHtml += `<span style="font-size:10px; opacity:0.7; width:12px; display:inline-block; text-align:center;">▼</span>`;
+               nodeHtml += `<div style="display:flex; align-items:center; gap:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">`;
+               nodeHtml += `<span style="font-size:14px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">${icon}</span>`;
+               nodeHtml += `<strong style="letter-spacing: 0.5px; flex-shrink: 0;">${b.id}</strong>`;
+               nodeHtml += `<span style="opacity:0.85; font-size:11px; margin-top:2px; text-overflow:ellipsis; overflow:hidden;">${titleEscaped}</span>`;
+               nodeHtml += `</div></summary>`;
+               nodeHtml += `<div style="border-left: 1px solid rgba(255,255,255,0.05); margin-left: 6px; padding-left: 2px;">`;
+               validKids.forEach(child => {
+                 nodeHtml += renderNode(child, 0); // Reset depth inside details
+               });
+               nodeHtml += `</div></details>`;
+             } else {
+               // Render leaf node
+               nodeHtml += `<div class="task-row" style="color:${color}; ${style}; padding-left:${depth * 16}px;" title="${titleSafe}">`;
+               nodeHtml += `<div style="display:flex; align-items:center; gap:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-left:20px;">`; // Offset to align with siblings that have toggle arrows
+               nodeHtml += `<span style="font-size:14px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">${icon}</span>`;
+               nodeHtml += `<strong style="letter-spacing: 0.5px; flex-shrink: 0;">${b.id}</strong>`;
+               nodeHtml += `<span style="opacity:0.85; font-size:11px; margin-top:2px; text-overflow:ellipsis; overflow:hidden;">${titleEscaped}</span>`;
+               nodeHtml += `</div></div>`;
              }
+             
+             return nodeHtml;
           }
           
           const sprintIssueIds = s.rootIds || s.issues || [];
           const sprintRoots = sprintBeads.filter(b => sprintIssueIds.includes(b.id));
-          sprintRoots.forEach(r => renderNode(r, 0));
-          
-          const leftovers = sprintBeads.filter(b => !rendered.has(b.id));
-          if (leftovers.length > 0) {
-              bHtml += '<div style="color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; margin-top:16px; margin-bottom:8px; padding-left:12px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px;">Other Dependencies</div>';
-              leftovers.forEach(b => renderNode(b, 0));
-          }
+          sprintRoots.forEach(r => { bHtml += renderNode(r, 0); });
           if (beadsContainer.innerHTML !== bHtml) beadsContainer.innerHTML = bHtml;
         } else {
           beadsContainer.innerHTML = '<div style="color:var(--text-muted);">No issues tracked yet...</div>';
