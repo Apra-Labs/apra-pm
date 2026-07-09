@@ -425,157 +425,75 @@ async function dispatchFleet(memberName, prompt, opts = {}) {
   return null;
 }
 
-// _fleetCall: low-level call to the apra-fleet MCP execute_prompt tool.
-// Uses the AGY MCP client interface available in the runner process context.
-// Falls back to spawning the native `agy` CLI if the MCP interface is not available.
-async function _fleetCall(memberName, prompt, opts) {
-  // In the AGY skill runtime, MCP tools are accessible via the global __mcp object
-  // injected by the skill engine. Check for it and use it if available.
-  if (typeof __mcp !== 'undefined' && __mcp && typeof __mcp.call === 'function') {
-    const result = await __mcp.call(FLEET_SERVER, FLEET_TOOL, {
-      member_name: memberName,
-      prompt:      prompt,
+let fleetClientInstance = null;
+async function getFleetClient() {
+  if (!fleetClientInstance) {
+    const p = require('path');
+    const libDir = p.join(__dirname, '..', '..', 'lib', 'fleet-client');
+    const api = await import('file://' + p.join(libDir, 'api.mjs').replace(/\\/g, '/'));
+    const clientModule = await import('file://' + p.join(libDir, 'client.mjs').replace(/\\/g, '/'));
+    const transportModule = await import('file://' + p.join(libDir, 'transport.mjs').replace(/\\/g, '/'));
+    
+    const transport = new transportModule.SseTransport('http://127.0.0.1:7523/sse');
+    await new Promise((resolve, reject) => {
+      transport.on('ready', resolve);
+      transport.on('error', reject);
+      transport.start().catch(reject);
     });
-    return (result && result.content && result.content[0] && result.content[0].text) || '';
+    
+    const mcpClient = new clientModule.McpClient(transport);
+    fleetClientInstance = new api.ApraFleet(mcpClient);
   }
-
-  // Fallback: if running in a background shell without MCP, use `agy --print`
-  const modelMap = {
-    'pm-doer-cheap': 'Gemini 3.1 Flash (High)',
-    'pm-doer-std': 'Gemini 3.1 Pro (High)',
-    'pm-doer-premium': 'Gemini 3.1 Pro (High)',
-    'pm-planner': 'Gemini 3.1 Pro (High)',
-    'pm-reviewer': 'Gemini 3.1 Pro (High)',
-    'pm-harvester': 'Gemini 3.1 Pro (High)'
-  };
-  // Fallback: if running in a background shell without MCP, use `agentapi` local proxy
-  const modelMapAgy = {
-    'pm-doer-cheap': 'flash',
-    'pm-doer-std': 'pro',
-    'pm-doer-premium': 'pro',
-    'pm-planner': 'pro',
-    'pm-reviewer': 'pro',
-    'pm-harvester': 'pro'
-  };
-  const child_process = require('node:child_process');
-  const fs = require('fs');
-  const path = require('path');
-  const os = require('os');
-  
-  const useGatewayMode = process.env.AGY_GATEWAY_MODE === 'true';
-  const agyModel = modelMapAgy[memberName] || 'pro';
-  
-  let subagentPrompt = '';
-  if (useGatewayMode) {
-    // VERSION B: Gateway Mode (use subagent to execute apra-fleet MCP tool)
-    const mcpArgs = JSON.stringify({ member_name: memberName, prompt: prompt });
-    subagentPrompt = `Call the "execute_prompt" tool on the "apra-fleet" MCP server with these exact arguments:\n${mcpArgs}\n\nReturn EXACTLY the raw output of the tool execution and absolutely no other text.`;
-  } else {
-    // VERSION A: Native AGY Mode (use subagent to fulfill the prompt natively)
-    subagentPrompt = prompt;
-  }
-  
-  try {
-    // Write the actual payload to a temp file to avoid Windows 8191-byte command line limits
-    const tempPromptPath = path.join(os.tmpdir(), `agy-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
-    fs.writeFileSync(tempPromptPath, subagentPrompt, 'utf-8');
-    
-    let instruction = `Read the file at "${tempPromptPath}" and fulfill the instructions inside it. Output exactly what is requested. CRITICAL INSTRUCTION: You are running headlessly. DO NOT use the native run_command tool (or Bash tool). If you must execute a shell command, you MUST use the call_mcp_tool tool. CRITICAL: When using call_mcp_tool, set ServerName exactly to apra-fleet (do NOT include quotes in the string value) and set ToolName exactly to execute_command (do NOT include quotes in the string value). The Arguments field MUST be a valid JSON object.`;
-    if (useGatewayMode) {
-      instruction = `Read the file at "${tempPromptPath}". It contains instructions to call an MCP tool. Call the tool and return its exact output with no extra conversational text.`;
-    }
-    
-    // Spawn the subagent asynchronously via the local API proxy (bypasses DB lock)
-    const cmd = `agy agentapi new-conversation --model=${agyModel} "${instruction.replace(/"/g, '\\"')}"`;
-    const execPromise = require('util').promisify(child_process.exec);
-    const { stdout: out } = await execPromise(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-    const parsed = JSON.parse(out);
-    const convId = parsed.response.newConversation.conversationId;
-    
-    // Poll the transcript log asynchronously to get the response
-    const logPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
-    
-    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-    let lastPos = 0;
-    while (true) {
-        if (global.abortRequested) {
-            try {
-               const stopPromptPath = path.join(os.tmpdir(), `agy-stop-${Date.now()}.txt`);
-               fs.writeFileSync(stopPromptPath, `Call the call_mcp_tool tool. ServerName: apra-fleet. ToolName: stop_prompt. Arguments: {"member_name": "${memberName}"}. Return OK.`, 'utf-8');
-               require('node:child_process').exec(`agy agentapi new-conversation --model=${agyModel} "Read the file at \\"${stopPromptPath}\\". Call the MCP tool and return."`);
-            } catch(e) {}
-            throw new Error('ABORT_REQUESTED');
-        }
-        if (!fs.existsSync(logPath)) {
-            await sleep(500);
-            continue;
-        }
-        const fd = fs.openSync(logPath, 'r');
-        const stat = fs.fstatSync(fd);
-        if (stat.size > lastPos) {
-            const buf = Buffer.alloc(stat.size - lastPos);
-            fs.readSync(fd, buf, 0, stat.size - lastPos, lastPos);
-            lastPos = stat.size;
-            fs.closeSync(fd);
-            
-            const lines = buf.toString('utf-8').split('\n').filter(l => l.trim());
-            for (const line of lines) {
-                try {
-                    const event = JSON.parse(line);
-                    if (event.type === 'PLANNER_RESPONSE' && event.status === 'DONE' && (!event.tool_calls || event.tool_calls.length === 0)) {
-                        try { fs.unlinkSync(tempPromptPath); } catch(e) {}
-                        return event.content;
-                    }
-                } catch (e) {}
-            }
-        } else {
-            fs.closeSync(fd);
-        }
-        await sleep(500);
-    }
-  } catch (err) {
-    throw new Error('Fallback agentapi execution failed: ' + (err.stderr || err.message));
-  }
+  return fleetClientInstance;
 }
+
+// _fleetCall: low-level call to the apra-fleet MCP execute_prompt tool.
+async function _fleetCall(memberName, prompt, opts) {
+  const client = await getFleetClient();
+  const options = {
+    member_name: memberName,
+    prompt: prompt,
+    model: opts.model || 'standard',
+    resume: opts.resume !== false
+  };
+  
+  if (global.abortRequested) throw new Error('ABORT_REQUESTED');
+  
+  const result = await client.executePrompt(options);
+  if (result && result.isError) {
+    throw new Error('execute_prompt failed: ' + JSON.stringify(result));
+  }
+  return (result && result.content && result.content[0] && result.content[0].text) || '';
+}
+
+
 
 async function dispatchShellFleet(cmds, memberName, opts) {
   opts = opts || {};
-  const cp = require('node:child_process');
-  const execAsync = require('util').promisify(cp.exec);
-  const fs = require('fs');
-  const path = require('path');
-  const os = require('os');
+  const client = await getFleetClient();
   const repo = process.cwd();
   const outputs = [];
+  
   for (const c of cmds) {
     try {
-      if (c.includes('| node -e')) {
-        const parts = c.split('| node -e');
-        const cmd1 = parts[0].trim();
-        let script = parts[1].trim();
-        if (script.startsWith('"') && script.endsWith('"')) {
-          script = script.substring(1, script.length - 1);
-        }
-        
-        const { stdout: out1 } = await execAsync(cmd1, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
-        
-        const tmpFile = path.join(os.tmpdir(), 'script-' + Date.now() + '-' + Math.floor(Math.random()*1000) + '.js');
-        const tmpIn = path.join(os.tmpdir(), 'in-' + Date.now() + '-' + Math.floor(Math.random()*1000) + '.txt');
-        fs.writeFileSync(tmpFile, script, 'utf-8');
-        fs.writeFileSync(tmpIn, out1, 'utf-8');
-        
-        const { stdout: out2 } = await execAsync(`node "${tmpFile}" < "${tmpIn}"`, { 
-            encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo 
-        });
-        try { fs.unlinkSync(tmpFile); fs.unlinkSync(tmpIn); } catch(e) {}
-        
-        outputs.push(out2);
+      if (global.abortRequested) {
+        throw new Error('ABORT_REQUESTED');
+      }
+      
+      const result = await client.executeCommand({
+        member_name: memberName,
+        command: c,
+        run_from: repo
+      });
+      
+      if (result && result.isError) {
+        outputs.push(JSON.stringify(result.error) || 'Error');
       } else {
-        const { stdout: out } = await execAsync(c, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
-        outputs.push(out);
+        const text = (result && result.content && result.content[0] && result.content[0].text) || '';
+        outputs.push(text);
       }
     } catch (e) {
-      outputs.push((e.stdout || '') + (e.stderr || ''));
+      outputs.push(String(e));
     }
   }
   return { outputs };
