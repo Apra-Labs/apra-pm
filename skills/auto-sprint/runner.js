@@ -487,7 +487,8 @@ async function _fleetCall(memberName, prompt, opts) {
     
     // Spawn the subagent asynchronously via the local API proxy (bypasses DB lock)
     const cmd = `agy agentapi new-conversation --model=${agyModel} "${instruction.replace(/"/g, '\\"')}"`;
-    const out = child_process.execSync(cmd, { encoding: 'utf-8' });
+    const execPromise = require('util').promisify(child_process.exec);
+    const { stdout: out } = await execPromise(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
     const parsed = JSON.parse(out);
     const convId = parsed.response.newConversation.conversationId;
     
