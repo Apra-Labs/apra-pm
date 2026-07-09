@@ -703,7 +703,7 @@ let _globalStartedAt = new Date().toISOString();
       fs: require('fs'),
       pathJoin: require('path').join,
       log,
-      setAbortRequested: v => { _abortRequested = v; _liveState.abortReason = 'User stopped from UI'; },
+      setAbortRequested: v => { global.abortRequested = v; _liveState.abortReason = 'User stopped from UI'; },
       execSync: require('child_process').execSync,
       platform: require('os').platform(),
       saveReport: () => {
