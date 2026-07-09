@@ -59,6 +59,43 @@ const mockStateAborted = {
   sprintBeads: []
 };
 
+const mockStateTree = {
+  branch: 'feat/complex-tree',
+  rootIds: ['epic-1'],
+  phase: 'Develop',
+  cycle: 1,
+  costUsd: 0.75,
+  mission: 'Complex 3-level hierarchy rendering test',
+  ledger: [],
+  sprintBeads: [
+    { id: 'epic-1', t: 'epic', s: 'in_progress', title: 'Main Project Epic', dependencies: [
+        { depends_on_id: 'feat-1', type: 'blocks' },
+        { depends_on_id: 'feat-2', type: 'blocks' },
+        { depends_on_id: 'feat-3', type: 'blocks' }
+    ]},
+    { id: 'feat-1', t: 'feature', s: 'closed', title: 'Authentication Module', dependencies: [
+        { depends_on_id: 'task-1-1', type: 'blocks' },
+        { depends_on_id: 'task-1-2', type: 'blocks' }
+    ]},
+    { id: 'task-1-1', t: 'task', s: 'closed', title: 'Setup OAuth providers' },
+    { id: 'task-1-2', t: 'task', s: 'closed', title: 'Write unit tests for Auth' },
+    
+    { id: 'feat-2', t: 'feature', s: 'in_progress', title: 'Billing Integration', dependencies: [
+        { depends_on_id: 'task-2-1', type: 'blocks' },
+        { depends_on_id: 'task-2-2', type: 'blocks' }
+    ]},
+    { id: 'task-2-1', t: 'task', s: 'in_progress', title: 'Stripe API Webhooks' },
+    { id: 'task-2-2', t: 'task', s: 'open', title: 'Invoice generation' },
+    
+    { id: 'feat-3', t: 'feature', s: 'open', title: 'Dashboard UI Revamp', dependencies: [
+        { depends_on_id: 'task-3-1', type: 'blocks' },
+        { depends_on_id: 'task-3-2', type: 'blocks' }
+    ]},
+    { id: 'task-3-1', t: 'task', s: 'open', title: 'Design collapsible tree view' },
+    { id: 'task-3-2', t: 'task', s: 'open', title: 'Implement CSS animations' }
+  ]
+};
+
 test('status-html UI rendering and injection', async (t) => {
   const outputDir = path.join(process.cwd(), 'sprint-logs', 'ui-mocks');
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
@@ -111,5 +148,19 @@ test('status-html UI rendering and injection', async (t) => {
     fs.writeFileSync(path.join(outputDir, 'aborted.html'), html, 'utf8');
     
     assert.ok(html.includes('"abortReason":"User stopped from UI"'), 'HTML should contain abortReason');
+  });
+
+  await t.test('writeStaticHtmlReport generates complex 3-level tree', () => {
+    const htmlPath = writeStaticHtmlReport({
+      _globalRepo: process.cwd(),
+      _liveState: mockStateTree,
+      safeWriteFile,
+      log: () => {},
+      pathJoin: path.join
+    });
+    const html = fs.readFileSync(htmlPath, 'utf8');
+    fs.writeFileSync(path.join(outputDir, 'tree-10.html'), html, 'utf8');
+    
+    assert.ok(html.includes('epic-1'), 'HTML should contain epic-1');
   });
 });
