@@ -17,7 +17,7 @@ export function startStatusServer({
         let sprintBeads = getLiveState().sprintBeads || [];
         try {
           const beadsJsonl = fs.readFileSync(pathJoin(_repo, '.beads', 'issues.jsonl'), 'utf8');
-          sprintBeads = beadsJsonl.split('\\n').filter(Boolean).map(x => { try { return JSON.parse(x) } catch(e){ return null } }).filter(Boolean);
+          sprintBeads = beadsJsonl.split('\n').filter(Boolean).map(x => { try { return JSON.parse(x) } catch(e){ return null } }).filter(Boolean);
         } catch(e) {}
         
         const statePayload = Object.assign({}, getLiveState(), { sprintBeads, ledger: dispatchLedger, deployMdExists, playbookExists });
