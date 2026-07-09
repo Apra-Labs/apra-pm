@@ -8,6 +8,8 @@
     "pm-install": "install.mjs"
   },
   "scripts": {
+    "build:ui": "node sync.cjs",
+    "prepare": "npm run build:ui",
     "install-skill": "node install.mjs",
     "test": "node --test test/**/*.test.mjs",
     "e2e": "node e2e/run-e2e.mjs"
