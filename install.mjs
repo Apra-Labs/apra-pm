@@ -239,10 +239,11 @@ function uninstall(cfg, agentsSrc) {
 
 // --- main ------------------------------------------------------------------
 function parseArgs(argv) {
-  const args = { llm: 'claude', force: false, help: false, uninstall: false };
+  const args = { llm: 'claude', force: false, help: false, uninstall: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
+    else if (a === '--version' || a === '-v') args.version = true;
     else if (a === '--force') args.force = true;
     else if (a === '--uninstall') args.uninstall = true;
     else if (a === '--llm') args.llm = argv[++i];
@@ -265,6 +266,7 @@ Options:
   --force            reinstall even if already present
   --uninstall        remove everything a prior install added (skill, agents,
                      auto-sprint workflow/skill, and the permissions it merged in)
+  --version, -v      show version
   --help             show this help
 
 What it installs (all providers):
@@ -300,6 +302,11 @@ function main() {
   catch (e) { console.error(`error: ${e.message}`); process.exit(2); }
 
   if (args.help) { console.log(HELP); return; }
+  if (args.version) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
+    console.log(pkg.version);
+    return;
+  }
 
   let cfg;
   try { cfg = providerConfig(args.llm); }
