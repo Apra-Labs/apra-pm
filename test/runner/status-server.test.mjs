@@ -62,6 +62,29 @@ describe('status-server', () => {
     assert.equal(state.ledger.length, 1);
   });
 
+  test('GET /state dynamically reads issues.jsonl into sprintBeads', async () => {
+    const deps = {
+      port: 0, repo: 'mock-repo', STATUS_HTML: '',
+      getLiveState: () => ({ sprintBeads: [] }), 
+      dispatchLedger: [], dispatchOutputs: {},
+      fs: { 
+        existsSync: () => false,
+        readFileSync: (p) => p.includes('issues.jsonl') ? '{"id":"mock-1","status":"open"}\\n{"id":"mock-2","status":"closed"}' : ''
+      }, 
+      pathJoin: (...args) => args.join('/'),
+      log: () => {}, setAbortRequested: () => {}, execSync: () => {}, platform: 'linux'
+    };
+    
+    server = startStatusServer(deps);
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    
+    const state = await fetchJson(`http://127.0.0.1:${port}/state`);
+    assert.equal(state.sprintBeads.length, 2);
+    assert.equal(state.sprintBeads[0].id, 'mock-1');
+    assert.equal(state.sprintBeads[1].status, 'closed');
+  });
+
   test('GET /log?label= returns output for task', async () => {
     const deps = {
       port: 0, repo: '.', STATUS_HTML: '',
