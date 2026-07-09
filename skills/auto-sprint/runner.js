@@ -941,6 +941,7 @@ let _globalStartedAt = new Date().toISOString();
     log('Cycle ' + cycleCount + ' complete -- ' + openCount +
         ' open issue(s) remain; starting cycle ' + (cycleCount + 1));
     } catch (iterErr) {
+      if (iterErr.message === 'ABORT_REQUESTED') throw iterErr;
       log('[WARN] Cycle ' + cycleCount + ' threw unexpectedly: ' + String(iterErr).slice(0, 200) + ' -- attempting next cycle or aborting');
       updateLiveState({ phaseError: 'cycle-' + cycleCount + ': ' + String(iterErr).slice(0, 120), endedAt: Date.now() });
       if (cycleCount >= maxCycles) { abortReason = 'cycle-exception'; break; }
