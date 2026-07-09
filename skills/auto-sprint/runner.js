@@ -708,7 +708,7 @@ let _globalStartedAt = new Date().toISOString();
       platform: require('os').platform(),
       saveReport: () => {
         if (typeof writeStaticHtmlReport === 'function') {
-          writeStaticHtmlReport({ _globalRepo: repo || '.', _globalStartedAt: _liveState.startedAt, _liveState, safeWriteFile: (p,c)=>require('fs').writeFileSync(p,c), log, pathJoin: require('path').join });
+          return writeStaticHtmlReport({ _globalRepo: repo || '.', _globalStartedAt: _liveState.startedAt, _liveState, safeWriteFile: (p,c)=>require('fs').writeFileSync(p,c), log, pathJoin: require('path').join });
         }
       }
     });

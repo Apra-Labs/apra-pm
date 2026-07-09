@@ -639,6 +639,7 @@ export function writeStaticHtmlReport({ _globalRepo, _globalStartedAt, _liveStat
     );
     safeWriteFile(htmlPath, finalHtml, 'Static HTML sprint report');
     log('Static HTML report saved: ' + htmlPath);
+    return htmlPath;
   } catch (e) {
     log('Failed to write HTML report: ' + e.message);
   }

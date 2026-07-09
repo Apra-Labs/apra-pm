@@ -39,13 +39,26 @@ export function startStatusServer({
       }
       if (req.url === '/save' && req.method === 'POST') {
         if (typeof saveReport === 'function') {
-          saveReport();
+          const path = saveReport();
           res.writeHead(200, { 'Content-Type': 'text/plain' });
-          res.end('HTML Report Saved to sprint-logs/');
+          res.end(path || 'HTML Report Saved to sprint-logs/');
         } else {
           res.writeHead(500, { 'Content-Type': 'text/plain' });
           res.end('saveReport not wired');
         }
+        return;
+      }
+      if (req.url.startsWith('/open-report')) {
+        const u = new URL(req.url, 'http://localhost');
+        const p = u.searchParams.get('path');
+        if (p && execSync) {
+          try {
+            const _openCmd = platform === 'win32' ? 'start "" "' + p + '"' : platform === 'darwin' ? 'open "' + p + '"' : 'xdg-open "' + p + '"';
+            execSync(_openCmd, { stdio: 'ignore', timeout: 5000 });
+          } catch {}
+        }
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Opened');
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/html' });
