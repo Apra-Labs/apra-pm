@@ -586,19 +586,14 @@
                  else if (act.label.includes('harvester')) insight = 'Committing changes, closing tasks, syncing DB';
                  else if (act.label === 'System') insight = 'Orchestrator and sprint setup logs';
                  
-                 html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer; ' + bgStyle + '" onclick="toggleAct(\'' + act.label + '\')">' +
-                         '<td style="padding:10px 12px; width:150px; ' + statusStyle + '"><span style="display:inline-block; width:16px; opacity:0.6;">' + toggleIcon + '</span> ' + icon + phase + '</td>' +
-                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);" title="' + insight + '">' + act.label + '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + 
-                           (act.model === "pm-doer-std" ? "Standard" : 
-                           (act.model === "pm-doer-cheap" ? "Cheap" : 
-                           (act.model === "pm-doer-prem" ? "Premium" : 
-                           (act.model === "native" ? "Orchestrator" : act.model)))) + 
-                         '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + formatDuration(act.durationMs) + '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + (act.outTokens || (act.isRunning ? '-' : '0')) + ' <a href="/log?label=' + act.label + '" target="_blank" title="View LLM details" style="text-decoration:none; margin-left:4px;" onclick="event.stopPropagation()">🔍</a></td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + parseCycleRound(act.label, act.cycle) + '</td>' +
-                         '</tr>';
+                 html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer; ${bgStyle}" onclick="toggleAct('${act.label}')">` +
+                         `<td style="padding:10px 12px; width:150px; ${statusStyle}"><span style="display:inline-block; width:16px; opacity:0.6;">${toggleIcon}</span> ${icon}${phase}</td>` +
+                         `<td style="padding:10px 12px; font-weight:600; color:var(--text);" title="${insight}">${act.label}</td>` +
+                         `<td style="padding:10px 12px; color:var(--text-muted);">${act.model === "pm-doer-std" ? "Standard" : (act.model === "pm-doer-cheap" ? "Cheap" : (act.model === "pm-doer-prem" ? "Premium" : (act.model === "native" ? "Orchestrator" : act.model)))}</td>` +
+                         `<td style="padding:10px 12px; color:var(--text-muted);">${formatDuration(act.durationMs)}</td>` +
+                         `<td style="padding:10px 12px; color:var(--text-muted);">${act.outTokens || (act.isRunning ? '-' : '0')} <a href="/log?label=${act.label}" target="_blank" title="View LLM details" style="text-decoration:none; margin-left:4px;" onclick="event.stopPropagation()">🔍</a></td>` +
+                         `<td style="padding:10px 12px; color:var(--text-muted);">${parseCycleRound(act.label, act.cycle)}</td>` +
+                         `</tr>`;
                          
                  if (isExpanded) {
                     const logLines = logsByLabel[act.label] || [];
@@ -606,10 +601,10 @@
                     if (logLines.length === 0) termInner = '<div style="color:var(--text-muted);">No logs yet...</div>';
                     else termInner = logLines.map(renderLogLine).join('');
                     
-                    html += '<tr style="background:rgba(0,0,0,0.3); border-bottom:1px solid rgba(255,255,255,0.05);">' +
-                            '<td colspan="6" style="padding: 0;">' +
-                            '<div class="terminal" style="max-height: 400px; margin: 0; border: none; border-radius: 0; font-size: 11px; padding: 12px 16px; font-family: \'JetBrains Mono\', Consolas, monospace;">' + termInner + '</div>' +
-                            '</td></tr>';
+                    html += `<tr style="background:rgba(0,0,0,0.3); border-bottom:1px solid rgba(255,255,255,0.05);">` +
+                            `<td colspan="6" style="padding: 0;">` +
+                            `<div class="terminal" style="max-height: 400px; margin: 0; border: none; border-radius: 0; font-size: 11px; padding: 12px 16px; font-family: 'JetBrains Mono', Consolas, monospace;">${termInner}</div>` +
+                            `</td></tr>`;
                  }
                });
             }
