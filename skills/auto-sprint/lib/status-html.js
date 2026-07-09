@@ -537,7 +537,7 @@ export const STATUS_HTML = `<!DOCTYPE html>
           
           function renderLogLine(line) {
             function escapeHTML(str) { return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-            const timeMatch = line.match(/202\d-[\d\-T:.]+Z/);
+            const timeMatch = line.match(/202\\d-[\\d\\-T:.]+Z/);
             let localTime = '';
             if (timeMatch) {
                const dateObj = new Date(timeMatch[0]);
