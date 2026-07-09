@@ -148,11 +148,15 @@ check. The phase has three steps:
    Reset section to restore pristine state. It then follows `deploy.md` to deploy the
    build and runs the smoke test. On smoke-test failure, it tears down, and PM skips
    integration tests this cycle and continues.
-2. **Integration tests** -- dispatch `integ-test-runner` (standard-tier), passing the
-   **sprint root id** (`<sprint-id>`) in the dispatch prompt. It executes the tests of
-   each open feature **in the sprint-root subtree only** (not every open feature in the
-   DB), closes passing features in beads, and files a priority-ranked bug for each
-   failure (see `beads.md`).
+2. **Integration tests.** First **enumerate the open features in the sprint-root
+   subtree** yourself -- the same subtree the goal-check uses (`bd graph --json
+   <sprint-id>` or `bd list --tree <sprint-id>`, then keep `issue_type == feature`,
+   `status != closed`). Then dispatch `integ-test-runner` (standard-tier), passing that
+   **explicit feature-id list** in the prompt -- not the sprint id for it to re-derive,
+   and never the whole DB. Scoping is the orchestrator's job (you have the full sprint
+   context); the runner only tests what it is handed. It runs each listed feature's
+   tests, closes passing features in beads, and files a priority-ranked bug for each
+   failure (see `beads.md`). If the list is empty, skip integration tests this cycle.
 3. **Teardown** -- dispatch `deployer` to run the playbook's Teardown section and
    fully clean up.
 
