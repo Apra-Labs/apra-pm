@@ -541,6 +541,7 @@ async function _fleetCall(memberName, prompt, opts) {
 async function dispatchShellFleet(cmds, memberName, opts) {
   opts = opts || {};
   const cp = require('node:child_process');
+  const execAsync = require('util').promisify(cp.exec);
   const fs = require('fs');
   const path = require('path');
   const os = require('os');
@@ -556,19 +557,21 @@ async function dispatchShellFleet(cmds, memberName, opts) {
           script = script.substring(1, script.length - 1);
         }
         
-        const out1 = cp.execSync(cmd1, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
+        const { stdout: out1 } = await execAsync(cmd1, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
         
         const tmpFile = path.join(os.tmpdir(), 'script-' + Date.now() + '-' + Math.floor(Math.random()*1000) + '.js');
+        const tmpIn = path.join(os.tmpdir(), 'in-' + Date.now() + '-' + Math.floor(Math.random()*1000) + '.txt');
         fs.writeFileSync(tmpFile, script, 'utf-8');
+        fs.writeFileSync(tmpIn, out1, 'utf-8');
         
-        const out2 = cp.execSync(`node "${tmpFile}"`, { 
-            input: out1, encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo 
+        const { stdout: out2 } = await execAsync(`node "${tmpFile}" < "${tmpIn}"`, { 
+            encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo 
         });
-        try { fs.unlinkSync(tmpFile); } catch(e) {}
+        try { fs.unlinkSync(tmpFile); fs.unlinkSync(tmpIn); } catch(e) {}
         
         outputs.push(out2);
       } else {
-        const out = cp.execSync(c, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
+        const { stdout: out } = await execAsync(c, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 50, cwd: repo });
         outputs.push(out);
       }
     } catch (e) {
@@ -719,6 +722,10 @@ let _globalStartedAt = new Date().toISOString();
   const startedAt = _liveState.startedAt;
   log('Repo: ' + repo + ' | Branch: ' + branch);
   updateLiveState({ phase: 'setup', goal, rootIds, maxCycles, branch, startedAt, mission });
+
+  // Guarantee the dashboard server has time to bind to its port and launch the browser
+  // before the incredibly heavy `bd graph` database queries lock up the CPU threads.
+  await new Promise(r => setTimeout(r, 1000));
 
   // Ensure sprint-logs/ directory exists.
   const sprintLogsDir = path.join(repo, 'sprint-logs');
