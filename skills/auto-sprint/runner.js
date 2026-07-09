@@ -66,6 +66,22 @@ const _initPromise = Promise.all([
 //   node runner.js '["BD-1","BD-2"]'
 //   node runner.js '{"issues":["BD-7"],"branch":"feat/x","goal":"P1"}'
 
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+  try {
+    const fs = require('node:fs');
+    fs.appendFileSync('crash.log', new Date().toISOString() + ' Uncaught Exception: ' + (err.stack || err) + '\n');
+  } catch(e) {}
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('[FATAL] Unhandled Rejection:', err);
+  try {
+    const fs = require('node:fs');
+    fs.appendFileSync('crash.log', new Date().toISOString() + ' Unhandled Rejection: ' + (err.stack || err) + '\n');
+  } catch(e) {}
+});
+
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { execSync }  = require('node:child_process');

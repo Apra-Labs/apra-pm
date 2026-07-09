@@ -13,7 +13,14 @@ export function startStatusServer({
         const _repo = typeof repo === 'string' && repo ? repo : '.';
         const deployMdExists = fs.existsSync(pathJoin(_repo, 'deploy.md'));
         const playbookExists = fs.existsSync(pathJoin(_repo, 'integ-test-playbook.md'));
-        const statePayload = Object.assign({}, getLiveState(), { ledger: dispatchLedger, deployMdExists, playbookExists });
+        
+        let sprintBeads = getLiveState().sprintBeads || [];
+        try {
+          const beadsJsonl = fs.readFileSync(pathJoin(_repo, '.beads', 'issues.jsonl'), 'utf8');
+          sprintBeads = beadsJsonl.split('\\n').filter(Boolean).map(x => { try { return JSON.parse(x) } catch(e){ return null } }).filter(Boolean);
+        } catch(e) {}
+        
+        const statePayload = Object.assign({}, getLiveState(), { sprintBeads, ledger: dispatchLedger, deployMdExists, playbookExists });
         res.end(JSON.stringify(statePayload));
         return;
       }

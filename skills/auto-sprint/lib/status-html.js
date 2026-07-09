@@ -302,21 +302,38 @@ export const STATUS_HTML = `<!DOCTYPE html>
         <div id="cap-integ" class="capability-pill">Integ Tests</div>
       </div>
       
-      <div class="section-title" style="margin-top: 0; margin-bottom: 16px;">Task Activity</div>
-      <div style="max-height: 35vh; overflow-y: auto; background: var(--bg-glass); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 30px;">
+      <div class="section-title" style="margin-top: 0; margin-bottom: 16px; display:flex; justify-content:space-between; align-items:center;">
+        Task Activity
+        <div>
+           <button onclick="expandAll()" style="background:rgba(255,255,255,0.05); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; margin-right:4px; font-size:11px;">+ Expand All</button>
+           <button onclick="collapseAll()" style="background:rgba(255,255,255,0.05); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:11px;">- Collapse</button>
+        </div>
+      </div>
+      <div style="max-height: 45vh; overflow-y: auto; background: var(--bg-glass); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 30px;">
         <table id="task-list" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
           <!-- Table rows injected here -->
         </table>
       </div>
-      
-      <div class="section-title">Terminal Log</div>
-      <div class="terminal" id="terminal"></div>
     </div>
   </div>
 
   <script>
     const phases = ['setup', 'Plan', 'Develop', 'Test', 'Harvest', '?'];
-    let lastLogCount = 0;
+    window.expandedActs = new Set();
+    window.allActsForToggle = new Set();
+    window.toggleAct = function(label) {
+      if (window.expandedActs.has(label)) window.expandedActs.delete(label);
+      else window.expandedActs.add(label);
+      poll();
+    };
+    window.expandAll = function() {
+      window.allActsForToggle.forEach(l => window.expandedActs.add(l));
+      poll();
+    };
+    window.collapseAll = function() {
+      window.expandedActs.clear();
+      poll();
+    };
 
     function formatDuration(ms) {
       if (!ms || ms < 0) return '-';
@@ -455,9 +472,19 @@ export const STATUS_HTML = `<!DOCTYPE html>
           if (beadsContainer.innerHTML !== bHtml) beadsContainer.innerHTML = bHtml;
         } else {
           beadsContainer.innerHTML = '<div style="color:var(--text-muted);">No issues tracked yet...</div>';
-        }
+              const taskList = document.getElementById('task-list');
         
-        const taskList = document.getElementById('task-list');
+        let currentLogLabel = 'System';
+        const logsByLabel = { 'System': [] };
+        if (s.log) {
+          s.log.forEach(line => {
+             const msg = line.replace(/^.*?Z /, '').trim();
+             const match = msg.match(/^dispatch:\s+([\w-]+)/);
+             if (match) currentLogLabel = match[1];
+             if (!logsByLabel[currentLogLabel]) logsByLabel[currentLogLabel] = [];
+             logsByLabel[currentLogLabel].push(line);
+          });
+        }
         
         const _ledger = s.ledger || [];
         const mergedActs = [..._ledger];
@@ -474,6 +501,20 @@ export const STATUS_HTML = `<!DOCTYPE html>
              });
            }
         }
+        
+        if (logsByLabel['System'] && logsByLabel['System'].length > 0 && !mergedActs.some(a => a.label === 'System')) {
+           mergedActs.unshift({
+              phase: 'setup',
+              label: 'System',
+              model: '-',
+              durationMs: 0,
+              isRunning: false,
+              outTokens: '-'
+           });
+        }
+        
+        window.allActsForToggle.clear();
+        mergedActs.forEach(a => window.allActsForToggle.add(a.label));
         
         if (!mergedActs.length) {
           if (taskList.innerHTML !== '<div style="color:var(--text-muted);font-size:13px;padding:20px;">Waiting for tasks...</div>') 
@@ -494,53 +535,9 @@ export const STATUS_HTML = `<!DOCTYPE html>
                      '<th style="padding:10px 12px; font-weight:500;">Tokens</th>' +
                      '<th style="padding:10px 12px; font-weight:500;">Round</th></tr></thead><tbody>';
           
-          for (const phase of phases) {
-            const acts = byPhase[phase];
-            if (acts && acts.length > 0) {
-               acts.forEach(act => {
-                 let isWarning = false;
-                 if (act.verdict) {
-                    const v = String(act.verdict).toUpperCase();
-                    if (v === 'CHANGES NEEDED' || v === 'FAILED' || v === 'RED' || v.includes('BUGS')) isWarning = true;
-                 }
-                 const statusStyle = act.isRunning ? 'color:var(--accent); font-weight:bold;' : (isWarning ? 'color:var(--warning); font-weight:500;' : 'color:var(--success);');
-                 const bgStyle = act.isRunning ? 'background: rgba(59, 130, 246, 0.05);' : (isWarning ? 'background: rgba(245, 158, 11, 0.05);' : '');
-                 const icon = act.isRunning ? '<span style="display:inline-block; animation: pulse 1.5s infinite;">⚡</span> ' : (isWarning ? '⚠️ ' : '✓ ');
-                 
-                 let insight = '';
-                 if (act.label.includes('planner')) insight = 'Breaking down features into actionable tasks';
-                 else if (act.label.includes('reviewer')) insight = 'Evaluating code/plan quality and correctness';
-                 else if (act.label.includes('doer')) insight = 'Writing code and implementing requirements';
-                 else if (act.label.includes('integ')) insight = 'Running integration test playbook';
-                 else if (act.label.includes('harvester')) insight = 'Committing changes, closing tasks, syncing DB';
-                 
-                 html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05); ' + bgStyle + '">' +
-                         '<td style="padding:10px 12px; width:130px; ' + statusStyle + '">' + icon + phase + '</td>' +
-                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);" title="' + insight + '">' + act.label + '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + 
-                           (act.model === "pm-doer-std" ? "Standard" : 
-                           (act.model === "pm-doer-cheap" ? "Cheap" : 
-                           (act.model === "pm-doer-prem" ? "Premium" : 
-                           (act.model === "native" ? "Orchestrator" : act.model)))) + 
-                         '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + formatDuration(act.durationMs) + '</td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + (act.outTokens || (act.isRunning ? '-' : '0')) + ' <a href="/log?label=' + act.label + '" target="_blank" title="View LLM details" style="text-decoration:none; margin-left:4px;">🔍</a></td>' +
-                         '<td style="padding:10px 12px; color:var(--text-muted);">' + parseCycleRound(act.label, act.cycle) + '</td>' +
-                         '</tr>';
-               });
-            }
-          }
-          html += '</tbody>';
-          if (taskList.innerHTML !== html) taskList.innerHTML = html;
-        }
-        
-        if (s.log && s.log.length !== lastLogCount) {
-          lastLogCount = s.log.length;
-          const term = document.getElementById('terminal');
-          term.innerHTML = s.log.map(line => {
+          function renderLogLine(line) {
             function escapeHTML(str) { return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-            // Extract the GMT timestamp
-            const timeMatch = line.match(/202\\d-[\\d\\-T:.]+Z/);
+            const timeMatch = line.match(/202\d-[\d\-T:.]+Z/);
             let localTime = '';
             if (timeMatch) {
                const dateObj = new Date(timeMatch[0]);
@@ -557,9 +554,62 @@ export const STATUS_HTML = `<!DOCTYPE html>
             else if (isWarning) cls = 'warning';
             else if (isSuccess) cls = 'success';
             else if (isHighlight) cls = 'highlight';
-            return '<div class="log-line"><span class="log-time">' + localTime + '</span><span class="log-msg ' + cls + '">' + msg + '</span></div>';
-          }).join('');
-          term.scrollTop = term.scrollHeight;
+            return '<div class="log-line" style="display:flex; gap:12px;"><span class="log-time" style="opacity:0.5; width:65px; flex-shrink:0;">' + localTime + '</span><span class="log-msg ' + cls + '">' + msg + '</span></div>';
+          }
+          
+          for (const phase of phases) {
+            const acts = byPhase[phase];
+            if (acts && acts.length > 0) {
+               acts.forEach(act => {
+                 let isWarning = false;
+                 if (act.verdict) {
+                    const v = String(act.verdict).toUpperCase();
+                    if (v === 'CHANGES NEEDED' || v === 'FAILED' || v === 'RED' || v.includes('BUGS')) isWarning = true;
+                 }
+                 const isExpanded = window.expandedActs.has(act.label);
+                 const toggleIcon = isExpanded ? '▼' : '▶';
+                 const statusStyle = act.isRunning ? 'color:var(--accent); font-weight:bold;' : (isWarning ? 'color:var(--warning); font-weight:500;' : 'color:var(--success);');
+                 const bgStyle = act.isRunning ? 'background: rgba(59, 130, 246, 0.05);' : (isWarning ? 'background: rgba(245, 158, 11, 0.05);' : '');
+                 const icon = act.isRunning ? '<span style="display:inline-block; animation: pulse 1.5s infinite;">⚡</span> ' : (isWarning ? '⚠️ ' : '✓ ');
+                 
+                 let insight = '';
+                 if (act.label.includes('planner')) insight = 'Breaking down features into actionable tasks';
+                 else if (act.label.includes('reviewer')) insight = 'Evaluating code/plan quality and correctness';
+                 else if (act.label.includes('doer')) insight = 'Writing code and implementing requirements';
+                 else if (act.label.includes('integ')) insight = 'Running integration test playbook';
+                 else if (act.label.includes('harvester')) insight = 'Committing changes, closing tasks, syncing DB';
+                 else if (act.label === 'System') insight = 'Orchestrator and sprint setup logs';
+                 
+                 html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer; ' + bgStyle + '" onclick="toggleAct(\'' + act.label + '\')">' +
+                         '<td style="padding:10px 12px; width:150px; ' + statusStyle + '"><span style="display:inline-block; width:16px; opacity:0.6;">' + toggleIcon + '</span> ' + icon + phase + '</td>' +
+                         '<td style="padding:10px 12px; font-weight:600; color:var(--text);" title="' + insight + '">' + act.label + '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + 
+                           (act.model === "pm-doer-std" ? "Standard" : 
+                           (act.model === "pm-doer-cheap" ? "Cheap" : 
+                           (act.model === "pm-doer-prem" ? "Premium" : 
+                           (act.model === "native" ? "Orchestrator" : act.model)))) + 
+                         '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + formatDuration(act.durationMs) + '</td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + (act.outTokens || (act.isRunning ? '-' : '0')) + ' <a href="/log?label=' + act.label + '" target="_blank" title="View LLM details" style="text-decoration:none; margin-left:4px;" onclick="event.stopPropagation()">🔍</a></td>' +
+                         '<td style="padding:10px 12px; color:var(--text-muted);">' + parseCycleRound(act.label, act.cycle) + '</td>' +
+                         '</tr>';
+                         
+                 if (isExpanded) {
+                    const logLines = logsByLabel[act.label] || [];
+                    let termInner = '';
+                    if (logLines.length === 0) termInner = '<div style="color:var(--text-muted);">No logs yet...</div>';
+                    else termInner = logLines.map(renderLogLine).join('');
+                    
+                    html += '<tr style="background:rgba(0,0,0,0.3); border-bottom:1px solid rgba(255,255,255,0.05);">' +
+                            '<td colspan="6" style="padding: 0;">' +
+                            '<div class="terminal" style="max-height: 400px; margin: 0; border: none; border-radius: 0; font-size: 11px; padding: 12px 16px; font-family: \'JetBrains Mono\', Consolas, monospace;">' + termInner + '</div>' +
+                            '</td></tr>';
+                 }
+               });
+            }
+          }
+          html += '</tbody>';
+          if (taskList.innerHTML !== html) taskList.innerHTML = html;
         }
         
       } catch(e) {
