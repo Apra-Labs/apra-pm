@@ -9,7 +9,15 @@ export function writeStaticHtmlReport({ _globalRepo, _liveState, safeWriteFile, 
   if (!_liveState || !_globalRepo) return;
   const outPath = pathJoin(_globalRepo, 'sprint-logs', 'auto-sprint-report.html');
   try {
-    safeWriteFile(outPath, STATUS_HTML, 'html-report');
+    let staticHtml = STATUS_HTML.replace(
+      /const res = await fetch\\('\\/state'\\);\\s*const s = await res\\.json\\(\\);/,
+      'const s = ' + JSON.stringify(_liveState) + ';'
+    );
+    staticHtml = staticHtml.replace(/setInterval\\(poll, 2000\\);/, '// setInterval disabled for static report');
+    staticHtml = staticHtml.replace(/<button id="btn-stop"[^>]*>.*?<\\/button>/, '');
+    staticHtml = staticHtml.replace(/<button id="save-btn"[^>]*>.*?<\\/button>/, '');
+    
+    safeWriteFile(outPath, staticHtml, 'html-report');
     if (log) log('[STATUS] Saved static HTML report to ' + outPath);
     return outPath;
   } catch(e) {
