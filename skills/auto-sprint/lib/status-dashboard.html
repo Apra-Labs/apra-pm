@@ -264,7 +264,7 @@
       </div>
       <div style="display:flex; align-items:center; gap:12px;">
         <span id="save-notif" style="opacity:0; transition:opacity 0.3s; font-size:11px; color:var(--text); background:rgba(0,0,0,0.2); padding:6px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); display:inline-flex; align-items:center; max-width: 400px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;"></span>
-        <button id="save-btn" onclick="fetch('/save', {method:'POST'}).then(r=>r.text()).then(t=>{const n=document.getElementById('save-notif');n.innerHTML='<span style=\'color:var(--success);margin-right:6px;\'>✓</span><a href=\'#\' onclick=\'fetch(\"/open-report?path=\"+encodeURIComponent(\"'+t.replace(/\\/g,'\\\\')+'\")); return false;\' style=\'color:var(--accent); text-decoration:none; text-overflow:ellipsis; overflow:hidden;\' title=\'Click to open: '+t+'\' onmouseover=\'this.style.textDecoration=\"underline\"\' onmouseout=\'this.style.textDecoration=\"none\"\'>' + t + '</a> <button onclick=\'this.parentElement.style.opacity=\"0\"\' style=\'background:none;border:none;color:var(--text-muted);cursor:pointer;padding:0;margin-left:8px;\' title=\'Dismiss\'>✖</button>';n.style.opacity='1';}).catch(e=>alert('Failed: '+e))" style="background:var(--accent); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif;">Save HTML Report</button>
+        <button id="save-btn" onclick="handleSaveReport()" style="background:var(--accent); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif;">Save HTML Report</button>
       </div>
     </div>
   </div>
@@ -323,6 +323,17 @@
   </div>
 
   <script>
+    function handleSaveReport() {
+      fetch('/save', {method:'POST'})
+        .then(r => r.text())
+        .then(t => {
+          const n = document.getElementById('save-notif');
+          const safePath = encodeURIComponent(t.replace(/\\/g, '\\\\'));
+          n.innerHTML = `<span style="color:var(--success);margin-right:6px;">✓</span><a href="#" onclick="fetch('/open-report?path=${safePath}'); return false;" style="color:var(--accent); text-decoration:none; text-overflow:ellipsis; overflow:hidden;" title="Click to open: ${t}" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${t}</a> <button onclick="this.parentElement.style.opacity='0'" style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:0;margin-left:8px;" title="Dismiss">✖</button>`;
+          n.style.opacity = '1';
+        })
+        .catch(e => alert('Failed: ' + e));
+    }
     const phases = ['setup', 'Plan', 'Develop', 'Test', 'Harvest', '?'];
     window.expandedActs = new Set();
     window.allActsForToggle = new Set();
