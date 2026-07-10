@@ -27,8 +27,8 @@ test('writeStaticHtmlReport generates HTML file replacing dynamic elements', asy
   assert.ok(writtenPath.includes('sprint-status-2026-07-08T12-00-00-000Z.html'), 'Filename includes safe timestamp');
   
   assert.ok(writtenContent, 'Should have content');
-  assert.match(writtenContent, /const res = { json: async \(\) => \({"sprintBeads":\[\]}\) };/, 'Replaces fetch with static state JSON');
-  assert.match(writtenContent, /poll\(\); \/\/ static report/, 'Replaces setInterval with static poll()');
+  assert.match(writtenContent, /const s = \{"sprintBeads":\[\]\};/, 'Replaces fetch with static state JSON');
+  assert.match(writtenContent, /\/\/ setInterval disabled for static report/, 'Replaces setInterval with static poll()');
 });
 
 test('writeStaticHtmlReport gracefully handles write failures', async () => {
@@ -47,5 +47,5 @@ test('writeStaticHtmlReport gracefully handles write failures', async () => {
 
   // Should not throw, should log the error
   writeStaticHtmlReport(deps);
-  assert.match(logs[0], /Failed to write HTML report: Disk full/, 'Must log write failures instead of crashing');
+  assert.match(logs[0], /Failed to save HTML report: Error: Disk full/, 'Must log write failures instead of crashing');
 });

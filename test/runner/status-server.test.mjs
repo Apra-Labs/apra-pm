@@ -69,7 +69,7 @@ describe('status-server', () => {
       dispatchLedger: [], dispatchOutputs: {},
       fs: { 
         existsSync: () => false,
-        readFileSync: (p) => p.includes('issues.jsonl') ? '{"id":"mock-1","status":"open"}\\n{"id":"mock-2","status":"closed"}' : ''
+        readFileSync: (p) => p.includes('issues.jsonl') ? '{"id":"mock-1","status":"open"}\n{"id":"mock-2","status":"closed"}' : ''
       }, 
       pathJoin: (...args) => args.join('/'),
       log: () => {}, setAbortRequested: () => {}, execSync: () => {}, platform: 'linux'

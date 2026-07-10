@@ -6,7 +6,7 @@ runner: runner.js
 
 # auto-sprint
 
-Provider-agnostic AGY skill that runs a full sprint against a beads backlog.
+Provider-agnostic skill that runs a full sprint against a beads backlog.
 All routing is deterministic Node.js. Fleet members (pre-registered once via
 member-setup.md) handle the AI work. No LLM token is spent deciding which task
 to run next or whether to continue.
@@ -27,24 +27,14 @@ The JSON object form gives full control over all parameters:
 | Field            | Required | Default   | Description                                      |
 |------------------|----------|-----------|--------------------------------------------------|
 | issues           | yes      | -         | Array of beads issue IDs (sprint roots)          |
-| branch           | no       | current   | Sprint branch name; created if missing           |
+| branch           | yes      | -         | Sprint branch name; created if missing           |
 | goal             | no       | P1/P2     | Exit criterion: P1, P1/P2, or P1/P2/P3          |
 | max_cycles       | no       | 5         | Hard cycle ceiling                               |
 | base_branch      | no       | main      | PR target branch                                 |
 | requirementsFile | no       | (none)    | Path to extra context file for the planner       |
+| skip_dolt_push   | no       | false     | Skips the bd dolt push step when true (useful for CI) |
 
-## Constraints summary
 
-1. **Identical input grammar** - accepts exactly the same four forms as
-   `.claude/workflows/auto-sprint.js`.
-2. **Same inner logic** - phases, agent roster, schema names, cost/calibration
-   arithmetic, and no-progress abort all mirror auto-sprint.js exactly.
-3. **Zero orchestrator tokens** - the runner.js loop is pure Node.js; all
-   routing (which task, continue/stop, verdict evaluation) is done locally.
-4. **Fleet dispatch** - every AI step calls the apra-fleet MCP execute_prompt
-   tool; members are selected by fixed name; tier->model is resolved server-side.
-5. **install.mjs integration** - deployed by `node install.mjs --llm agy` as
-   step [5/5]; removed by `--uninstall --llm agy`.
 
 ## How it works
 
@@ -100,7 +90,7 @@ Prerequisites: apra-fleet MCP installed and at least one provider configured.
 
 ## Running
 
-After member setup, invoke the skill from the AGY chat interface:
+After member setup, invoke the skill from your chat interface:
 
 ```
 /auto-sprint BD-7

@@ -161,19 +161,29 @@ if (rawArgs) {
   }
 }
 
+import { runPreflightChecks } from './lib/preflight.js';
+
+const { ok, errors, warnings } = runPreflightChecks(opts, rawArgs);
+
+if (warnings.length > 0) {
+  warnings.forEach(w => log(`WARN: ${w}`));
+}
+
+if (!ok) {
+  errors.forEach(e => log(`ERROR: ${e}`));
+  log('ERROR: Preflight checks failed. Aborting sprint.');
+  process.exit(1);
+}
+
 let branch             = opts.branch           || '';
 const rawIssues        = opts.issues            || [];
 const rootIds          = Array.isArray(rawIssues) ? rawIssues : [rawIssues];
+const base_branch      = opts.base_branch       || 'main';
+
 const goal             = opts.goal             || 'P1/P2';
 const maxCycles        = Number(opts.max_cycles) || 5;
 const mission          = opts.mission           || '';
 const requirementsFile = opts.requirementsFile  || '';
-const base_branch      = opts.base_branch       || 'main';
-
-if (rootIds.length === 0) {
-  log('ERROR: at least one beads issue ID is required (pass as arg: /auto-sprint BD-1)');
-  process.exit(1);
-}
 
 // Goal -> numeric priority threshold.
 const GOAL_THRESHOLD = { 'P1': 1, 'P1/P2': 2, 'P1/P2/P3': 3 };
@@ -348,10 +358,8 @@ async function dispatchFleet(memberName, prompt, opts = {}) {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     let raw = '';
     try {
-      // Call the apra-fleet MCP execute_prompt tool via the MCP client.
-      // In the AGY skill runtime the runner is invoked by the AGY skill engine
-      // which exposes MCP tools. We use a synchronous child_process call to
-      // invoke the MCP via the AGY CLI's tool dispatch path.
+      // Call the apra-fleet MCP execute_prompt tool via the SSE network client.
+      // We pass through the target member, the prompt, and the requested model tier.
       // For schema responses: parse and return JSON; otherwise return raw string.
       const result = await _fleetCall(memberName, fullPrompt, opts);
       raw = typeof result === 'string' ? result : JSON.stringify(result);
@@ -434,11 +442,34 @@ async function getFleetClient() {
     const clientModule = await import('file://' + p.join(libDir, 'client.mjs').replace(/\\/g, '/'));
     const transportModule = await import('file://' + p.join(libDir, 'transport.mjs').replace(/\\/g, '/'));
     
-    const transport = new transportModule.SseTransport('http://127.0.0.1:7523/sse');
+    // Support dynamic fleet URL from CLI opts or environment
+    const fleetUrl = (typeof opts !== 'undefined' && (opts.fleetUrl || opts.fleet_url)) || process.env.APRA_FLEET_URL || 'http://127.0.0.1:7523/mcp';
+    const authHeader = process.env.APRA_FLEET_AUTH;
+    const transportOptions = authHeader ? { headers: { 'Authorization': authHeader } } : {};
+    
+    const transport = new transportModule.StreamableHttpTransport(fleetUrl, transportOptions);
+    
     await new Promise((resolve, reject) => {
-      transport.on('ready', resolve);
-      transport.on('error', reject);
-      transport.start().catch(reject);
+      const timeout = setTimeout(() => {
+        reject(new Error(`Timed out connecting to fleet server at ${fleetUrl}. Please check if apra-fleet is running.`));
+      }, 5000);
+      
+      transport.on('ready', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      transport.on('error', (err) => {
+        clearTimeout(timeout);
+        reject(new Error(`Failed connecting to fleet server at ${fleetUrl}: ${err.message}`));
+      });
+      transport.start().catch((err) => {
+        clearTimeout(timeout);
+        if (err.name === 'TypeError' && err.message.includes('fetch failed')) {
+            reject(new Error(`Fleet server is unreachable at ${fleetUrl}. Please ensure apra-fleet is running.`));
+        } else {
+            reject(new Error(`Transport start failed: ${err.message}`));
+        }
+      });
     });
     
     const mcpClient = new clientModule.McpClient(transport);
