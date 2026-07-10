@@ -239,17 +239,32 @@ function uninstall(cfg, agentsSrc) {
 
 // --- main ------------------------------------------------------------------
 function parseArgs(argv) {
-  const args = { llm: 'claude', force: false, help: false, uninstall: false, version: false };
+  const args = { llms: [], force: false, help: false, uninstall: false, version: false };
+  let llmProvided = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--version' || a === '-v') args.version = true;
     else if (a === '--force') args.force = true;
     else if (a === '--uninstall') args.uninstall = true;
-    else if (a === '--llm') args.llm = argv[++i];
-    else if (a.startsWith('--llm=')) args.llm = a.split('=')[1];
+    else if (a === '--llm') {
+      args.llms.push(...argv[++i].split(','));
+      llmProvided = true;
+    }
+    else if (a.startsWith('--llm=')) {
+      args.llms.push(...a.split('=')[1].split(','));
+      llmProvided = true;
+    }
     else throw new Error(`unknown argument "${a}" (try --help)`);
   }
+  
+  if (!llmProvided) {
+    args.llms = ['claude'];
+  } else if (args.llms.includes('all')) {
+    args.llms = ['claude', 'gemini', 'agy', 'opencode'];
+  }
+  
+  args.llms = [...new Set(args.llms.map(l => l.trim()))].filter(Boolean);
   return args;
 }
 
@@ -308,157 +323,149 @@ function main() {
     return;
   }
 
-  let cfg;
-  try { cfg = providerConfig(args.llm); }
-  catch (e) { console.error(`error: ${e.message}`); process.exit(2); }
-
   const agentsSrc = path.join(ROOT, 'agents');
+  const skillSrc = path.join(ROOT, 'skills', 'pm');
 
   if (args.uninstall) {
-    console.log(`Uninstalling pm for ${cfg.name} ...`);
-    const removed = uninstall(cfg, agentsSrc);
-    console.log(`  skill        -> ${removed.skill ? 'removed' : 'not found (nothing to do)'}`);
-    console.log(`  agents       -> ${removed.agents.length} removed${removed.agents.length ? ` (${removed.agents.join(', ')})` : ''}`);
-    console.log(`  permissions  -> ${removed.permsRemoved} removed`);
-    if (cfg.name === 'Claude') {
-      console.log(`  workflow          -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);}
-    if (cfg.name === 'Antigravity') {
-      console.log(`  auto-sprint skill -> ${removed.autoSprintSkill ? 'removed' : 'not found (nothing to do)'}`);
+    for (const llm of args.llms) {
+      let cfg;
+      try { cfg = providerConfig(llm); }
+      catch (e) { console.error(`error: ${e.message}`); continue; }
+
+      console.log(`Uninstalling pm for ${cfg.name} ...`);
+      const removed = uninstall(cfg, agentsSrc);
+      console.log(`  skill        -> ${removed.skill ? 'removed' : 'not found (nothing to do)'}`);
+      console.log(`  agents       -> ${removed.agents.length} removed${removed.agents.length ? ` (${removed.agents.join(', ')})` : ''}`);
+      console.log(`  permissions  -> ${removed.permsRemoved} removed`);
+      if (cfg.name === 'Claude') {
+        console.log(`  workflow          -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);}
+      if (cfg.name === 'Antigravity') {
+        console.log(`  auto-sprint skill -> ${removed.autoSprintSkill ? 'removed' : 'not found (nothing to do)'}`);
+      }
+      console.log(`pm uninstalled for ${cfg.name}.\n`);
     }
-    console.log('');
-    console.log('pm uninstalled.');
     return;
   }
 
-  const skillSrc = path.join(ROOT, 'skills', 'pm');
   if (!fs.existsSync(skillSrc) || !fs.existsSync(agentsSrc)) {
     console.error('error: run this from the apra-pm repo root (skills/ and agents/ not found)');
     process.exit(1);
   }
 
-  const skillDest = path.join(cfg.configDir, 'skills', 'pm');
-  const agentsDest = path.join(cfg.configDir, 'agents');
-  const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
+  for (const llm of args.llms) {
+    let cfg;
+    try { cfg = providerConfig(llm); }
+    catch (e) { console.error(`error: ${e.message}`); continue; }
 
-  if (fs.existsSync(skillDest) && !args.force) {
-    console.error(`pm already installed at ${skillDest} (use --force to reinstall)`);
-    process.exit(1);
-  }
+    const skillDest = path.join(cfg.configDir, 'skills', 'pm');
+    const agentsDest = path.join(cfg.configDir, 'agents');
+    const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
-  console.log(`Installing pm for ${cfg.name} ...`);
-  const stepTotal = args.llm === 'agy' ? 5 : 4;
-
-  // 1) skill
-  clearDir(skillDest);
-  copyDir(skillSrc, skillDest);
-  console.log(`  [1/${stepTotal}] skill   -> ${skillDest}`);
-
-  // 2) agents (overwrite the eight; leave any others in place)
-  ensureDir(agentsDest);
-  const agents = fs.readdirSync(agentsSrc).filter(f => f.endsWith('.md'));
-  for (const a of agents) {
-    let content = fs.readFileSync(path.join(agentsSrc, a), 'utf-8');
-    if (args.llm === 'opencode') content = transformAgentForOpenCode(content);
-    fs.writeFileSync(path.join(agentsDest, a), content);
-  }
-  console.log(`  [2/${stepTotal}] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
-
-  // 3) permissions
-  let added;
-  if (args.llm === 'opencode') {
-    // OpenCode does not support a permissions key in opencode.json -- it rejects
-    // any unrecognized key as invalid config. Permissions are passed via CLI flags
-    // (--dangerously-skip-permissions) at invocation time; nothing to write here.
-    // Remove any stale permissions key a prior install run may have added.
-    const settings = readJson(settingsFile);
-    if (Object.prototype.hasOwnProperty.call(settings, 'permissions')) {
-      delete settings.permissions;
-      writeJson(settingsFile, settings);
+    if (fs.existsSync(skillDest) && !args.force) {
+      console.error(`pm already installed at ${skillDest} (use --force to reinstall)`);
+      continue;
     }
-    added = 0;
-  } else {
-    const perms = requiredPermissions(cfg);
-    if (args.llm === 'claude') perms.push(...claudeOnlyPermissions());
-    if (args.llm === 'agy') perms.push(...agyOnlyPermissions());
-    added = mergePermissions(settingsFile, perms);
-  }
-  console.log(`  [3/${stepTotal}] perms   -> ${settingsFile} (${added} added)`);
 
-  if (args.llm === 'claude') {
-    console.log('        Bash(*) required for fire-and-forget log/feedback writes in the develop loop');
-  }
+    console.log(`Installing pm for ${cfg.name} ...`);
+    const stepTotal = llm === 'agy' ? 5 : 4;
 
-  // 4) cost.js -- extract the PURE_FUNCTIONS_BEGIN/END block from auto-sprint.js
-  //    and write it as a self-contained CommonJS module alongside the skill files,
-  //    i.e. <configDir>/skills/pm/cost.js. Co-locating it with cost.md means it is
-  //    always refreshed on every install (step 1 clears and repopulates skillDest),
-  //    no --force needed. The orchestrator builds the path as skillDir + '/cost.js'.
-  //    The source file is never copied whole (it contains Claude Code APIs that do
-  //    not exist on other providers).
-  //    For Claude, also copy the full auto-sprint.js to ~/.claude/workflows/ so the
-  //    native /auto-sprint slash command works.
-  //    For AGY, copy the provider-agnostic auto-sprint skill to <configDir>/skills/auto-sprint/.
-  const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
-  if (fs.existsSync(workflowSrc)) {
-    const fullSrc = fs.readFileSync(workflowSrc, 'utf-8');
-    const blockStart  = fullSrc.indexOf('// PURE_FUNCTIONS_BEGIN');
-    const blockEndIdx = fullSrc.indexOf('// PURE_FUNCTIONS_END');
-    const blockEnd    = blockEndIdx >= 0 ? blockEndIdx + '// PURE_FUNCTIONS_END'.length : -1;
-    if (blockStart < 0 || blockEnd < 0 || blockEnd <= blockStart) {
-      console.error('  [!] PURE_FUNCTIONS_BEGIN/END markers not found in auto-sprint.js -- cost.js not written');
+    // 1) skill
+    clearDir(skillDest);
+    copyDir(skillSrc, skillDest);
+    console.log(`  [1/${stepTotal}] skill   -> ${skillDest}`);
+
+    // 2) agents (overwrite the eight; leave any others in place)
+    ensureDir(agentsDest);
+    const agents = fs.readdirSync(agentsSrc).filter(f => f.endsWith('.md'));
+    for (const a of agents) {
+      let content = fs.readFileSync(path.join(agentsSrc, a), 'utf-8');
+      if (llm === 'opencode') content = transformAgentForOpenCode(content);
+      fs.writeFileSync(path.join(agentsDest, a), content);
+    }
+    console.log(`  [2/${stepTotal}] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
+
+    // 3) permissions
+    let added;
+    if (llm === 'opencode') {
+      const settings = readJson(settingsFile);
+      if (Object.prototype.hasOwnProperty.call(settings, 'permissions')) {
+        delete settings.permissions;
+        writeJson(settingsFile, settings);
+      }
+      added = 0;
     } else {
-      const block = fullSrc.slice(blockStart, blockEnd);
-      const costJs = [
-        '// Auto-generated by apra-pm install.mjs -- do not edit directly.',
-        '// Source: .claude/workflows/auto-sprint.js (PURE_FUNCTIONS_BEGIN..END block)',
-        '// Refreshed automatically on every install run.',
-        '',
-        block,
-        '',
-        '// CommonJS exports for require() in cost.md snippets and pm orchestrators.',
-        'if (typeof module !== \'undefined\') {',
-        '  module.exports = {',
-        '    DEFAULT_CALIBRATION,',
-        '    computeSprintQuote,',
-        '    computeSprintAnalysis,',
-        '    accumulateBucketTokens,',
-        '    computeUpdatedCalibration,',
-        '    buildSprintSummary,',
-        '    buildExecutionSummary,',
-        '    reviewerModelFor,',
-        '  };',
-        '}',
-      ].join('\n');
+      const perms = requiredPermissions(cfg);
+      if (llm === 'claude') perms.push(...claudeOnlyPermissions());
+      if (llm === 'agy') perms.push(...agyOnlyPermissions());
+      added = mergePermissions(settingsFile, perms);
+    }
+    console.log(`  [3/${stepTotal}] perms   -> ${settingsFile} (${added} added)`);
 
-      const costDest = path.join(skillDest, 'cost.js');
-      fs.writeFileSync(costDest, costJs);  // skillDest already ensured by step 1
-      console.log(`  [4/${stepTotal}] cost.js  -> ${costDest}`);
+    if (llm === 'claude') {
+      console.log('        Bash(*) required for fire-and-forget log/feedback writes in the develop loop');
     }
 
-    if (args.llm === 'claude') {
-      const claudeDest = path.join(HOME, '.claude', 'workflows', 'auto-sprint.js');
-      ensureDir(path.dirname(claudeDest));
-      fs.copyFileSync(workflowSrc, claudeDest);
-      console.log(`        workflow -> ${claudeDest}  (Claude Code native)`);
-    }
-  }
+    // 4) cost.js
+    const workflowSrc = path.join(ROOT, '.claude', 'workflows', 'auto-sprint.js');
+    if (fs.existsSync(workflowSrc)) {
+      const fullSrc = fs.readFileSync(workflowSrc, 'utf-8');
+      const blockStart  = fullSrc.indexOf('// PURE_FUNCTIONS_BEGIN');
+      const blockEndIdx = fullSrc.indexOf('// PURE_FUNCTIONS_END');
+      const blockEnd    = blockEndIdx >= 0 ? blockEndIdx + '// PURE_FUNCTIONS_END'.length : -1;
+      if (blockStart < 0 || blockEnd < 0 || blockEnd <= blockStart) {
+        console.error('  [!] PURE_FUNCTIONS_BEGIN/END markers not found in auto-sprint.js -- cost.js not written');
+      } else {
+        const block = fullSrc.slice(blockStart, blockEnd);
+        const costJs = [
+          '// Auto-generated by apra-pm install.mjs -- do not edit directly.',
+          '// Source: .claude/workflows/auto-sprint.js (PURE_FUNCTIONS_BEGIN..END block)',
+          '// Refreshed automatically on every install run.',
+          '',
+          block,
+          '',
+          '// CommonJS exports for require() in cost.md snippets and pm orchestrators.',
+          'if (typeof module !== \'undefined\') {',
+          '  module.exports = {',
+          '    DEFAULT_CALIBRATION,',
+          '    computeSprintQuote,',
+          '    computeSprintAnalysis,',
+          '    accumulateBucketTokens,',
+          '    computeUpdatedCalibration,',
+          '    buildSprintSummary,',
+          '    buildExecutionSummary,',
+          '    reviewerModelFor,',
+          '  };',
+          '}',
+        ].join('\n');
 
-  // 5) AGY-only: deploy the provider-agnostic auto-sprint skill
-  //    <configDir>/skills/auto-sprint/ contains SKILL.md, runner.js, member-setup.md.
-  //    runner.js is the zero-orchestrator-token equivalent of auto-sprint.js and
-  //    accepts exactly the same input JSON args.
-  //    Refreshed on every install run (clearDir then copyDir).
-  if (args.llm === 'agy') {
-    const autoSprintSkillSrc  = path.join(ROOT, 'skills', 'auto-sprint');
-    const autoSprintSkillDest = path.join(cfg.configDir, 'skills', 'auto-sprint');
-    if (!fs.existsSync(autoSprintSkillSrc)) {
-      console.error(`  [!] auto-sprint skill not found at ${autoSprintSkillSrc} -- skipping`);
-    } else {
-      clearDir(autoSprintSkillDest);
-      copyDir(autoSprintSkillSrc, autoSprintSkillDest);
-      console.log(`  [5/${stepTotal}] auto-sprint skill -> ${autoSprintSkillDest}`);
-      console.log(`        (provider-agnostic /auto-sprint: same args as Claude workflow)`);
+        const costDest = path.join(skillDest, 'cost.js');
+        fs.writeFileSync(costDest, costJs);
+        console.log(`  [4/${stepTotal}] cost.js  -> ${costDest}`);
+      }
+
+      if (llm === 'claude') {
+        const claudeDest = path.join(HOME, '.claude', 'workflows', 'auto-sprint.js');
+        ensureDir(path.dirname(claudeDest));
+        fs.copyFileSync(workflowSrc, claudeDest);
+        console.log(`        workflow -> ${claudeDest}  (Claude Code native)`);
+      }
     }
+
+    // 5) AGY-only
+    if (llm === 'agy') {
+      const autoSprintSkillSrc  = path.join(ROOT, 'skills', 'auto-sprint');
+      const autoSprintSkillDest = path.join(cfg.configDir, 'skills', 'auto-sprint');
+      if (!fs.existsSync(autoSprintSkillSrc)) {
+        console.error(`  [!] auto-sprint skill not found at ${autoSprintSkillSrc} -- skipping`);
+      } else {
+        clearDir(autoSprintSkillDest);
+        copyDir(autoSprintSkillSrc, autoSprintSkillDest);
+        console.log(`  [5/${stepTotal}] auto-sprint skill -> ${autoSprintSkillDest}`);
+        console.log(`        (provider-agnostic /auto-sprint: same args as Claude workflow)`);
+      }
+    }
+    
+    console.log(`pm installed for ${cfg.name}.\n`);
   }
 
   // beads check -- install automatically if missing
@@ -477,14 +484,15 @@ function main() {
     console.log(`  beads OK: ${bdCheck.stdout.trim()}`);
   }
   console.log('');
-  console.log('pm installed.');
-  console.log('');
-  if (args.llm === 'claude') {
+  
+  if (args.llms.includes('claude')) {
     console.log('  Claude Code: /auto-sprint BD-1              (uses current branch)');
     console.log('               /auto-sprint BD-1 BD-2         (multiple sprint goals)');
     console.log('               /auto-sprint {"issues":["BD-1"],"branch":"feat/x","goal":"P1"}');
     console.log('  Other sessions: /pm  (provider-agnostic skill)');
-  } else if (args.llm === 'agy') {
+    console.log('');
+  }
+  if (args.llms.includes('agy')) {
     console.log('  AGY:  /auto-sprint BD-1');
     console.log('        /auto-sprint BD-1 BD-2');
     console.log('        /auto-sprint ["BD-1","BD-2"]');
@@ -495,7 +503,9 @@ function main() {
     console.log('');
     console.log('  One-time fleet member setup required before first run:');
     console.log('    See ~/.gemini/antigravity-cli/skills/auto-sprint/member-setup.md');
-  } else {
+    console.log('');
+  }
+  if (!args.llms.includes('claude') && !args.llms.includes('agy')) {
     console.log('  Invoke the "pm" skill to drive a sprint.');
   }
 }
