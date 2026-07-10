@@ -241,18 +241,20 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
             let childrenHtml = '';
             if (!act.isRunning) {
               if (act.error) {
-                childrenHtml = \`<div class="action-child error">\${escapeHtml(act.error)}\\n\\n\${act.output ? 'Output:\\n' + escapeHtml(act.output) : ''}</div>\`;
+                childrenHtml = \`<div class="action-child error">\${escapeHtml(act.error)}\\n\\n\${act.input ? 'Input:\\n' + escapeHtml(act.input) + '\\n\\n' : ''}\${act.output ? 'Output:\\n' + escapeHtml(act.output) : ''}</div>\`;
               } else if (act.output) {
-                childrenHtml = \`<div class="action-child output">\${escapeHtml(act.output)}</div>\`;
+                childrenHtml = \`<div class="action-child output">\${act.input && act.type === 'transform' ? 'Input:\\n' + escapeHtml(act.input) + '\\n\\nOutput:\\n' : ''}\${escapeHtml(act.output)}</div>\`;
               }
             }
             
             let tokensHtml = act.usage ? \`<span style="color:var(--text-muted)">\${act.usage.total_tokens.toLocaleString()} tkns</span>\` : '';
+            const memberDisplay = act.member ? escapeHtml(act.member) : (act.type === 'transform' ? 'js' : '');
+            const memberHtml = memberDisplay ? \`<span class="muted">(\${memberDisplay})</span>\` : '';
             
             div.innerHTML = \`<details class="event-action" id="action-\${act.id}">
               <summary class="action-header">
                 <span class="log-time">\${t}</span>
-                <span class="action-title"><strong>\${escapeHtml(act.type.toUpperCase())}</strong>: \${escapeHtml(act.label)} <span class="muted">(\${escapeHtml(act.member)})</span></span>
+                <span class="action-title"><strong>\${escapeHtml(act.type.toUpperCase())}</strong>: \${escapeHtml(act.label)} \${memberHtml}</span>
                 <div class="action-meta" id="meta-\${act.id}">
                   \${tokensHtml}
                   \${act.duration ? formatTime(act.duration) : ''} \${badge}
@@ -283,9 +285,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
                     if (!act.isRunning && !bodyEl) {
                         let childrenHtml = '';
                         if (act.error) {
-                            childrenHtml = \`<div class="action-child error">\${escapeHtml(act.error)}\\n\\n\${act.output ? 'Output:\\n' + escapeHtml(act.output) : ''}</div>\`;
+                            childrenHtml = \`<div class="action-child error">\${escapeHtml(act.error)}\\n\\n\${act.input ? 'Input:\\n' + escapeHtml(act.input) + '\\n\\n' : ''}\${act.output ? 'Output:\\n' + escapeHtml(act.output) : ''}</div>\`;
                         } else if (act.output) {
-                            childrenHtml = \`<div class="action-child output">\${escapeHtml(act.output)}</div>\`;
+                            childrenHtml = \`<div class="action-child output">\${act.input && act.type === 'transform' ? 'Input:\\n' + escapeHtml(act.input) + '\\n\\nOutput:\\n' : ''}\${escapeHtml(act.output)}</div>\`;
                         }
                         if (childrenHtml) {
                             const bodyContainer = document.createElement('div');

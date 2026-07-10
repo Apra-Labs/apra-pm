@@ -56,3 +56,45 @@ const engine = new WorkflowEngine(executionContext);
 ```
 
 By standardizing on the `args` object in the context, workflows remain flexible and reusable across different scenarios without hardcoding configuration values.
+
+## Data Transformation and the \`transform()\` Primitive
+
+Workflows often need to manipulate data between LLM inferences and command executions (e.g., parsing JSON strings, extracting text, sanitizing variables).
+
+The \`transform(label, func, context)\` primitive securely executes Javascript mappings within the workflow pipeline while simultaneously emitting full tracking telemetry to the Workflow Dashboard UI. 
+
+### Features
+* **Telemetry**: Errors, execution durations, stringified Inputs, and stringified Outputs are logged exactly like \`agent()\` actions.
+* **Failures**: Errors thrown by \`transform()\` will safely fail the node, but will not crash the workflow engine itself.
+
+### Example
+\`\`\`javascript
+const planJson = await agent("Make a file", { ... });
+
+// transform() stringifies input and output to visually trace them in the Dashboard!
+const cmdString = await transform('Extract command', (data) => {
+    if (!data.command) throw new Error("Missing command");
+    return data.command;
+}, planJson);
+
+await command(cmdString, { ... });
+\`\`\`
+
+### \`nullTransform()\` and Identity Fallbacks
+- If no transform function is provided, the node defaults to passing the data through unaltered.
+- A convenience \`nullTransform\` is also exposed globally to explicitly break a data dependency chain and drop output:
+  \`\`\`javascript
+  await transform('Cleanup', nullTransform, data); // returns null
+  \`\`\`
+
+## Error Handling (\`continueOnError\`)
+
+By default, any error thrown within a \`pipeline()\` or \`parallel()\` block halts execution of the sequence.
+If you need partial success, pass \`{ continueOnError: true }\`:
+
+\`\`\`javascript
+await pipeline(items, async (item) => {
+    // If one item fails, the pipeline logs the error but continues with the rest
+    await transform('Risky map', riskyFunc, item);
+}, { continueOnError: true });
+\`\`\`

@@ -1,5 +1,6 @@
 import Ajv from 'ajv';
 import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 import { calculateCost } from './pricing.mjs';
 
 const ajv = new Ajv({ strict: false });
@@ -232,40 +233,79 @@ export class FleetWorkflow extends EventEmitter {
         }
     }
 
-    async parallel(thunks) {
-        const results = await Promise.allSettled(thunks.map(t => t()));
-        return results.map(r => r.status === 'fulfilled' ? r.value : null);
-    }
-
-    async pipeline(items, ...stages) {
-        if (!stages || stages.length === 0) return items;
-        
-        const processItem = async (item, index) => {
-            let current = item;
-            for (const stage of stages) {
-                try {
-                    current = await stage(current, item, index);
-                } catch (err) {
-                    console.error(`[Pipeline Error] item ${index} failed at a stage:`, err);
-                    return null;
+    /**
+     * Executes the given async processor function for each item sequentially.
+     */
+    async pipeline(items, processor, opts = {}) {
+        const results = [];
+        for (let i = 0; i < items.length; i++) {
+            try {
+                const res = await processor(items[i], i, items);
+                results.push(res);
+            } catch (err) {
+                this.log(`[Pipeline Error] item ${i} failed at a stage: ${err.message}`);
+                results.push(null);
+                if (!opts.continueOnError) {
+                    throw err;
                 }
             }
-            return current;
-        };
-
-        const promises = items.map((item, i) => processItem(item, i));
-        return Promise.all(promises);
+        }
+        return results;
     }
 
     /**
-     * A helper idiom to inject transformation logic between pipeline stages.
-     * Simplest default is the identity transform: output = input untouched.
-     * @param {(input: any, original?: any, index?: number) => any} fn 
+     * Executes the given async processor function for each item in parallel.
      */
-    transform(fn = (x) => x) {
-        return async (prev, original, idx) => {
-            return fn(prev, original, idx);
+    async parallel(items, processor, opts = {}) {
+        return Promise.all(items.map(async (item, i) => {
+            try {
+                return await processor(item, i, items);
+            } catch(err) {
+                this.log(`[Parallel Error] item ${i} failed: ${err.message}`);
+                if (!opts.continueOnError) {
+                    throw err;
+                }
+                return null;
+            }
+        }));
+    }
+
+    async transform(label, func, context) {
+        const id = randomUUID();
+        const actionMeta = {
+            id, type: 'transform', label, phase: this.currentPhase, startTime: Date.now()
         };
+        this.emit('action:start', actionMeta);
+
+        const transformationFn = func || ((data) => data); // pass as-is default
+
+        try {
+            let result = await transformationFn(context);
+            const duration = Date.now() - actionMeta.startTime;
+            
+            let stringifiedOutput = result;
+            if (typeof result !== 'string' && result !== undefined && result !== null) {
+                try { stringifiedOutput = JSON.stringify(result, null, 2); } catch(e) {}
+            }
+
+            let stringifiedInput = context;
+            if (typeof context !== 'string' && context !== undefined && context !== null) {
+                try { stringifiedInput = JSON.stringify(context, null, 2); } catch(e) {}
+            }
+
+            this.emit('action:end', { ...actionMeta, duration, success: true, input: stringifiedInput, output: stringifiedOutput });
+            return result;
+        } catch (e) {
+            const duration = Date.now() - actionMeta.startTime;
+            let stringifiedInput = context;
+            if (typeof context !== 'string' && context !== undefined && context !== null) {
+                try { stringifiedInput = JSON.stringify(context, null, 2); } catch(e) {}
+            }
+
+            this.emit('action:end', { ...actionMeta, duration, success: false, error: e.message, input: stringifiedInput });
+            const err = new Error(`[Workflow Error] Transform failed: ${e.message}`);
+            throw err;
+        }
     }
 
     async workflow(nameOrRef, args = {}) {
@@ -281,6 +321,7 @@ export class FleetWorkflow extends EventEmitter {
             pipeline: this.pipeline.bind(this),
             parallel: this.parallel.bind(this),
             transform: this.transform.bind(this),
+            nullTransform: () => null,
             log: this.log.bind(this),
             phase: this.phase.bind(this),
             workflow: this.workflow.bind(this),
