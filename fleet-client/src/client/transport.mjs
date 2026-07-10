@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import crypto from 'node:crypto';
 
 export class StdioTransport extends EventEmitter {
     constructor(command, args, options = {}) {
@@ -65,39 +66,86 @@ export class StdioTransport extends EventEmitter {
     }
 }
 
-export class SseTransport extends EventEmitter {
-    constructor(url) {
+export class StreamableHttpTransport extends EventEmitter {
+    constructor(url, options = {}) {
         super();
         this.url = url;
+        this.options = options;
         this.controller = null;
-        this.postUrl = null;
+        this.sessionId = null;
     }
 
     async start() {
         this.controller = new AbortController();
         try {
-            const response = await fetch(this.url, {
-                signal: this.controller.signal,
-                headers: {
-                    'Accept': 'text/event-stream'
+            // 1. Send the initialize request via POST to get session ID
+            const initMsg = {
+                jsonrpc: '2.0',
+                id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {},
+                    clientInfo: { name: 'fleet-client', version: '1.0.0' }
                 }
+            };
+
+            const postHeaders = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/event-stream',
+                ...(this.options.headers || {})
+            };
+
+            const postResponse = await fetch(this.url, {
+                method: 'POST',
+                headers: postHeaders,
+                body: JSON.stringify(initMsg),
+                signal: this.controller.signal
             });
             
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            if (!postResponse.ok) {
+                throw new Error(`Init POST error! status: ${postResponse.status}`);
             }
 
-            this.readStream(response.body).catch(err => {
+            this.sessionId = postResponse.headers.get('mcp-session-id');
+            if (!this.sessionId) {
+                throw new Error('No mcp-session-id returned by server during initialization');
+            }
+
+            // Read the init response body so fetch doesn't hold the connection
+            const initResponseText = await postResponse.text();
+            
+            // 2. Open the persistent SSE stream via GET using the session ID
+            const getHeaders = {
+                'Accept': 'text/event-stream',
+                'mcp-session-id': this.sessionId,
+                ...(this.options.headers || {})
+            };
+
+            const getResponse = await fetch(this.url, {
+                method: 'GET',
+                headers: getHeaders,
+                signal: this.controller.signal
+            });
+
+            if (!getResponse.ok) {
+                throw new Error(`Stream GET error! status: ${getResponse.status}`);
+            }
+
+            // We must start reading the stream in the background
+            this.readStream(getResponse.body, true).catch(err => {
                 if (err.name !== 'AbortError') {
                     this.emit('error', err);
                 }
             });
+            
+            this.emit('ready');
         } catch (error) {
             this.emit('error', error);
         }
     }
 
-    async readStream(body) {
+    async readStream(body, emitClose = false) {
         const decoder = new TextDecoder();
         let buffer = '';
         let eventType = 'message';
@@ -105,7 +153,8 @@ export class SseTransport extends EventEmitter {
 
         try {
             for await (const chunk of body) {
-                buffer += decoder.decode(chunk, { stream: true });
+                const textChunk = decoder.decode(chunk, { stream: true });
+                buffer += textChunk;
                 const lines = buffer.split(/\r?\n/);
                 buffer = lines.pop() ?? '';
 
@@ -124,45 +173,54 @@ export class SseTransport extends EventEmitter {
                     }
                 }
             }
+        } catch (e) {
+            throw e;
         } finally {
-            this.emit('close');
+            if (emitClose) {
+                this.emit('close');
+            }
         }
     }
 
     handleEvent(eventType, eventData) {
-        if (eventType === 'endpoint') {
-            try {
-                this.postUrl = new URL(eventData, this.url).toString();
-                this.emit('ready');
-            } catch (e) {
-                this.emit('error', new Error(`Invalid endpoint URL: ${eventData}`));
-            }
-        } else if (eventType === 'message') {
+        if (eventType === 'message') {
             try {
                 const message = JSON.parse(eventData);
                 this.emit('message', message);
             } catch (e) {
-                console.error('[SseTransport] parse error', e, eventData);
+                console.error('[StreamableHttpTransport] parse error', e, eventData);
             }
         }
     }
 
     async send(message) {
-        if (!this.postUrl) {
-            throw new Error('SseTransport not ready (no POST endpoint received)');
+        if (!this.sessionId) {
+            throw new Error('Transport not ready (no session ID)');
         }
         
-        const response = await fetch(this.postUrl, {
+        const headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'mcp-session-id': this.sessionId,
+            'mcp-protocol-version': '2024-11-05',
+            ...(this.options.headers || {})
+        };
+        const response = await fetch(this.url, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers,
             body: JSON.stringify(message)
         });
         
         if (!response.ok) {
             throw new Error(`Failed to send message: HTTP ${response.status}`);
         }
+        
+        // The server sends the JSON-RPC response over an SSE stream in the POST response
+        this.readStream(response.body).catch(err => {
+            if (err.name !== 'AbortError') {
+                this.emit('error', err);
+            }
+        });
     }
     
     stop() {

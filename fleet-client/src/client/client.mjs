@@ -38,16 +38,13 @@ export class McpClient {
         }
     }
 
-    async callTool(name, args) {
+    async request(method, params) {
         const id = this.nextId++;
         const message = {
             jsonrpc: "2.0",
             id: id,
-            method: "tools/call",
-            params: {
-                name: name,
-                arguments: args
-            }
+            method: method,
+            params: params
         };
 
         return new Promise((resolve, reject) => {
@@ -57,5 +54,9 @@ export class McpClient {
                 reject(err);
             });
         });
+    }
+
+    async callTool(name, args) {
+        return this.request("tools/call", { name: name, arguments: args });
     }
 }

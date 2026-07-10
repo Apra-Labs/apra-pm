@@ -35,6 +35,23 @@
  * @property {"compact" | "json"} [format] - Output format
  */
 
+/**
+ * @typedef {Object} SendFilesOptions
+ * @property {string[]} local_paths - Array of local file paths to upload
+ * @property {string} [dest_subdir] - Destination subdirectory relative to work_folder on the member
+ * @property {string} [member_id] - UUID of the member
+ * @property {string} [member_name] - Friendly name of the member
+ * @property {Record<string, string>} [substitutions] - Optional map of token name to replacement value
+ */
+
+/**
+ * @typedef {Object} ReceiveFilesOptions
+ * @property {string[]} remote_paths - Paths on the member to download
+ * @property {string} local_dest_dir - Local directory to write the downloaded files into
+ * @property {string} [member_id] - UUID of the member
+ * @property {string} [member_name] - Friendly name of the member
+ */
+
 export class ApraFleet {
     /**
      * @param {{ callTool: (name: string, args: Record<string, any>) => Promise<any> }} mcpClient 
@@ -73,5 +90,21 @@ export class ApraFleet {
      */
     async fleetStatus(options = {}) {
         return this.mcpClient.callTool('fleet_status', options);
+    }
+
+    /**
+     * Transfer local files to a member.
+     * @param {SendFilesOptions} options
+     */
+    async sendFiles(options) {
+        return this.mcpClient.callTool('send_files', options);
+    }
+
+    /**
+     * Download files from a member to a local directory.
+     * @param {ReceiveFilesOptions} options
+     */
+    async receiveFiles(options) {
+        return this.mcpClient.callTool('receive_files', options);
     }
 }

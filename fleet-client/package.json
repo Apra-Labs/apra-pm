@@ -1,0 +1,16 @@
+{
+  "name": "apra-fleet-client",
+  "version": "1.0.0",
+  "description": "Client SDK and Workflow Engine for Apra Fleet",
+  "main": "src/client/api.mjs",
+  "type": "module",
+  "scripts": {
+    "test": "node test/test-runner.mjs",
+    "build": "echo \"Nothing to build for ESM modules\""
+  },
+  "dependencies": {
+    "ajv": "^8.12.0"
+  },
+  "author": "Apra Labs",
+  "license": "UNLICENSED"
+}
