@@ -8,6 +8,8 @@ async function main(opts = {}) {
     const maxCycles = opts.max_cycles || 2;
     const memberName = opts.member_name || 'apra-pm';
 
+    await new Promise(r => setTimeout(r, 2000));
+
     phase('Sprint Initialization');
     log(`Starting sprint runner for issues: ${issues.join(', ')}`);
     log(`Max cycles: ${maxCycles}`);
@@ -17,6 +19,7 @@ async function main(opts = {}) {
 
     while (cycleCount < maxCycles && !sprintComplete) {
         cycleCount++;
+        await new Promise(r => setTimeout(r, 2000));
         phase(`Sprint Cycle ${cycleCount}`);
         
         // Use pipeline to route the issues through phases: Plan -> Develop -> Test -> Harvest
