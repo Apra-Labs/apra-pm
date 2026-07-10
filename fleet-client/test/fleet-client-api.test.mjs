@@ -95,4 +95,42 @@ describe('ApraFleet', () => {
         assert.deepStrictEqual(calledArgs, options);
         assert.deepStrictEqual(result, { status: 'ok' });
     });
+
+    test('sendFiles', async () => {
+        let calledName, calledArgs;
+        const mockClient = {
+            async callTool(name, args) {
+                calledName = name;
+                calledArgs = args;
+                return { status: 'ok' };
+            }
+        };
+
+        const fleet = new ApraFleet(mockClient);
+        const options = { local_paths: ['file1.txt', 'file2.txt'], dest_subdir: 'data' };
+        const result = await fleet.sendFiles(options);
+
+        assert.strictEqual(calledName, 'send_files');
+        assert.deepStrictEqual(calledArgs, options);
+        assert.deepStrictEqual(result, { status: 'ok' });
+    });
+
+    test('receiveFiles', async () => {
+        let calledName, calledArgs;
+        const mockClient = {
+            async callTool(name, args) {
+                calledName = name;
+                calledArgs = args;
+                return { status: 'ok' };
+            }
+        };
+
+        const fleet = new ApraFleet(mockClient);
+        const options = { remote_paths: ['file1.txt', 'file2.txt'], local_dest_dir: './data' };
+        const result = await fleet.receiveFiles(options);
+
+        assert.strictEqual(calledName, 'receive_files');
+        assert.deepStrictEqual(calledArgs, options);
+        assert.deepStrictEqual(result, { status: 'ok' });
+    });
 });

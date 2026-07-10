@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
-import { StdioTransport, SseTransport } from '../lib/fleet-client/transport.mjs';
+import { StdioTransport, StreamableHttpTransport } from '../lib/fleet-client/transport.mjs';
 import { McpClient } from '../lib/fleet-client/client.mjs';
 
 test('McpClient - callTool successfully', async () => {
@@ -59,30 +59,33 @@ test('StdioTransport - sending and receiving', async () => {
     transport.stop();
 });
 
-test('SseTransport - connects and receives endpoint, then sends message', async () => {
+test('StreamableHttpTransport - connects and receives endpoint, then sends message', async () => {
     let sseRes = null;
     const server = http.createServer(async (req, res) => {
-        if (req.url === '/sse') {
+        if (req.url === '/sse' && req.method === 'GET') {
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream',
                 'Cache-Control': 'no-cache',
                 'Connection': 'keep-alive'
             });
             sseRes = res;
-            res.write('event: endpoint\n');
-            res.write('data: /message\n\n');
-        } else if (req.url === '/message' && req.method === 'POST') {
+            res.write('event: ready\n');
+            res.write('data: {}\n\n');
+        } else if (req.url === '/sse' && req.method === 'POST') {
             let body = '';
             for await (const chunk of req) {
                 body += chunk;
             }
             const parsed = JSON.parse(body);
-            res.writeHead(202).end();
-
-            if (sseRes) {
+            
+            if (parsed.method === 'initialize') {
+                res.writeHead(200, { 'mcp-session-id': 'test-session-123' }).end('{}');
+            } else {
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
                 const responseMsg = { jsonrpc: '2.0', id: parsed.id, result: 'ok' };
-                sseRes.write('event: message\n');
-                sseRes.write(`data: ${JSON.stringify(responseMsg)}\n\n`);
+                res.write('event: message\n');
+                res.write(`data: ${JSON.stringify(responseMsg)}\n\n`);
+                res.end();
             }
         } else {
             res.writeHead(404).end();
@@ -93,7 +96,7 @@ test('SseTransport - connects and receives endpoint, then sends message', async 
     const port = server.address().port;
     const url = `http://localhost:${port}/sse`;
 
-    const transport = new SseTransport(url);
+    const transport = new StreamableHttpTransport(url);
     
     const readyPromise = new Promise(resolve => transport.on('ready', resolve));
     transport.start();
