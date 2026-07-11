@@ -1,13 +1,14 @@
 # Doer-Reviewer Loop
 
 The execute-phase loop for one track. Every dispatch is an inline subagent call (its
-result returns in the same turn). Beads is the task store; `feedback.md` is the
-reviewer's output channel. The doer finds work with `bd ready`, claims it with
-`bd update --claim`, and closes it with `bd close`. The reviewer reads acceptance
-criteria with `bd show` and writes its verdict to `feedback.md` -- it never touches
-beads. On CHANGES NEEDED the orchestrator reads `feedback.md` and runs the beads
-updates itself. There is no PLAN.md and no progress.json -- code is committed to the
-branch; all task state lives in beads. (The plan loop that precedes this -- planner /
+result returns in the same turn). Beads is the task store; the reviewer's verdict is
+returned as structured output directly to the orchestrator. The doer finds work with
+`bd ready`, claims it with `bd update --claim`, and closes it with `bd close`. The
+reviewer reads acceptance criteria with `bd show` and returns its verdict
+(`verdict`/`notes`/`reopenIds`/`newTasks`) as structured output -- it never touches
+beads. On CHANGES NEEDED the orchestrator reads that structured output and runs the
+beads updates itself. There is no PLAN.md and no progress.json -- code is committed to
+the branch; all task state lives in beads. (The plan loop that precedes this -- planner /
 plan-reviewer -- is in `sprint.md`.)
 
 ## Pre-flight checks
@@ -58,13 +59,14 @@ notes). goal priority = the sprint's exit threshold.
     4. Dispatch ONE reviewer (inline) over all tasks worked this iteration. It reads
        each task's acceptance criteria with `bd show <id>` and the diff. The reviewer
        runs standard-tier, escalated to premium-tier if any streak this iteration ran
-       premium-tier. It writes its verdict to feedback.md (see reviewer template) and
-       commits. Read feedback.md:
+       premium-tier. It returns its verdict as structured output only (see reviewer
+       template) -- it never writes a file. Read the returned verdict:
          APPROVED       -> tasks stay closed. `reopenIds` and `newTasks` absent or
                            empty -- no beads action needed.
          CHANGES NEEDED -> the orchestrator parses `reopenIds` and `newTasks` from
-                           feedback.md (see "Orchestrator reads feedback.md" below)
-                           and runs the beads updates. Dispatch the doer to fix.
+                           the reviewer's structured output (see "Orchestrator reads
+                           the reviewer's output" below) and runs the beads updates.
+                           Dispatch the doer to fix.
     -> back to step 1.
 ```
 
@@ -105,9 +107,9 @@ to completion within the turn -- track A's reviewer can run while track B's doer
 works -- but keep the turn alive until you have collected their results.
 
 After each agent returns, the orchestrator's FIRST action is to read state from beads
-and git (`bd ready`, `bd list --status=open`, `bd show <id>`, `feedback.md`,
-`git log <base>..<branch>`); those are the source of truth for what was dispatched
-and where it landed.
+and git (`bd ready`, `bd list --status=open`, `bd show <id>`, the reviewer's returned
+structured output, `git log <base>..<branch>`); those are the source of truth for what
+was dispatched and where it landed.
 
 ## Commit identity
 
@@ -159,20 +161,20 @@ criteria, dependency direction, and model-tier assignment. Classify each task wi
 complexity bucket (S = 1 file/narrow scope, M = 2-3 files/moderate logic,
 L = 3+ files/non-trivial design) and read its assigned model tier from its metadata.
 
-Overwrite feedback.md with:
-  - First line: APPROVED or CHANGES NEEDED
-  - Notes section: specific findings with issue IDs and exact bd commands to fix any
+Return your structured output ONLY -- do not write a file:
+  - `verdict`: APPROVED or CHANGES NEEDED
+  - `notes`: specific findings with issue IDs and exact bd commands to fix any
     dependency direction problems
-  - taskAssignments section: one line per task in JSON array form:
+  - `taskAssignments`: one entry per task in JSON array form:
     [{"id":"<beads-id>","bucket":"S|M|L","model":"<tier: cheap|standard|premium>"},...]
 
-Commit feedback.md as identity pm-plan-reviewer (git -c user.name='pm-plan-reviewer'
--c user.email='plan-reviewer@pm.local' commit). <transport line>.
+You never write feedback.md or mutate beads -- the orchestrator reads your structured
+output. <transport line>.
 ```
 
-The orchestrator reads `taskAssignments` from `feedback.md` after APPROVED to run
-`computeSprintQuote` (see `cost.md`). The array shape must match exactly:
-`[{ "id": "<beads task id>", "bucket": "S|M|L", "model": "<tier: cheap|standard|premium>" }]`.
+The orchestrator reads `taskAssignments` from the plan-reviewer's structured output
+after APPROVED to run `computeSprintQuote` (see `cost.md`). The array shape must match
+exactly: `[{ "id": "<beads task id>", "bucket": "S|M|L", "model": "<tier: cheap|standard|premium>" }]`.
 
 ### doer
 
@@ -199,44 +201,38 @@ You are reviewing code. Your worktree is <abs worktree path> on branch <branch>
 (base <base>). cd there; use absolute paths. Review ONLY the tasks worked this
 iteration: <task ids>. Run bd show <id> on each to read its acceptance criteria, and
 git diff <base>...<branch> to see the changes. Read requirements.md and design.md (if
-present). Run the build, linter, and full test suite. Read the prior feedback.md
-history (git log -- feedback.md) so you account for how earlier findings were
-addressed. Judge each task against its acceptance criteria.
+present). Run the build, linter, and full test suite. Read the prior review history
+(git log <base>..<branch>) so you account for how earlier findings were addressed.
+Judge each task against its acceptance criteria.
 
-Do NOT run any bd commands. Write your verdict to feedback.md in this exact format:
+Do NOT run any bd commands. Return your structured output ONLY -- do not write a file:
 
-  APPROVED
-  <or>
-  CHANGES NEEDED
-
-  <human-readable notes: one finding per task, referencing the task ID and what
+  verdict: "APPROVED" or "CHANGES_NEEDED"
+  notes: <human-readable notes: one finding per task, referencing the task ID and what
   acceptance criterion was not met>
-
   reopenIds: ["<id1>", "<id2>"]
   newTasks: [{"title": "fix: <finding>", "notes": "<detail>", "priority": 0}]
 
-On APPROVED: omit reopenIds and newTasks (or write empty arrays).
+On APPROVED: reopenIds and newTasks are both empty arrays.
 On CHANGES NEEDED: reopenIds lists every task that failed its acceptance criteria;
 newTasks lists out-of-scope findings that need a new tracked task (may be []).
-Both lines must be present and contain valid JSON arrays when verdict is CHANGES NEEDED.
+Both fields must be present and contain valid JSON arrays when verdict is CHANGES NEEDED.
 
-Overwrite feedback.md with this content and commit as identity pm-reviewer
-(git -c user.name='pm-reviewer' -c user.email='reviewer@pm.local' commit).
-<transport line>.
+You never write feedback.md or mutate beads -- the orchestrator reads your structured
+output and applies the reopen/create transitions. <transport line>.
 ```
 
-### Orchestrator reads feedback.md
+### Orchestrator reads the reviewer's output
 
-After the reviewer commits, the orchestrator reads feedback.md and runs all beads
-updates itself -- the reviewer is a pure reader of beads:
+After the reviewer returns, the orchestrator reads its structured output and runs all
+beads updates itself -- the reviewer is a pure reader of beads:
 
-1. Parse the verdict from the first non-empty line (`APPROVED` or `CHANGES NEEDED`).
+1. Read the `verdict` field (`APPROVED` or `CHANGES_NEEDED`).
 2. On CHANGES NEEDED:
-   - Find the last line starting with `reopenIds:`, parse the JSON array value.
-     For each id: `bd update <id> --status=open --notes="<relevant finding from notes section>"`.
+   - Read `reopenIds`. For each id: `bd update <id> --status=open --notes="<relevant finding from notes>"`.
      Reopened tasks return to `bd ready` next iteration.
-   - Find the last line starting with `newTasks:`, parse the JSON array value.
-     For each entry: `bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --acceptance="<notes>"`.
+   - Read `newTasks`. For each entry:
+     `bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --acceptance="<notes>"`.
      Empty array `[]` means no new tasks to create.
 3. On APPROVED: no beads action needed.
 
@@ -246,9 +242,9 @@ Each dispatch is a fresh subagent run; continuity comes from the files it reads.
 Two ways to continue:
 
 - **Default: fresh dispatch.** Dispatch a new agent with the right tags (tags: ['doer'] / tags: ['reviewer']); it
-  reconstructs context from beads (`bd ready`, `bd show <id>`), `feedback.md`, and
-  `git log`. This is robust and the right choice across phase boundaries and tag
-  switches -- the agents begin with a context-recovery `git log` and `bd` query.
+  reconstructs context from beads (`bd ready`, `bd show <id>`) and `git log`. This is
+  robust and the right choice across phase boundaries and tag switches -- the agents
+  begin with a context-recovery `git log` and `bd` query.
 - **Tight iteration: continue the same agent.** For a quick same-worktree, same-tag
   turn -- e.g. the doer addressing review findings it just produced context for --
   continue the SAME agent instance, which keeps its context. Use this within one
