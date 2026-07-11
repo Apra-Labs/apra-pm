@@ -93,8 +93,9 @@ per task -- see `doer-reviewer-loop.md` plan-reviewer template), the orchestrato
 
 The `taskAssignments` array shape (matches the plan-reviewer role schema,
 `agents/schemas/plan-reviewer.json`).
-The `model` field is the **tier name** (`cheap`/`standard`/`premium`) the planner
-recorded in the task's beads notes -- never a provider-specific model ID:
+The `model` field is the **tier name** (`cheap`/`standard`/`premium`) read from the
+task's assigned model tier in its beads metadata (`--metadata '{"model": "<tier>"}'`)
+-- never a provider-specific model ID:
 ```json
 [{ "id": "BD-10", "bucket": "M", "model": "standard" }, ...]
 ```
