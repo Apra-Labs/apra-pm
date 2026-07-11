@@ -23,12 +23,14 @@ All sprint state is held in:
   sprint root, tasks, dependencies, assignees, acceptance criteria, model-tier assignment,
   review findings, backlog, PR link. The planner writes tasks here; the doer reads
   `bd ready` and claims/closes them; the reviewer reads acceptance criteria with
-  `bd show` and reopens tasks on rework. There is no PLAN.md and no progress.json --
+  `bd show` and returns `reopenIds` for the orchestrator to reopen -- the reviewer never
+  mutates beads directly. There is no PLAN.md and no progress.json --
   beads holds all task state. See `beads.md`.
 - **git, on each track's branch:** the code, the branch history, and the narrative
-  files `requirements.md`, `design.md`, and `feedback.md` (the reviewer's verdict
-  channel). git carries intent and the committed work; beads carries the plan and
-  progress.
+  files `requirements.md` and `design.md`. The `reviewer`'s verdict is returned as
+  structured output directly to the orchestrator (`verdict`/`notes`/`reopenIds`/
+  `newTasks`), not written to a `feedback.md` file. git carries intent and the
+  committed work; beads carries the plan and progress.
 
 On every dispatch completion and after any restart, re-derive position from beads and
 git -- they are the single source of truth.
@@ -100,9 +102,10 @@ track's branch.
   `bd show`, claims it (`bd update --claim`), implements one task at a time, commits
   after each, closes it (`bd close`), STOPS at every VERIFY checkpoint.
 - `reviewer` -- reads each worked task's acceptance criteria (`bd show`) + the diff,
-  writes `feedback.md` (`APPROVED` / `CHANGES NEEDED`) with `reopenIds` and `newTasks`
-  arrays on CHANGES NEEDED; never touches beads. The orchestrator reads those arrays
-  and runs `bd update --status=open` / `bd create` itself.
+  returns structured output ONLY (`verdict`: `APPROVED` / `CHANGES_NEEDED`, `notes`,
+  `reopenIds`, `newTasks`); never writes `feedback.md` and never touches beads directly.
+  The orchestrator reads that structured output and runs `bd update --status=open` /
+  `bd create` itself.
 
 ### Lifecycle-support roles
 
@@ -251,9 +254,11 @@ R9. **[Fleet mode]** For unattended execution, use `update_member(unattended=
     tags: ['reviewer']). Never select members by role name or naming convention --
     use tag queries exclusively (see Member selection below).
     See `fleet-addendum.md`.
-R10. During a sprint, every doer/reviewer turn updates beads (claim/close/reopen)
-     and commits its code and feedback.md to the branch -- these carry the living
-     state of the sprint. Only the agent context file stays uncommitted.
+R10. During a sprint, every doer turn updates beads (claim/close) and commits its
+     code to the branch; every reviewer turn returns structured output (`verdict`/
+     `notes`/`reopenIds`/`newTasks`) and the orchestrator applies the resulting
+     reopen -- these carry the living state of the sprint. Only the agent context
+     file stays uncommitted.
 R11. Definition of done includes security audit and documentation -- ensure
      both are covered when adding tools/features.
 R12. At sprint completion: raise a PR, verify CI is green -- do NOT merge.
