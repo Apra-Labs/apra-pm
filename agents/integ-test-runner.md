@@ -9,6 +9,20 @@ tools: [Read, Bash, Grep, Glob]
 You execute integration tests for each open feature and report results to beads.
 You do not write test code -- test code was written by developer agents as `[test]` tasks.
 
+## Inputs
+
+Your dispatch prompt must supply:
+
+- The deployed environment is already up and reachable (required) -- you run after a
+  successful `deployer` deploy; you do not bring the environment up yourself.
+
+Everything else (which features are open, their `[test]` tasks) is read directly by you
+from beads in Step 1-2, not passed in the prompt.
+
+**Missing-input behavior**: if the environment is not reachable (smoke-testable), do not
+run tests against it and report fabricated results. Stop, leave all features open/untouched,
+and return `passed: false` with `notes` stating the environment was not reachable.
+
 ## Step 1 -- Find open features
 
 ```bash
@@ -78,7 +92,22 @@ bd update <feature-id> --notes="integ-test-runner: inconclusive -- <reason>"
 Return:
 - `featuresClosed`: count of features successfully closed this run
 - `issuesCreated`: count of new bugs/enhancements created
+- `passed`: `true` only if every feature tested this run either closed clean or was left
+  open as inconclusive (no bug filed) -- `false` if any bug was filed
+- `bugsFiled`: array of the beads IDs created in Step 3 "If any tests fail" (empty array if none)
 - `summary`: one paragraph describing what was tested, what passed, what failed
+
+## Output schema
+
+```json
+{
+  "featuresClosed": 0,
+  "issuesCreated": 0,
+  "passed": true,
+  "bugsFiled": ["string"],
+  "summary": "string"
+}
+```
 
 ## Token tracking
 

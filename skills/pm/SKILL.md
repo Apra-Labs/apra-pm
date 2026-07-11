@@ -39,7 +39,7 @@ A sprint runs as one or more **cycles**. Each cycle moves through three phases i
 order; a fourth phase runs once at sprint close.
 
 - **Plan** -- dispatch `planner` to write the task DAG into beads (titles,
-  acceptance criteria, model-tier notes, priorities, dependencies), loop
+  acceptance criteria, model-tier metadata, priorities, dependencies), loop
   `plan-reviewer` to APPROVED. Skip the loop if planning is already complete (sprint root
   has features and every open feature's tasks carry acceptance criteria); just reset
   any task orphaned `in_progress` from a crashed dispatch back to open.
@@ -92,8 +92,8 @@ track's branch.
 
 - `planner` -- reads `requirements.md` (and `design.md` if present), writes the task
   DAG into beads: one task per item with title/description, `--acceptance="..."`, a
-  model tier in `--notes`, a priority, and dependencies (`bd dep add`). Writes no
-  PLAN.md.
+  model tier in `--metadata '{"model": "..."}'`, a priority, and dependencies
+  (`bd dep add`). Writes no PLAN.md.
 - `plan-reviewer` -- inspects the beads DAG (`bd graph`, `bd ready`, `bd show`),
   writes `feedback.md` (`APPROVED` / `CHANGES NEEDED`).
 - `doer` -- finds work via `bd ready`, reads the task's acceptance + model tier with
@@ -159,9 +159,12 @@ needs in the prompt, since agents share the filesystem:
 Matching model power to task complexity is a headline capability of this skill, not
 an option. Models fall into three tiers, strongest to cheapest: **premium-tier**,
 **standard-tier**, **cheap-tier**. **The planner decides the tier each work task runs
-on** and records it in the task's beads notes (`--notes="model: <tier>"`). At
-dispatch time the orchestrator reads it back with `bd show <id>` and dispatches each
-doer on that tier.
+on** and records it as beads metadata (`--metadata '{"model": "<tier>"}'`) -- this is the
+single canonical location the tier lives in; it is never written to `--notes`. At
+dispatch time the orchestrator reads it back with `bd show <id>` (the `model` metadata
+key) and dispatches each doer on that tier. `plan-reviewer` (criterion 10 / Step 3) reads
+the tier from this same metadata key, so a planner that sets it here can never fail
+plan-reviewer's model-metadata check -- the two are aligned by construction.
 
 How the planner chooses the doer tier:
 
@@ -177,7 +180,7 @@ It picks from the models actually available in the current environment.
 Fixed rules:
 
 - The `doer` runs on the tier the planner assigned to the task it will execute,
-  read from the task's beads notes (`bd show <id>`) at dispatch time.
+  read from the task's beads metadata (`bd show <id>`, `model` key) at dispatch time.
 - `planner` runs premium-tier; `plan-reviewer` runs standard-tier. The `reviewer` runs
   standard-tier by default but escalates to premium-tier whenever any doer streak in the
   iteration ran premium-tier -- review must never be weaker than the work it judges.

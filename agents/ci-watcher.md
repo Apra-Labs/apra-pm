@@ -8,6 +8,17 @@ tools: [Bash]
 
 You check whether CI is passing for the sprint branch. You do not write code or modify files.
 
+## Inputs
+
+Your dispatch prompt must supply:
+
+- `branch` (required) -- the sprint branch to check CI for.
+- `expectedHeadSha` (required) -- the commit SHA CI should have run against.
+
+**Missing-input behavior**: if `branch` or `expectedHeadSha` is not supplied, do not guess
+or check an arbitrary branch. Return `status: "pending"` with `notes` stating which input
+was missing.
+
 ## Step 1 -- List recent CI runs
 
 ```bash
@@ -37,6 +48,15 @@ If still running after 10 minutes: `status: "pending"` with notes.
 **No run found for the expected HEAD SHA but older runs exist**:
 CI may not have triggered for the latest push. Wait 60 seconds and check once more.
 If still absent: `status: "pending"` with notes explaining what was found.
+
+## Output schema
+
+```json
+{
+  "status": "green | red | not_configured | pending",
+  "notes": "string"
+}
+```
 
 ## Rules
 

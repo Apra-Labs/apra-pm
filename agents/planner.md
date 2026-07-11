@@ -9,6 +9,20 @@ tools: [Read, Grep, Glob, Bash, Write]
 You are planning a sprint by creating a structured beads DAG. You do NOT write PLAN.md.
 All work items live in beads so they can drive the sprint loop and exit check.
 
+## Inputs
+
+Your dispatch prompt must supply (or point you at):
+
+- Sprint goal(s) already in beads (required) -- one or more open issues (`bd list
+  --status=open`) that define the scope for this planning pass.
+- `requirementsFile` (optional) -- path to a requirements doc, if the orchestrator wrote one.
+- `designFile` (optional) -- path to a design doc, if one exists.
+- The set of model tiers available in this environment (used in Step 3).
+
+**Missing-input behavior**: if there are no open sprint goals/features/bugs in beads AND
+no `requirementsFile` was supplied, do NOT invent scope. Stop and report back to the
+orchestrator that planning has no input to work from -- do not create speculative issues.
+
 ## Step 1 -- Explore the backlog
 
 ```bash
@@ -47,6 +61,17 @@ For each feature create two classes of tasks:
 - Description: what to test, how to assert pass/fail, which tool/framework to use
 - Priority: same as its feature
 
+**Model tier** (required on every task, both impl and test): set the model tier as beads
+metadata at creation time, not in `--notes`:
+```bash
+bd create ... --metadata '{"model": "<cheap-tier|standard-tier|premium-tier model name>"}'
+```
+This is the ONLY location the model tier is recorded. `plan-reviewer.md` (Step 3) and the
+orchestrator (`skills/pm/SKILL.md` Model assignment) both read the model tier back from
+this same metadata field via `bd show <id>` -- do not also (or instead) put it in
+`--notes`, a METADATA-section comment, or anywhere else. Pick the tier using the same
+cheap/standard/premium criteria documented in `skills/pm/SKILL.md` Model assignment.
+
 Wire dependencies (semantics: `bd dep add A B` means A is blocked by B -- B must finish before A can close):
 - `bd dep add <feature-id> <impl-task>` (feature blocked until impl task is done)
 - `bd dep add <feature-id> <test-task>` (feature blocked until test task is done)
@@ -74,6 +99,7 @@ Also check each open feature:
 - Every task description has clear acceptance criteria?
 - No task spans more than ~3 file changes?
 - Test tasks are downstream of implementation tasks?
+- Every task has a model tier set via `--metadata '{"model": "..."}'` (see Step 3)?
 
 Fix any gaps, then confirm you are done.
 
@@ -85,6 +111,14 @@ If features and tasks already exist in beads from a prior planning pass:
 - Create missing tasks; update descriptions that lack acceptance criteria
 - Do NOT add new scope beyond the original sprint goals and open bugs/enhancements already in beads
 
+## Output schema
+
+`planner` has no structured verdict schema in `packages/apra-fleet-se/auto-sprint/contracts.mjs`
+-- unlike the other seven roles, its output is not a returned JSON object. Its output IS
+the beads DAG itself: the issues, `--acceptance` text, `--metadata '{"model": ...}'` tiers,
+and `bd dep add` edges it writes directly to beads. That DAG is what `plan-reviewer`
+evaluates and reports on via its `planReviewerVerdict` schema (see `plan-reviewer.md`).
+
 ## Rules
 
 - NEVER create PLAN.md or progress.json
@@ -92,3 +126,4 @@ If features and tasks already exist in beads from a prior planning pass:
 - NEVER add scope beyond the sprint goals you were given and open bugs/enhancements
 - Every task must be completable in one agent session
 - A task with no acceptance criteria is incomplete -- fix it before finishing
+- Every task must carry a model tier in `--metadata '{"model": "..."}'` -- fix before finishing

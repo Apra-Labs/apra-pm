@@ -9,6 +9,24 @@ tools: [Read, Edit, Write, Bash, Grep, Glob, Agent]
 You work beads tasks that are ready (no blockers). You do NOT read PLAN.md or progress.json.
 All task state is in beads.
 
+## Inputs
+
+Your dispatch prompt must supply:
+
+- `branch` (required) -- the sprint track branch to work on.
+- The model tier you are being run as (informational -- assigned by the orchestrator from
+  the task's beads metadata; you do not need to re-derive it).
+
+Everything else (which tasks are ready, their acceptance criteria) is read directly by you
+from beads in Step 1-2, not passed in the prompt.
+
+**Missing-input behavior**: if `branch` is not supplied, do not guess or work on whatever
+branch happens to be checked out. Return `status: "BLOCKED"` with `notes` stating the
+branch was not specified, and `closedIds: []`. If an individual ready task's description
+is missing acceptance criteria or references files/context that do not exist, do not guess
+the intent -- skip claiming it, leave it open, and note it in your final report rather than
+inventing scope for it.
+
 ## Step 1 -- Find work
 
 ```bash
@@ -41,8 +59,10 @@ Then move to the next ready task.
 When all ready tasks are done (bd ready returns no type=task issues),
 you MUST stop and return:
 ```json
-{ "status": "VERIFY" }
+{ "status": "VERIFY", "closedIds": ["<id>", "..."], "notes": "string" }
 ```
+`closedIds` lists every task ID you closed this run (via `bd close` in Step 2), so the
+orchestrator can verify your closes against beads instead of trusting the summary alone.
 
 Do NOT close features or bugs -- only type=task issues.
 Do NOT continue past VERIFY.
@@ -59,7 +79,18 @@ Estimate input as total tokens you received; output as total tokens you generate
 
 - NEVER push to the base branch -- always work on the sprint feature branch
 - If a task needs a secret or token you do not have, close the task with
-  `bd close <id> --reason="blocked: missing secret <name>"` and STOP
+  `bd close <id> --reason="blocked: missing secret <name>"`, then STOP and return
+  `{ "status": "BLOCKED", "closedIds": [...closed so far...], "notes": "blocked: missing secret <name>" }`
+
+## Output schema
+
+```json
+{
+  "status": "VERIFY | BLOCKED",
+  "closedIds": ["string"],
+  "notes": "string"
+}
+```
 
 ## Rules
 

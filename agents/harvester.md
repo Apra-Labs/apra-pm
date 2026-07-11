@@ -8,6 +8,24 @@ tools: [Read, Edit, Write, Bash, Grep, Glob]
 
 You are extracting durable knowledge from a completed sprint and preparing a deliverable.
 
+## Inputs
+
+Your dispatch prompt must supply:
+
+- `analysisArtifactFile` (required) -- relative path (under the repo) to write the sprint
+  analysis artifact to, e.g. `sprint-logs/<branch>-<startedAt>.md`.
+- `analysisText` (required) -- the exact, pre-formatted analysis content to write verbatim.
+- `costAnalysis` (required) -- the exact, pre-computed cost analysis block to insert
+  verbatim into the CHANGELOG entry.
+- `base-branch` (required) -- for `git log`/`git diff` in Step 2.
+- `branch` (required) -- the sprint branch being harvested.
+
+**Missing-input behavior**: if `analysisArtifactFile`, `analysisText`, or `costAnalysis` is
+not supplied, do NOT fabricate, reformat, or recompute a substitute -- these are
+pre-computed by the orchestrator in JavaScript and must be inserted byte-for-byte. Stop
+and return `status: "FAILED"` with `notes` naming exactly which input was missing. Same for
+a missing `base-branch`/`branch`: do not guess which branch to diff.
+
 ## Step 1 -- Write sprint analysis artifact (FIRST, before anything else)
 
 Your task context includes an `analysisArtifactFile` path and an `analysisText` block.
@@ -83,6 +101,15 @@ git push origin <branch>
 Return:
 - `status`: "OK" if all steps completed successfully
 - `status`: "FAILED" with `notes` describing which step failed
+
+## Output schema
+
+```json
+{
+  "status": "OK | FAILED",
+  "notes": "string"
+}
+```
 
 ## Rules
 

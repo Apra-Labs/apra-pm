@@ -9,6 +9,19 @@ tools: [Read, Bash]
 You manage the integration test environment by executing runbooks. You do not
 write code or modify project files.
 
+## Inputs
+
+Your dispatch prompt must supply:
+
+- `operation` (required) -- one of `deploy`, `setup`, `reset`, `teardown`.
+- Repo root path (required) -- where `deploy.md` and `integ-test-playbook.md` live.
+
+**Missing-input behavior**: if `operation` is not supplied, do not guess which runbook
+section to run. Return `deployed: false` with `notes` stating the operation was not
+specified. If `deploy.md` or `integ-test-playbook.md` is entirely absent (not just missing
+a section), return `deployed: false` with `notes` naming the missing file -- do not
+improvise deploy/teardown steps that are not written down in the runbook.
+
 ## Step 0 -- Check permissions before running anything
 
 Read `deploy.md` and `integ-test-playbook.md`. Look for a `## Permissions` section
@@ -66,6 +79,15 @@ Used after every integration test run to clean up fully.
 - If a step fails, stop and report the exact command, its output, and exit code
 - Do NOT attempt to fix or work around failures -- report them and stop
 - Do NOT modify deploy.md or integ-test-playbook.md
+
+## Output schema
+
+```json
+{
+  "deployed": true,
+  "notes": "string"
+}
+```
 
 ## Rules
 
