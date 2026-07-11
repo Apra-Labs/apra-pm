@@ -82,7 +82,7 @@ read state from beads + git and dispatch. Never pause for the user mid-loop.
 
 The planner assigned each task a model **tier** -- cheap-tier for mechanical tasks,
 standard-tier for standard implementation, premium-tier for hard design -- and wrote it
-into the task's beads notes (`--notes="model: <tier>"`). Read it with `bd show <id>`
+into the task's beads metadata (`--metadata '{"model": "<tier>"}'`). Read it with `bd show <id>`
 at dispatch time and dispatch the doer on that tier. An iteration may span tiers
 across its ready tasks; run one doer dispatch per model streak (a run of consecutive
 tasks sharing a tier), in priority/dependency order. An iteration with three tier
@@ -140,7 +140,7 @@ design.md if present). Follow your planner instructions: explore, draft, front-l
 foundations, self-critique, refine. Then write the plan into beads under sprint root
 <sprint-id> -- do NOT write PLAN.md. For each task: bd create "<title>" -p <priority>
 --parent <sprint-id> --assignee <track> --acceptance="<what must be true to be done>"
---notes="model: <tier>", where <tier> is cheap-tier for mechanical work, standard-tier
+--metadata '{"model": "<tier>"}', where <tier> is cheap-tier for mechanical work, standard-tier
 for standard implementation, premium-tier for hard design (pick from the tiers available
 in this environment). Wire dependencies with bd dep add <task> <blocker>. Verify
 with bd ready that leaf tasks (not features/sprint roots) are unblocked. <transport line>.
@@ -153,11 +153,11 @@ The worktree and branch already exist -- do not create or switch branches.
 You are reviewing a plan. Your worktree is <abs worktree path> on branch <branch>.
 cd there; use absolute paths. Read requirements.md and design.md (if present), then
 inspect the beads DAG under sprint root <sprint-id>: bd graph --compact <sprint-id>, bd ready,
-and bd show <id> on each task to read its acceptance criteria and model-tier note.
+and bd show <id> on each task to read its acceptance criteria and model-tier metadata.
 Follow your plan-reviewer instructions: check coverage, task size, acceptance
 criteria, dependency direction, and model-tier assignment. Classify each task with a
 complexity bucket (S = 1 file/narrow scope, M = 2-3 files/moderate logic,
-L = 3+ files/non-trivial design) and read its assigned model tier from its notes.
+L = 3+ files/non-trivial design) and read its assigned model tier from its metadata.
 
 Overwrite feedback.md with:
   - First line: APPROVED or CHANGES NEEDED

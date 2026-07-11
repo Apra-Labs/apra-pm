@@ -96,8 +96,8 @@ skip design and note in `requirements.md` that none was needed.
 
 1. Dispatch `planner` (inline, premium-tier). It explores, drafts, self-critiques, then
    writes the plan **directly into beads** -- one task per plan item under the sprint root,
-   each with `--acceptance="..."` (the reviewer's contract), `--notes="model:
-   <tier>"` (cheap-tier for mechanical work, standard-tier for standard implementation,
+   each with `--acceptance="..."` (the reviewer's contract), `--metadata
+   '{"model": "<tier>"}'` (cheap-tier for mechanical work, standard-tier for standard implementation,
    premium-tier for hard design), a priority matching the sprint goal, and dependencies
    wired with `bd dep add` (see `beads.md`). It does NOT write PLAN.md.
 2. Loop, capped at three rounds: dispatch `plan-reviewer` (inline, standard-tier). It

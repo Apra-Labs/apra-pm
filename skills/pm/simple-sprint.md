@@ -17,7 +17,7 @@ out bigger than expected, promote to a full sprint.
 
 1. Write a concise requirements.md on the branch and commit.
 2. Create a small beads sprint root + a task per item, each with `--acceptance="..."` and a
-   `--notes="model: <tier>"` tag.
+   `--metadata '{"model": "<tier>"}'` tag.
 3. Dispatch the doer (tier sized to the work). The doer claims each task
    (`bd update <id> --claim`), implements, commits, pushes, and closes it
    (`bd close <id>`).
