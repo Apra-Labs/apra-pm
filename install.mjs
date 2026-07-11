@@ -172,7 +172,7 @@ function uninstall(cfg, agentsSrc) {
   const agentsDest = path.join(cfg.configDir, 'agents');
   const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
-  const removed = { skill: false, agents: [], permsRemoved: 0, workflow: false };
+  const removed = { skill: false, agents: [], schemas: false, permsRemoved: 0, workflow: false };
 
   // 1) skill directory
   if (fs.existsSync(skillDest)) {
@@ -192,6 +192,14 @@ function uninstall(cfg, agentsSrc) {
         removed.agents.push(a);
       }
     }
+  }
+
+  // 2b) agents/schemas -- entirely install()-owned (apra-fleet-unw.21), safe
+  // to remove wholesale, mirroring the skill directory's whole-dir removal.
+  const schemasDest = path.join(agentsDest, 'schemas');
+  if (fs.existsSync(schemasDest)) {
+    fs.rmSync(schemasDest, { recursive: true, force: true });
+    removed.schemas = true;
   }
 
   // 3) permissions -- drop exactly the entries install() would have added.
@@ -252,6 +260,9 @@ Options:
 What it installs:
   <configDir>/skills/pm/      the skill (SKILL.md + sub-docs)
   <configDir>/agents/*.md     eight sprint agents (see below)
+  <configDir>/agents/schemas/ machine-readable output/input contracts for the seven
+                              structured-output roles (planner has none -- see
+                              agents/planner.md Output schema)
   <configDir>/settings.json   minimal permissions (merged, non-destructive)
   <configDir>/skills/pm/cost.js  pure JS cost functions extracted from auto-sprint.js (all providers)
   ~/.claude/workflows/auto-sprint.js  native /auto-sprint workflow (claude only)
@@ -286,6 +297,7 @@ function main() {
     const removed = uninstall(cfg, agentsSrc);
     console.log(`  skill        -> ${removed.skill ? 'removed' : 'not found (nothing to do)'}`);
     console.log(`  agents       -> ${removed.agents.length} removed${removed.agents.length ? ` (${removed.agents.join(', ')})` : ''}`);
+    console.log(`  schemas      -> ${removed.schemas ? 'removed' : 'not found (nothing to do)'}`);
     console.log(`  permissions  -> ${removed.permsRemoved} removed`);
     if (cfg.name === 'Claude') {
       console.log(`  workflow     -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);
@@ -326,6 +338,21 @@ function main() {
     fs.writeFileSync(path.join(agentsDest, a), content);
   }
   console.log(`  [2/4] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
+
+  // 2b) agents/schemas -- the machine-readable output/input contracts each
+  // role's Output/Inputs section points at (apra-fleet-unw.21). Copied
+  // alongside agents/*.md so a caller reading <configDir>/agents/schemas/
+  // (e.g. an installed .claude/workflows/auto-sprint.js, see its
+  // loadRoleSchema()) finds them at the same relative location regardless of
+  // provider.
+  const schemasSrc = path.join(agentsSrc, 'schemas');
+  if (fs.existsSync(schemasSrc)) {
+    const schemasDest = path.join(agentsDest, 'schemas');
+    clearDir(schemasDest);
+    copyDir(schemasSrc, schemasDest);
+    const schemaFiles = fs.readdirSync(schemasSrc).filter(f => f.endsWith('.json'));
+    console.log(`  [2/4] schemas -> ${schemasDest} (${schemaFiles.length} files)`);
+  }
 
   // 3) permissions
   let added;

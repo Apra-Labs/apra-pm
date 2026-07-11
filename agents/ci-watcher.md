@@ -51,12 +51,24 @@ If still absent: `status: "pending"` with notes explaining what was found.
 
 ## Output schema
 
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/ci-watcher.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
 ```json
 {
-  "status": "green | red | not_configured | pending",
-  "notes": "string"
+  "status": "green",
+  "notes": "Run 123456789 succeeded for expected HEAD SHA a1b2c3d."
 }
 ```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Rules
 

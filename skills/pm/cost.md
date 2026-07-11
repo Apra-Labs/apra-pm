@@ -91,7 +91,8 @@ per task -- see `doer-reviewer-loop.md` plan-reviewer template), the orchestrato
    ```
    Dispatch a single cheap-tier agent to run all `bd update` commands in one pass.
 
-The `taskAssignments` array shape (matches auto-sprint's `PLAN_REVIEW_SCHEMA`).
+The `taskAssignments` array shape (matches the plan-reviewer role schema,
+`agents/schemas/plan-reviewer.json`).
 The `model` field is the **tier name** (`cheap`/`standard`/`premium`) the planner
 recorded in the task's beads notes -- never a provider-specific model ID:
 ```json

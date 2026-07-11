@@ -99,15 +99,27 @@ Return:
 
 ## Output schema
 
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/integ-test-runner.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
 ```json
 {
-  "featuresClosed": 0,
-  "issuesCreated": 0,
-  "passed": true,
-  "bugsFiled": ["string"],
-  "summary": "string"
+  "featuresClosed": 3,
+  "issuesCreated": 1,
+  "passed": false,
+  "bugsFiled": ["BD-31"],
+  "summary": "Ran integration tests for 4 open features; 3 passed and were closed, 1 failed on the password reset email flow (BD-31 filed) and left open."
 }
 ```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Token tracking
 

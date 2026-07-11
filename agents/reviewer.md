@@ -88,16 +88,28 @@ Notes must be specific: "auth_test.ts line 42: no test for expired token path".
 
 ## Output schema
 
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/reviewer.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
 ```json
 {
-  "verdict": "APPROVED | CHANGES_NEEDED",
-  "notes": "string",
-  "reopenIds": ["string"],
+  "verdict": "CHANGES_NEEDED",
+  "notes": "auth_test.ts line 42: no test for expired token path",
+  "reopenIds": ["BD-14"],
   "newTasks": [
-    { "title": "string", "description": "string", "priority": "string" }
+    { "title": "Add expired-token test", "description": "Cover the expired-token rejection path in auth_test.ts", "priority": "P2" }
   ]
 }
 ```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Token tracking
 

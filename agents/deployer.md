@@ -82,12 +82,24 @@ Used after every integration test run to clean up fully.
 
 ## Output schema
 
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/deployer.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
 ```json
 {
   "deployed": true,
-  "notes": "string"
+  "notes": "Smoke test exited 0."
 }
 ```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Rules
 
