@@ -104,12 +104,24 @@ Return:
 
 ## Output schema
 
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/harvester.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
 ```json
 {
-  "status": "OK | FAILED",
-  "notes": "string"
+  "status": "OK",
+  "notes": "Wrote sprint analysis artifact, extracted durable docs, updated README/CHANGELOG, deferred 2 P3 issues, pushed branch."
 }
 ```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Rules
 

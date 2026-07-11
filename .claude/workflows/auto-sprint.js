@@ -112,54 +112,28 @@ const MODEL_SONNET = TIER_STANDARD;
 const MODEL_HAIKU  = TIER_CHEAP;
 
 // ------------------------------------------------------------------ schemas
-
-const REVIEW_SCHEMA = {
-  type: 'object', required: ['verdict', 'notes'],
-  properties: {
-    verdict: { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
-    notes:   { type: 'string' },
-  },
-};
-
-const PLAN_REVIEW_SCHEMA = {
-  type: 'object', required: ['verdict', 'notes', 'taskAssignments'],
-  properties: {
-    verdict:         { type: 'string', enum: ['APPROVED', 'CHANGES NEEDED'] },
-    notes:           { type: 'string' },
-    taskAssignments: {
-      type: 'array',
-      items: {
-        type: 'object', required: ['id', 'bucket', 'model'],
-        properties: {
-          id:     { type: 'string' },
-          bucket: { type: 'string', enum: ['S', 'M', 'L'] },
-          model:  { type: 'string' },
-        },
-      },
-    },
-  },
-};
+//
+// NOTE: REVIEW_SCHEMA, PLAN_REVIEW_SCHEMA, DOER_STATUS_SCHEMA,
+// INTEG_RUN_SCHEMA, CI_SCHEMA, and HARVEST_SCHEMA (the role-contract schemas)
+// are declared just below PURE_FUNCTIONS_END, not here -- they are loaded
+// from agents/schemas/<role>.json via require()/fs.readFileSync(), which is
+// I/O and therefore must NOT live inside the PURE_FUNCTIONS_BEGIN/END block
+// (that block is extracted verbatim via `new Function(...)` by
+// test/sprint-cost.test.mjs and by install.mjs's cost.js generation step,
+// both of which require it to be self-contained pure data/functions with no
+// require() and no filesystem access). See the role-schemas section right
+// after the end-of-pure-functions marker below for the loader and the
+// apra-fleet-unw.21 rationale.
+//
+// The schemas below (SHELL_OUTPUTS_SCHEMA, SETUP_SCHEMA,
+// BEADS_BLOCKERS_SCHEMA, READY_STREAKS_SCHEMA) are workflow-private, not role
+// contracts -- they are plain data literals with no I/O, so they safely stay
+// inline here.
 
 const SHELL_OUTPUTS_SCHEMA = {
   type: 'object', required: ['outputs'],
   properties: {
     outputs: { type: 'array', items: { type: 'string' } },
-  },
-};
-
-const DOER_STATUS_SCHEMA = {
-  type: 'object', required: ['status'],
-  properties: {
-    status:  { type: 'string', enum: ['VERIFY'] },
-    notes:   { type: 'string' },
-  },
-};
-
-const HARVEST_SCHEMA = {
-  type: 'object', required: ['status'],
-  properties: {
-    status: { type: 'string', enum: ['OK', 'FAILED'] },
-    notes:  { type: 'string' },
   },
 };
 
@@ -203,22 +177,8 @@ const READY_STREAKS_SCHEMA = {
   },
 };
 
-const CI_SCHEMA = {
-  type: 'object', required: ['status'],
-  properties: {
-    status: { type: 'string', enum: ['green', 'red', 'not_configured', 'pending'] },
-    notes:  { type: 'string' },
-  },
-};
-
-const INTEG_RUN_SCHEMA = {
-  type: 'object', required: ['featuresClosed', 'issuesCreated', 'summary'],
-  properties: {
-    featuresClosed: { type: 'number' },
-    issuesCreated:  { type: 'number' },
-    summary:        { type: 'string' },
-  },
-};
+// CI_SCHEMA and INTEG_RUN_SCHEMA are role contracts and are declared, along
+// with the other role-contract schemas, just below PURE_FUNCTIONS_END.
 
 // Returned by the resume-check agent at the top of every cycle.
 // planDone   -- true if the sprint goal already has children AND every feature has at
@@ -954,6 +914,61 @@ function truncateStreakToCeiling(streakIds, bucketById, calibration, tier) {
 
 // PURE_FUNCTIONS_END
 
+// ------------------------------------------------------------- role schemas
+//
+// apra-fleet-unw.21: the role-contract schemas (REVIEW_SCHEMA,
+// PLAN_REVIEW_SCHEMA, DOER_STATUS_SCHEMA, INTEG_RUN_SCHEMA, CI_SCHEMA,
+// HARVEST_SCHEMA) are loaded from vendor/apra-pm's own canonical,
+// machine-readable role contracts at agents/schemas/<role>.json, instead of
+// being hand-copied inline literals. This closes the drift this file itself
+// used to have from the vendored agents/*.md prose and from
+// packages/apra-fleet-se/auto-sprint/contracts.mjs -- most concretely, the
+// legacy 'CHANGES NEEDED' (space) enum value is now 'CHANGES_NEEDED'
+// (underscore), matching every other reader of a reviewer/plan-reviewer
+// verdict. See docs/agent-schema-layering-proposal.md section 2.4/4/5.
+//
+// This section is placed AFTER PURE_FUNCTIONS_END deliberately: it performs
+// real I/O (require('fs') / require('path') / fs.readFileSync), which must
+// not live inside the PURE_FUNCTIONS_BEGIN/END block -- that block is
+// extracted verbatim via `new Function(...)` by test/sprint-cost.test.mjs and
+// by install.mjs's cost.js generation step, both of which require it to stay
+// self-contained pure data/functions with no require() and no filesystem
+// access.
+
+const fs = require('fs');
+const path = require('path');
+
+// Loads a role's canonical output-contract JSON Schema from
+// agents/schemas/<role>.json, resolved relative to this file so it works
+// both from a dev checkout of apra-pm (this file lives at
+// .claude/workflows/auto-sprint.js, agents/ is two levels up at the repo
+// root) and once install.mjs has copied this file to
+// <configDir>/workflows/auto-sprint.js (agents/schemas/ is then one level up,
+// a sibling of workflows/, installed alongside agents/*.md -- see
+// install.mjs step [2/4]).
+function loadRoleSchema(role) {
+  const candidates = [
+    path.join(__dirname, '..', 'agents', 'schemas', `${role}.json`),
+    path.join(__dirname, '..', '..', 'agents', 'schemas', `${role}.json`),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return JSON.parse(fs.readFileSync(candidate, 'utf-8'));
+    }
+  }
+  throw new Error(
+    `[auto-sprint] Could not locate the "${role}" role schema. Tried:\n` +
+    candidates.map((c) => `  - ${c}`).join('\n')
+  );
+}
+
+const REVIEW_SCHEMA      = loadRoleSchema('reviewer');
+const PLAN_REVIEW_SCHEMA = loadRoleSchema('plan-reviewer');
+const DOER_STATUS_SCHEMA = loadRoleSchema('doer');
+const INTEG_RUN_SCHEMA   = loadRoleSchema('integ-test-runner');
+const CI_SCHEMA          = loadRoleSchema('ci-watcher');
+const HARVEST_SCHEMA     = loadRoleSchema('harvester');
+
 function outputCostUsd(tier, tokens) {
   const rate = OUTPUT_PRICE_PER_M[tier] || OUTPUT_PRICE_PER_M[TIER_STANDARD];
   return (tokens / 1_000_000) * rate;
@@ -1434,7 +1449,7 @@ while (cycleCount < maxCycles) {
       `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
       `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
       `    from beads metadata. If a task has no model metadata, note it in your verdict\n` +
-      `    notes as a warning but do NOT return CHANGES NEEDED for it -- the workflow has a fallback.\n` +
+      `    notes as a warning but do NOT return CHANGES_NEEDED for it -- the workflow has a fallback.\n` +
       `  Step 4: return verdict, notes, and taskAssignments (id + bucket + model per task).\n\n` +
       `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
       `any dependency direction problems.`,
@@ -1596,7 +1611,7 @@ while (cycleCount < maxCycles) {
       `Do NOT comment on code or issues outside the listed tasks.\n` +
       `Check: code correctness, test coverage, adherence to each task's acceptance criteria.\n` +
       `If a task needs rework, reopen it: bd update <id> --status=open\n` +
-      `CHANGES NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
+      `CHANGES_NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
       `APPROVED means all committed work meets acceptance criteria.`,
       { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer',
         context: `reviewing tasks ${workedIds.join(', ')}` }
@@ -1786,7 +1801,7 @@ const finalReview = await dispatch(
   `  - Are there obvious gaps or regressions?\n` +
   `  - Is the codebase in a releasable state for what was completed?\n` +
   `APPROVED means the work is ready to harvest and raise as a PR.\n` +
-  `CHANGES NEEDED means critical issues were found; include specific findings in notes.`,
+  `CHANGES_NEEDED means critical issues were found; include specific findings in notes.`,
   { model: MODEL_OPUS, label: finalReviewLabel, phase: 'Harvest', schema: REVIEW_SCHEMA, agentType: 'reviewer' }
 );
 log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);

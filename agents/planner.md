@@ -113,11 +113,10 @@ If features and tasks already exist in beads from a prior planning pass:
 
 ## Output schema
 
-`planner` has no structured verdict schema in `packages/apra-fleet-se/auto-sprint/contracts.mjs`
--- unlike the other seven roles, its output is not a returned JSON object. Its output IS
-the beads DAG itself: the issues, `--acceptance` text, `--metadata '{"model": ...}'` tiers,
-and `bd dep add` edges it writes directly to beads. That DAG is what `plan-reviewer`
-evaluates and reports on via its `planReviewerVerdict` schema (see `plan-reviewer.md`).
+`planner` has no structured output contract -- its output IS the beads DAG (issues,
+acceptance criteria, model-tier metadata, dependency edges), which `plan-reviewer`
+evaluates against its own Output schema (see `plan-reviewer.md` and its sibling
+`agents/schemas/plan-reviewer.json`).
 
 ## Rules
 

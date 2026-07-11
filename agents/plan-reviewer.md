@@ -80,15 +80,28 @@ Always populate `taskAssignments` even on CHANGES NEEDED -- cost estimation uses
 
 ## Output schema
 
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/plan-reviewer.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
 ```json
 {
-  "verdict": "APPROVED | CHANGES_NEEDED",
-  "notes": "string",
+  "verdict": "CHANGES_NEEDED",
+  "notes": "BD-14 missing [test] task; BD-22 has no model tier metadata set",
   "taskAssignments": [
-    { "id": "string", "bucket": "S | M | L", "model": "string" }
+    { "id": "BD-10", "bucket": "M", "model": "standard" },
+    { "id": "BD-14", "bucket": "S", "model": "cheap" }
   ]
 }
 ```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Rules
 
