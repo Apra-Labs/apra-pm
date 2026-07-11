@@ -87,7 +87,7 @@ Eight subagent roles carry the work, split into two groups.
 `deployer`, `integ-test-runner`, `ci-watcher`, `harvester`.
 
 Roles coordinate through beads (the task state and message bus) and the committed
-code and narrative files (`requirements.md`, `design.md`, `feedback.md`) on the
+code and narrative files (`requirements.md`, `design.md`) on the
 track's branch.
 
 ### Sprint-core roles
@@ -97,7 +97,8 @@ track's branch.
   model tier in `--metadata '{"model": "..."}'`, a priority, and dependencies
   (`bd dep add`). Writes no PLAN.md.
 - `plan-reviewer` -- inspects the beads DAG (`bd graph`, `bd ready`, `bd show`),
-  writes `feedback.md` (`APPROVED` / `CHANGES NEEDED`).
+  returns structured output ONLY (`verdict`: `APPROVED` / `CHANGES_NEEDED`, `notes`,
+  `taskAssignments`); never writes `feedback.md` or `PLAN.md`.
 - `doer` -- finds work via `bd ready`, reads the task's acceptance + model tier with
   `bd show`, claims it (`bd update --claim`), implements one task at a time, commits
   after each, closes it (`bd close`), STOPS at every VERIFY checkpoint.
@@ -227,7 +228,7 @@ R1. NEVER read code to diagnose, fix, or write it. You dispatch agents, read
     (`git worktree add/list/remove`, `git merge`, `git diff <base>...<branch>`),
     beads commands, and PR commands.
 R2. **Project sandboxing** -- every narrative artifact (requirements.md, design.md,
-    feedback.md, status.md) lives inside the track's worktree and nowhere else, and
+    status.md) lives inside the track's worktree and nowhere else, and
     task state lives in the project's single beads DB. Never write project files
     outside a track's worktree or in the skill folder.
 R3. On session start: re-derive position from beads and git -- they are the
@@ -361,7 +362,8 @@ and git.
 - **start** -- run the doer-review loop for the next pending phase. See
   `doer-reviewer-loop.md`.
 - **status** -- report position from `bd` queries (`bd list --status=open`,
-  `bd ready`, `bd list --tree`) plus `git log` and the on-branch `feedback.md`.
+  `bd ready`, `bd list --tree`) plus `git log` and the latest reviewer/plan-reviewer
+  structured verdicts.
 - **resume** / **recover** -- reconstruct in-flight state from beads + git and
   continue. See `sprint.md` Recovery.
 - **deploy** -- run the project's `deploy.md` runbook (execute / verify / rollback).
