@@ -66,11 +66,22 @@ metadata at creation time, not in `--notes`:
 ```bash
 bd create ... --metadata '{"model": "<cheap-tier|standard-tier|premium-tier model name>"}'
 ```
-This is the ONLY location the model tier is recorded. `plan-reviewer.md` (Step 3) and the
-orchestrator (`skills/pm/SKILL.md` Model assignment) both read the model tier back from
-this same metadata field via `bd show <id>` -- do not also (or instead) put it in
-`--notes`, a METADATA-section comment, or anywhere else. Pick the tier using the same
-cheap/standard/premium criteria documented in `skills/pm/SKILL.md` Model assignment.
+This is the ONLY location the model tier is recorded. Any consumer -- including
+`plan-reviewer.md` (Step 3) and the orchestrator that dispatches doers -- reads the model
+tier back from this same metadata field via `bd show <id>` (the `model` key) -- do not
+also (or instead) put it in `--notes`, a METADATA-section comment, or anywhere else.
+
+Pick the tier using these criteria:
+
+- **cheap-tier** -- mechanical work: rename, move, config tweak, simple wiring,
+  boilerplate.
+- **standard-tier** -- standard implementation: a new function, an API endpoint, a
+  test suite, a focused refactor.
+- **premium-tier** -- hard work: architecture, multi-file design, high-ambiguity or
+  cross-cutting reasoning.
+
+Pick from the models actually available in the current environment. A user override
+always wins.
 
 Wire dependencies (semantics: `bd dep add A B` means A is blocked by B -- B must finish before A can close):
 - `bd dep add <feature-id> <impl-task>` (feature blocked until impl task is done)
