@@ -127,7 +127,7 @@ If features and tasks already exist in beads from a prior planning pass:
 `planner` has no structured output contract -- its output IS the beads DAG (issues,
 acceptance criteria, model-tier metadata, dependency edges), which `plan-reviewer`
 evaluates against its own Output schema (see `plan-reviewer.md` and its sibling
-`agents/schemas/plan-reviewer.json`).
+`agents/schemas/plan-reviewer-output.json`).
 
 ## Rules
 

@@ -1,6 +1,6 @@
 // apra-fleet-unw.21 -- CI-style drift guard: every role's Output schema example
 // instance (embedded in agents/<role>.md) must validate against its own sibling
-// machine-readable contract at agents/schemas/<role>.json. Catches prose/schema
+// machine-readable contract at agents/schemas/<role>-output.json. Catches prose/schema
 // divergence at the source instead of discovering it live in a fleet dispatch.
 //
 // Also asserts every agents/schemas/*.json file is valid JSON Schema (ajv
@@ -82,21 +82,21 @@ for (const file of schemaFiles) {
 // ---- each structured role's .md Output schema example validates against its sibling schema ----
 
 for (const role of STRUCTURED_ROLES) {
-  test(`agents/${role}.md Output schema example validates against agents/schemas/${role}.json`, () => {
+  test(`agents/${role}.md Output schema example validates against agents/schemas/${role}-output.json`, () => {
     const mdText = readFileSync(join(agentsDir, `${role}.md`), 'utf-8');
-    const schema = JSON.parse(readFileSync(join(schemasDir, `${role}.json`), 'utf-8'));
+    const schema = JSON.parse(readFileSync(join(schemasDir, `${role}-output.json`), 'utf-8'));
     const example = extractOutputExample(mdText);
 
     const validate = freshAjv().compile(schema);
     const valid = validate(example);
-    assert.ok(valid, `${role}.md example does not match agents/schemas/${role}.json: ${JSON.stringify(validate.errors)}`);
+    assert.ok(valid, `${role}.md example does not match agents/schemas/${role}-output.json: ${JSON.stringify(validate.errors)}`);
   });
 
-  test(`agents/${role}.md points at its sibling agents/schemas/${role}.json`, () => {
+  test(`agents/${role}.md points at its sibling agents/schemas/${role}-output.json`, () => {
     const mdText = readFileSync(join(agentsDir, `${role}.md`), 'utf-8');
     assert.ok(
-      mdText.includes(`agents/schemas/${role}.json`),
-      `${role}.md must reference its sibling agents/schemas/${role}.json as the canonical machine contract`
+      mdText.includes(`agents/schemas/${role}-output.json`),
+      `${role}.md must reference its sibling agents/schemas/${role}-output.json as the canonical machine contract`
     );
   });
 }
@@ -106,13 +106,13 @@ for (const role of STRUCTURED_ROLES) {
 test('agents/planner.md declares it has no structured output contract, points at plan-reviewer', () => {
   const mdText = readFileSync(join(agentsDir, 'planner.md'), 'utf-8');
   assert.ok(mdText.includes('no structured output contract'));
-  assert.ok(mdText.includes('agents/schemas/plan-reviewer.json'));
+  assert.ok(mdText.includes('agents/schemas/plan-reviewer-output.json'));
 });
 
 test('no cross-repo application-layer references anywhere under agents/', () => {
   const files = readdirSync(agentsDir).filter((f) => f.endsWith('.md'));
   // Negative lookahead on "runner.js" avoids a false positive on legitimate
-  // in-repo references like "agents/schemas/integ-test-runner.json" (whose
+  // in-repo references like "agents/schemas/integ-test-runner-output.json" (whose
   // text contains the substring "runner.js" followed by "on").
   const forbidden = /apra-fleet-se|contracts\.mjs|apra-fleet-workflow|runner\.js(?!on)/i;
   for (const f of files) {

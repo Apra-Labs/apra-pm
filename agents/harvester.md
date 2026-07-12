@@ -105,7 +105,7 @@ Return:
 ## Output schema
 
 The canonical machine-readable contract for this output lives in the sibling file
-`agents/schemas/harvester.json`. Example instance (valid JSON, not a pseudo-JSON
+`agents/schemas/harvester-output.json`. Example instance (valid JSON, not a pseudo-JSON
 placeholder):
 
 ```json
