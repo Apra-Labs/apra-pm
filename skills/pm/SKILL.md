@@ -170,7 +170,8 @@ key) and dispatches each doer on that tier. `plan-reviewer` (criterion 10 / Step
 the tier from this same metadata key, so a planner that sets it here can never fail
 plan-reviewer's model-metadata check -- the two are aligned by construction.
 
-How the planner chooses the doer tier:
+How the planner chooses the doer tier (mirrors the criteria owned by `agents/planner.md`
+itself -- keep the two in sync if either changes):
 
 - **cheap-tier** -- mechanical work: rename, move, config tweak, simple wiring,
   boilerplate.
