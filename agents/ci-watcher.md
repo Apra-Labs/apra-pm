@@ -52,7 +52,7 @@ If still absent: `status: "pending"` with notes explaining what was found.
 ## Output schema
 
 The canonical machine-readable contract for this output lives in the sibling file
-`agents/schemas/ci-watcher.json`. Example instance (valid JSON, not a pseudo-JSON
+`agents/schemas/ci-watcher-output.json`. Example instance (valid JSON, not a pseudo-JSON
 placeholder):
 
 ```json

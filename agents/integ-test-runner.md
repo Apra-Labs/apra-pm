@@ -100,7 +100,7 @@ Return:
 ## Output schema
 
 The canonical machine-readable contract for this output lives in the sibling file
-`agents/schemas/integ-test-runner.json`. Example instance (valid JSON, not a pseudo-JSON
+`agents/schemas/integ-test-runner-output.json`. Example instance (valid JSON, not a pseudo-JSON
 placeholder):
 
 ```json

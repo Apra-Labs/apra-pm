@@ -939,8 +939,8 @@ const fs = require('fs');
 const path = require('path');
 
 // Loads a role's canonical output-contract JSON Schema from
-// agents/schemas/<role>.json, resolved relative to this file so it works
-// both from a dev checkout of apra-pm (this file lives at
+// agents/schemas/<role>-output.json, resolved relative to this file so it
+// works both from a dev checkout of apra-pm (this file lives at
 // .claude/workflows/auto-sprint.js, agents/ is two levels up at the repo
 // root) and once install.mjs has copied this file to
 // <configDir>/workflows/auto-sprint.js (agents/schemas/ is then one level up,
@@ -948,8 +948,8 @@ const path = require('path');
 // install.mjs step [2/4]).
 function loadRoleSchema(role) {
   const candidates = [
-    path.join(__dirname, '..', 'agents', 'schemas', `${role}.json`),
-    path.join(__dirname, '..', '..', 'agents', 'schemas', `${role}.json`),
+    path.join(__dirname, '..', 'agents', 'schemas', `${role}-output.json`),
+    path.join(__dirname, '..', '..', 'agents', 'schemas', `${role}-output.json`),
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {

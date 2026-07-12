@@ -81,7 +81,7 @@ Always populate `taskAssignments` even on CHANGES NEEDED -- cost estimation uses
 ## Output schema
 
 The canonical machine-readable contract for this output lives in the sibling file
-`agents/schemas/plan-reviewer.json`. Example instance (valid JSON, not a pseudo-JSON
+`agents/schemas/plan-reviewer-output.json`. Example instance (valid JSON, not a pseudo-JSON
 placeholder):
 
 ```json

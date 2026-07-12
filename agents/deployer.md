@@ -83,7 +83,7 @@ Used after every integration test run to clean up fully.
 ## Output schema
 
 The canonical machine-readable contract for this output lives in the sibling file
-`agents/schemas/deployer.json`. Example instance (valid JSON, not a pseudo-JSON
+`agents/schemas/deployer-output.json`. Example instance (valid JSON, not a pseudo-JSON
 placeholder):
 
 ```json

@@ -85,7 +85,7 @@ Estimate input as total tokens you received; output as total tokens you generate
 ## Output schema
 
 The canonical machine-readable contract for this output lives in the sibling file
-`agents/schemas/doer.json`. Example instance (valid JSON, not a pseudo-JSON placeholder):
+`agents/schemas/doer-output.json`. Example instance (valid JSON, not a pseudo-JSON placeholder):
 
 ```json
 {

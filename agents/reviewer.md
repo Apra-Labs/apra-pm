@@ -89,7 +89,7 @@ Notes must be specific: "auth_test.ts line 42: no test for expired token path".
 ## Output schema
 
 The canonical machine-readable contract for this output lives in the sibling file
-`agents/schemas/reviewer.json`. Example instance (valid JSON, not a pseudo-JSON
+`agents/schemas/reviewer-output.json`. Example instance (valid JSON, not a pseudo-JSON
 placeholder):
 
 ```json
