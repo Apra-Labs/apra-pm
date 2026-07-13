@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>auto-sprint</title>
+<title>auto-sprint - from /pm to fleet-wide workflows</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -150,9 +150,10 @@
 
 <!-- 1 -->
 <div class="slide active">
-  <div class="label">Apra PM &middot; /pm &rarr; auto-sprint</div>
+  <div class="label">Apra Fleet &middot; /pm &rarr; auto-sprint &rarr; fleet-wide workflows</div>
   <h1>auto-sprint</h1>
-  <p class="sub" style="margin-bottom:16px">One command. 91 minutes to a finished sprint with 4 features.</p>
+  <p class="sub" style="margin-bottom:16px">One command. 91 minutes to a finished sprint with 4 features.<br>
+  <span style="color:#6d28d9;font-weight:600">This deck: how that one command becomes a portable workflow engine &mdash; any provider, any machine, hundreds of runs at a time.</span></p>
   <div style="display:flex;flex-direction:column;gap:10px;max-width:820px;width:100%;text-align:left">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#374151;margin-bottom:6px">Plain English</div>
@@ -171,7 +172,101 @@
   </div>
 </div>
 
-<!-- 2 -->
+<!-- 2: the ceiling -->
+<div class="slide">
+  <div class="label">The problem</div>
+  <h2>The workflow is smarter than its cage</h2>
+  <p class="sub" style="margin-bottom:10px">Plan &rarr; develop &rarr; test &rarr; harvest, reviewer gates, a beads DAG as source of truth &mdash; all of it works. But today the orchestration logic lives <strong>inside one vendor's CLI</strong>. Meanwhile the fleet it should be driving already looks like this:</p>
+  <div class="pill-row" style="max-width:880px;margin-bottom:14px">
+    <div class="pill"><span>fleet-dev</span> claude &middot; local</div>
+    <div class="pill"><span>fleet-rev</span> claude &middot; local</div>
+    <div class="pill"><span>fleet-win11</span> ssh &middot; windows</div>
+    <div class="pill"><span>fleet-mac15</span> ssh &middot; macos</div>
+    <div class="pill"><span>spark</span> ssh &middot; gpu/arm</div>
+    <div class="pill"><span>opencode-toy</span> opencode &middot; self-hosted</div>
+    <div class="pill"><span>pm-planner</span> agy + claude flavors</div>
+    <div class="pill"><span>pm-doer-cheap/std/premium</span> agy + claude flavors</div>
+    <div class="pill"><span>pm-harvester</span> agy + claude flavors</div>
+    <div class="pill"><span>rport-bb</span> remote</div>
+  </div>
+  <div class="two-col" style="max-width:880px">
+    <div class="col">
+      <div class="col-title blue">What we have</div>
+      <ul class="blist">
+        <li><div class="dot"></div>A heterogeneous fleet: any OS, local or SSH-remote, six LLM providers behind one <span class="hi">execute_prompt</span> interface</li>
+        <li><div class="dot"></div>The same PM roles registered in <strong>agy</strong> and <strong>claude</strong> flavors &mdash; multi-provider is already structural, not aspirational</li>
+      </ul>
+    </div>
+    <div class="col">
+      <div class="col-title purple">What blocks scale</div>
+      <ul class="blist">
+        <li><div class="dot purple"></div>A Claude-Code-shaped workflow can only drive Claude-Code-shaped members</li>
+        <li><div class="dot purple"></div>Concurrency ceiling = how many interactive CLI windows a human keeps open</li>
+      </ul>
+    </div>
+  </div>
+  <p style="font-size:14px;color:#64748b;margin-top:18px;font-weight:500">The fix is not a better skill. It is a portable workflow runtime that is not IDE-shaped.</p>
+</div>
+
+<!-- 3: layered architecture -->
+<div class="slide">
+  <div class="label">Architecture</div>
+  <h2>Five layers, zero vendor lock at every seam</h2>
+  <p class="sub" style="margin-bottom:14px">Each layer talks only to the one below it &mdash; and none of them assumes a specific LLM provider or IDE.</p>
+  <div style="display:flex;flex-direction:column-reverse;gap:8px;max-width:860px;width:100%">
+    <div style="display:flex;align-items:center;gap:14px;background:#eff6ff;border:1.5px solid #3b82f6;border-radius:12px;padding:12px 18px;text-align:left">
+      <div style="min-width:200px;font-weight:700;color:#1d4ed8;font-size:14px">🖥️ Fleet substrate</div>
+      <div style="font-size:13px;color:#374151;line-height:1.5"><strong>apra-fleet MCP server</strong>: member registry, credential/auth provisioning, <span class="hi">execute_command</span> / <span class="hi">execute_prompt</span> dispatch to any member &mdash; local, SSH, any OS, any of six providers</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;background:#fefce8;border:1.5px solid #eab308;border-radius:12px;padding:12px 18px;text-align:left">
+      <div style="min-width:200px;font-weight:700;color:#a16207;font-size:14px">🧬 Shared task state</div>
+      <div style="font-size:13px;color:#374151;line-height:1.5"><strong>beads</strong>: the task DB and DAG &mdash; epics, tasks, dependencies, acceptance criteria, status. Git-friendly, provider-agnostic, survives any process or machine</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;background:#f5f3ff;border:1.5px solid #8b5cf6;border-radius:12px;padding:12px 18px;text-align:left">
+      <div style="min-width:200px;font-weight:700;color:#6d28d9;font-size:14px">⚙️ Workflow engine</div>
+      <div style="font-size:13px;color:#374151;line-height:1.5"><strong>apra-fleet-workflow + apra-fleet-se</strong>: provider-agnostic runtime &mdash; engine, journal, pricing, vetting, viewer &mdash; packaged as a single portable SEA binary. Runs any workflow script, not just sprints</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;background:#f0fdf4;border:1.5px solid #10b981;border-radius:12px;padding:12px 18px;text-align:left">
+      <div style="min-width:200px;font-weight:700;color:#065f46;font-size:14px">📜 Workflows as code</div>
+      <div style="font-size:13px;color:#374151;line-height:1.5">Workflow definitions authored once, run anywhere: <span class="hi">auto-sprint</span> is the flagship; <span class="hi">hello-world</span> is the 30-line authoring contract. Drop a dir in <span class="tag">~/.apra-fleet/workflows/</span> and it runs</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;background:#fff7ed;border:1.5px solid #f97316;border-radius:12px;padding:12px 18px;text-align:left">
+      <div style="min-width:200px;font-weight:700;color:#c2410c;font-size:14px">📡 Observability</div>
+      <div style="font-size:13px;color:#374151;line-height:1.5">Live localhost dashboard per run: activity tree grouped by phase, beads task panel, SSE-pushed updates, token/cost stats &mdash; plus durable journals and sprint logs on disk</div>
+    </div>
+  </div>
+  <p style="font-size:13px;color:#64748b;margin-top:14px;font-weight:500">Read bottom-up: substrate &rarr; shared state &rarr; portable runtime &rarr; workflow definitions &rarr; observability.</p>
+</div>
+
+<!-- 4: evolution -->
+<div class="slide">
+  <div class="label">Evolution</div>
+  <h2>Three generations of the same sprint loop</h2>
+  <p class="sub" style="margin-bottom:12px">The loop never changed: plan &rarr; develop &rarr; test &rarr; harvest, reviewer-gated, beads as truth. What changed is who drives it, and where it can run.</p>
+  <div class="card-row" style="max-width:1020px">
+    <div class="card" style="width:300px;border-top:3px solid #3b82f6">
+      <div class="icon">🧑‍✈️</div>
+      <div class="ctitle" style="color:#1d4ed8;font-size:15px">Gen 1 &mdash; /pm</div>
+      <div class="cdesc" style="margin-bottom:8px"><em>Human-driven orchestration</em></div>
+      <div class="cdesc">You drive eight roles &mdash; planner, plan-reviewer, doer, reviewer, deployer, integ-test-runner, ci-watcher, harvester &mdash; as subagents, cycle by cycle. Powerful, but manual: one provider, one project, and the orchestrator must stay attentive the whole time.</div>
+    </div>
+    <div class="card" style="width:300px;border-top:3px solid #8b5cf6">
+      <div class="icon">🤖</div>
+      <div class="ctitle" style="color:#6d28d9;font-size:15px">Gen 2 &mdash; /auto-sprint <span style="font-weight:400;color:#64748b">(Claude)</span></div>
+      <div class="cdesc" style="margin-bottom:8px"><em>Scripted, unattended</em></div>
+      <div class="cdesc">The same loop as a workflow script: no human per cycle, arg preflight, retry/repair, phase resume, concurrency lock, cost quotes and accounting. The big leap to unattended automation &mdash; but still living inside Claude Code, still assuming Claude-flavored members.</div>
+    </div>
+    <div class="card" style="width:300px;border-top:3px solid #10b981">
+      <div class="icon">🚀</div>
+      <div class="ctitle" style="color:#065f46;font-size:15px">Gen 3 &mdash; auto-sprint <span style="font-weight:400;color:#64748b">(all-provider)</span></div>
+      <div class="cdesc" style="margin-bottom:8px"><em>Portable, fleet-wide</em></div>
+      <div class="cdesc">The identical sprint as a standalone CLI on a portable SEA binary &mdash; outside any IDE. Dispatches to ANY fleet member (claude, agy, opencode, ...), embeds in CI, and is itself addressable via <span class="hi">execute_command</span> &mdash; so agents and automation can launch sprints, not just a human at a terminal.</div>
+    </div>
+  </div>
+  <p style="font-size:14px;color:#64748b;margin-top:16px;font-weight:500">Gen 3 is what removes the "how many CLI windows can I keep open" ceiling.</p>
+</div>
+
+<!-- 5: inputs vs /pm -->
 <div class="slide">
   <div class="label">Inputs vs /pm</div>
   <h2>You provide three things. auto-sprint does the rest.</h2>
@@ -197,7 +292,7 @@
 
 <!-- 3 -->
 <div class="slide">
-  <div class="label">Real run &middot; <a href="https://github.com/Apra-Labs/fleet-e2e-toy" target="_blank" style="color:#6366f1;text-decoration:none">fleet-e2e-toy</a></div>
+  <div class="label">Gen 2, real run &middot; <a href="https://github.com/Apra-Labs/fleet-e2e-toy" target="_blank" style="color:#6366f1;text-decoration:none">fleet-e2e-toy</a></div>
   <h2>A CLI toolkit, built autonomously</h2>
   <p class="sub" style="margin-bottom:20px">Build a CLI that talks to a REST API &mdash; list, read, create, update, delete, --version, --help, and input validation.</p>
   <div class="stat-row">
@@ -211,7 +306,7 @@
 
 <!-- 4 -->
 <div class="slide">
-  <div class="label">Architecture</div>
+  <div class="label">The sprint loop</div>
   <h2>Four phases, fully autonomous</h2>
   <p class="sub">The same agents you know from /pm &mdash; planner, doer, reviewer &mdash; plus plan-reviewer, deployer, integ-test-runner, and harvester. auto-sprint wires them together and loops until the goal is met.</p>
   <div class="phase-flow">
@@ -425,20 +520,106 @@
   </div>
 </div>
 
-<!-- 10 -->
+<!-- 10: gen 3 engine -->
 <div class="slide">
-  <div class="label">Outputs</div>
-  <h2>A complete sprint package</h2>
-  <ul class="blist" style="max-width:680px">
-    <li><div class="dot"></div>A <span class="hi">GitHub PR</span> with summary, cost analysis, and open items carried forward</li>
-    <li><div class="dot"></div><span class="tag">sprint-logs/feat-four-p1-v2-20260623_013802.jsonl</span> &mdash; 42 timestamped log entries</li>
-    <li><div class="dot"></div>Updated <span class="hi">calibration.json</span> &mdash; historical averages blended in for next sprint</li>
-    <li><div class="dot"></div>Beads: <span class="hi">13 tasks and epics closed</span>, 4 deferred to backlog</li>
-    <li><div class="dot"></div>A <span class="hi">CHANGELOG entry</span> with estimate vs actual cost table</li>
-  </ul>
+  <div class="label">Gen 3 &middot; The engine</div>
+  <h2>Same sprint, no cage: a portable workflow runtime</h2>
+  <p class="sub" style="margin-bottom:10px">Everything Gen 2 proved &mdash; extracted out of Claude Code into <span class="hi">apra-fleet-workflow</span> (engine, journal, pricing, vetting, viewer) driven by the <span class="hi">apra-fleet-se</span> CLI, shipping as a single-executable (SEA) binary with Node 22 embedded.</p>
+  <div class="card-row" style="max-width:1000px">
+    <div class="card" style="width:225px">
+      <div class="icon">🧳</div>
+      <div class="ctitle">One binary, zero installs</div>
+      <div class="cdesc">The SEA binary embeds its own runtime. Workflows land as real files under <code>~/.apra-fleet/workflows/</code> &mdash; ops boxes and CI runners need no Node, no npm.</div>
+    </div>
+    <div class="card" style="width:225px">
+      <div class="icon">🔌</div>
+      <div class="ctitle">Any provider</div>
+      <div class="cdesc">Dispatch goes through fleet's <code>execute_prompt</code>, which resolves each member's CLI &mdash; claude, agy, codex, copilot, gemini, opencode. Tiers are named <code>cheap/standard/premium</code>, not model IDs.</div>
+    </div>
+    <div class="card" style="width:225px">
+      <div class="icon">🧩</div>
+      <div class="ctitle">Any workflow</div>
+      <div class="cdesc">auto-sprint is just the flagship. A <code>workflow.json</code> + entry script is the whole authoring contract &mdash; <strong>hello-world</strong> is ~30 lines. Drop a dir in, it runs.</div>
+    </div>
+    <div class="card" style="width:225px">
+      <div class="icon">🛰️</div>
+      <div class="ctitle">Agents launch agents</div>
+      <div class="cdesc">The CLI is addressable via fleet's own <code>execute_command</code> / <code>execute_prompt</code> MCP tools &mdash; so an orchestrator agent, a cron job, or CI can start a sprint. No terminal, no human.</div>
+    </div>
+  </div>
+  <p style="font-size:13px;color:#64748b;margin-top:16px;font-weight:500">Landing now as <span style="font-family:'SF Mono',monospace">apra-fleet workflow &lt;name&gt;</span> on the shipped binary &mdash; the SEA import spike is proven green on Linux, macOS, and Windows.</p>
 </div>
 
-<!-- 11 -->
+<!-- 11: gen 3 in action -->
+<div class="slide">
+  <div class="label">Gen 3 &middot; In action this week</div>
+  <h2>A real epic, running on the new engine</h2>
+  <p class="sub" style="margin-bottom:10px">The all-provider auto-sprint is currently driving <span class="hi">apra-fleet-7pm</span> &mdash; a 14-task epic that builds the SEA workflow-runner subsystem. The new engine is building its own next release.</p>
+  <div style="text-align:left;max-width:900px;width:100%;margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#374151;margin-bottom:6px">One command, any member</div>
+    <code style="font-size:13px;display:block">node packages/apra-fleet-se/bin/cli.mjs -i apra-fleet-7pm -m pm-doer-std -b feat/workflow-runner -B main --goal P1/P2 --budget 50 --viewer-port 8090</code>
+  </div>
+  <div class="card-row" style="max-width:960px">
+    <div class="card" style="width:215px">
+      <div class="icon">🌲</div>
+      <div class="ctitle">Activity tree</div>
+      <div class="cdesc">Every agent dispatch, command, and transform &mdash; grouped by cycle and phase, expandable down to raw input/output.</div>
+    </div>
+    <div class="card" style="width:215px">
+      <div class="icon">🧬</div>
+      <div class="ctitle">Beads panel</div>
+      <div class="cdesc">The live task DAG beside the run &mdash; what's ready, in progress, closed, reopened. State you can audit, not chat scrollback.</div>
+    </div>
+    <div class="card" style="width:215px">
+      <div class="icon">🟢</div>
+      <div class="ctitle">LIVE via SSE</div>
+      <div class="cdesc">Server-sent events push updates as they happen &mdash; watch a sprint from a browser tab while it runs unattended.</div>
+    </div>
+    <div class="card" style="width:215px">
+      <div class="icon">💰</div>
+      <div class="ctitle">Cost + tokens</div>
+      <div class="cdesc">Per-activity token counts and run-level spend stats, with a <code>--budget</code> USD ceiling enforced by the runner.</div>
+    </div>
+  </div>
+  <p style="font-size:13px;color:#64748b;margin-top:14px;font-weight:500">Guardrails carried over from Gen 2: member topology preflight, branch-ensure on every member, budget and cycle ceilings.</p>
+</div>
+
+<!-- 12: positioning -->
+<div class="slide">
+  <div class="label">Why this wins</div>
+  <h2>From one AI pair-programmer to an agentic workforce</h2>
+  <p class="sub" style="margin-bottom:12px">Single-IDE agent tools structurally cannot do this &mdash; their orchestration dies with the chat window. Ours is a runtime with durable state.</p>
+  <div class="card-row" style="max-width:1020px">
+    <div class="card" style="width:190px;border-top:3px solid #3b82f6">
+      <div class="icon">🔓</div>
+      <div class="ctitle">Portable</div>
+      <div class="cdesc">Any LLM provider, any OS, local or remote. Swap a member's backend; the workflow doesn't change.</div>
+    </div>
+    <div class="card" style="width:190px;border-top:3px solid #8b5cf6">
+      <div class="icon">📦</div>
+      <div class="ctitle">Embeddable</div>
+      <div class="cdesc">One SEA binary, no runtime install. Runs from a terminal, a CI job, or another agent's tool call.</div>
+    </div>
+    <div class="card" style="width:190px;border-top:3px solid #10b981">
+      <div class="icon">📈</div>
+      <div class="ctitle">Scalable</div>
+      <div class="cdesc">Fleet-wide dispatch instead of one human's terminal &mdash; the path to hundreds of concurrent workflows.</div>
+    </div>
+    <div class="card" style="width:190px;border-top:3px solid #f97316">
+      <div class="icon">👁️</div>
+      <div class="ctitle">Observable</div>
+      <div class="cdesc">Live dashboards per run; beads DAG + journals as auditable state, not ephemeral chat context.</div>
+    </div>
+    <div class="card" style="width:190px;border-top:3px solid #0891b2">
+      <div class="icon">🪨</div>
+      <div class="ctitle">Durable</div>
+      <div class="cdesc">Git + beads survive process restarts, machine changes, and provider swaps. Kill a run; resume the sprint.</div>
+    </div>
+  </div>
+  <p style="font-size:15px;color:#1e293b;margin-top:18px;font-weight:600;max-width:820px">The pitch in one line: <span style="color:#2563eb">"one developer, one AI session"</span> becomes <span style="color:#059669">"an organization running hundreds of concurrent, auditable, multi-provider agentic workflows."</span></p>
+</div>
+
+<!-- 13 -->
 <div class="slide">
   <div class="label">Getting started</div>
   <h2>If you've used /pm, you already know the pieces</h2>
@@ -528,7 +709,7 @@
 <nav class="nav">
   <button id="prev" onclick="go(-1)" disabled>&larr;</button>
   <div class="dots" id="dots"></div>
-  <span class="counter" id="counter">1 / 13</span>
+  <span class="counter" id="counter">1 / 18</span>
   <button id="next" onclick="go(1)">&rarr;</button>
 </nav>
 
