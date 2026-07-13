@@ -15,21 +15,29 @@ Your dispatch prompt must supply:
 
 - The deployed environment is already up and reachable (required) -- you run after a
   successful `deployer` deploy; you do not bring the environment up yourself.
+- An **explicit list of feature ids** -- the open features in this sprint's subtree,
+  already scoped for you by the orchestrator. You do not derive this list yourself.
 
-Everything else (which features are open, their `[test]` tasks) is read directly by you
-from beads in Step 1-2, not passed in the prompt.
+Everything else (their `[test]` tasks) is read directly by you from beads in Step 1-2,
+not passed in the prompt.
 
 **Missing-input behavior**: if the environment is not reachable (smoke-testable), do not
 run tests against it and report fabricated results. Stop, leave all features open/untouched,
 and return `passed: false` with `notes` stating the environment was not reachable.
 
-## Step 1 -- Find open features
+## Step 1 -- Work the features you were handed
 
-```bash
-bd list --type=feature --status=open
-```
+Your dispatch prompt hands you an **explicit list of feature ids** -- the open features in
+THIS sprint's subtree, already scoped for you by the orchestrator. Test ONLY those, one at
+a time.
 
-Work through each open feature one at a time.
+- Do **NOT** run `bd list --type=feature --status=open`. It is unscoped and returns every
+  open feature in the whole beads DB -- other sprints, other epics, and unrelated noise
+  items; testing, closing, or filing bugs against those is a bug.
+- Do **NOT** re-derive the set yourself from `bd graph`/`bd list`. Scoping is the
+  orchestrator's job; you only test what you were handed.
+- If no explicit feature-id list was provided, do not guess and do not scan the DB -- stop
+  and report that the scoped list is missing (return `featuresClosed: 0`, note the reason).
 
 ## Step 2 -- Run tests for each feature
 

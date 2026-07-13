@@ -54,11 +54,19 @@ function requiredPermissions(cfg) {
 // Additional permissions specific to Claude Code (not understood by other providers).
 function claudeOnlyPermissions() {
   return [
-    'Bash(*)',               // required for fire-and-forget log/feedback writes in the develop loop
-    'Skill(auto-sprint)',    // suppress "Use skill 'auto-sprint'?" prompt
-    'Workflow(auto-sprint)', // suppress "Run a dynamic workflow?" prompt
+    'Bash(*)',                    // required for fire-and-forget log/feedback writes in the develop loop
+    'Skill(auto-sprint)',         // suppress "Use skill 'auto-sprint'?" prompt
+    'Skill(auto-sprint-args)',    // suppress prompt for the args-contract helper skill
+    'Workflow(auto-sprint)',      // suppress "Run a dynamic workflow?" prompt
   ];
 }
+
+// The auto-sprint-args helper skill is Claude-only (the /auto-sprint workflow it
+// documents is a Claude Code native dynamic workflow). Source lives in the repo's
+// .claude/skills/; installed into <configDir>/skills/auto-sprint-args/.
+const ARGS_SKILL_NAME = 'auto-sprint-args';
+function argsSkillSrc(root) { return path.join(root, '.claude', 'skills', ARGS_SKILL_NAME); }
+function argsSkillDest(cfg) { return path.join(cfg.configDir, 'skills', ARGS_SKILL_NAME); }
 
 // --- opencode agent transform -----------------------------------------------
 // OpenCode uses a different agent frontmatter schema:
@@ -172,7 +180,7 @@ function uninstall(cfg, agentsSrc) {
   const agentsDest = path.join(cfg.configDir, 'agents');
   const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
-  const removed = { skill: false, agents: [], schemas: false, permsRemoved: 0, workflow: false };
+  const removed = { skill: false, agents: [], schemas: false, permsRemoved: 0, workflow: false, argsSkill: false };
 
   // 1) skill directory
   if (fs.existsSync(skillDest)) {
@@ -222,6 +230,12 @@ function uninstall(cfg, agentsSrc) {
       fs.rmSync(workflowDest, { force: true });
       removed.workflow = true;
     }
+    // 5) claude-only: the auto-sprint-args helper skill directory
+    const skillDest = argsSkillDest(cfg);
+    if (fs.existsSync(skillDest)) {
+      fs.rmSync(skillDest, { recursive: true, force: true });
+      removed.argsSkill = true;
+    }
   }
 
   return removed;
@@ -265,7 +279,8 @@ What it installs:
                               agents/planner.md Output schema)
   <configDir>/settings.json   minimal permissions (merged, non-destructive)
   <configDir>/skills/pm/cost.js  pure JS cost functions extracted from auto-sprint.js (all providers)
-  ~/.claude/workflows/auto-sprint.js  native /auto-sprint workflow (claude only)
+  ~/.claude/workflows/auto-sprint.js       native /auto-sprint workflow (claude only)
+  <configDir>/skills/auto-sprint-args/     args-contract helper skill (claude only)
 
 Agents:
   planner            reads open sprint goals, creates feature+task DAG in beads
@@ -301,6 +316,7 @@ function main() {
     console.log(`  permissions  -> ${removed.permsRemoved} removed`);
     if (cfg.name === 'Claude') {
       console.log(`  workflow     -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);
+      console.log(`  args skill   -> ${removed.argsSkill ? 'removed' : 'not found (nothing to do)'}`);
     }
     console.log('');
     console.log('pm uninstalled.');
@@ -429,6 +445,18 @@ function main() {
       ensureDir(path.dirname(claudeDest));
       fs.copyFileSync(workflowSrc, claudeDest);
       console.log(`        workflow -> ${claudeDest}  (Claude Code native)`);
+
+      // auto-sprint-args helper skill (claude-only): copy the whole skill dir so the
+      // orchestrator can consult the correct arg contract before launching /auto-sprint.
+      const src = argsSkillSrc(ROOT);
+      if (fs.existsSync(src)) {
+        const dest = argsSkillDest(cfg);
+        clearDir(dest);
+        copyDir(src, dest);
+        console.log(`        skill    -> ${dest}  (${ARGS_SKILL_NAME})`);
+      } else {
+        console.error(`  [!] ${ARGS_SKILL_NAME} skill source not found at ${src} -- skill not installed`);
+      }
     }
   }
 
@@ -465,4 +493,4 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   main();
 }
 
-export { claudeOnlyPermissions, requiredPermissions, mergePermissions, uninstall, providerConfig };
+export { claudeOnlyPermissions, requiredPermissions, mergePermissions, uninstall, providerConfig, argsSkillSrc, argsSkillDest, ARGS_SKILL_NAME };

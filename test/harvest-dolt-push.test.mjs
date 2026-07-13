@@ -79,3 +79,19 @@ test('dolt push step appears AFTER beads-export-cleanup in the source', () => {
   assert.ok(doltPushIdx > beadsExportIdx,
     '"dolt-push" label must appear after "beads-export-cleanup" label in the source');
 });
+
+// ---- skip_dolt_push arg gates the dolt push ----------------------------------
+
+test('dolt push dispatch is gated by !opts.skip_dolt_push', () => {
+  const doltPushIdx = src.indexOf("label: 'dolt-push'");
+  assert.ok(doltPushIdx >= 0, '"dolt-push" dispatch must exist');
+  // The guard opens before the dispatch; the (long) prompt sits between it and the label.
+  const region = src.slice(Math.max(0, doltPushIdx - 1000), doltPushIdx);
+  assert.match(region, /if\s*\(\s*!\s*opts\.skip_dolt_push\s*\)/,
+    'the dolt-push dispatch must be wrapped in `if (!opts.skip_dolt_push)` so it can be skipped');
+});
+
+test('skip_dolt_push logs a skip message instead of pushing', () => {
+  assert.match(src, /Skipping dolt push as requested by opts\.skip_dolt_push/,
+    'the else branch must log that dolt push was skipped');
+});

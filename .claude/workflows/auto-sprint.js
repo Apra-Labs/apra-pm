@@ -1,16 +1,6 @@
 export const meta = {
   name: 'auto-sprint',
-  description: `Multi-cycle sprint workflow: plan -> develop -> test -> harvest.
-
-args must be a JSON object (not a string) with these fields:
-  issues       REQUIRED. Array of beads issue IDs (sprint roots), e.g. ["BD-1","BD-2"].
-  branch       REQUIRED. Sprint branch name, e.g. "feat/auth". Created if it does not exist.
-  goal         Optional. Exit when no open issues at or above this priority. "P1" | "P1/P2" | "P1/P2/P3". Default: "P1/P2".
-  max_cycles   Optional. Hard cycle ceiling. Default: 5.
-  base_branch  Optional. PR target branch. Default: "main".
-  requirementsFile  Optional. Path to an additional context file for the planner.
-
-Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`,
+  description: `Multi-cycle sprint workflow: plan -> develop -> test -> harvest. Pass args as a JSON object with required "issues" (array of beads IDs) and "branch"; invoke the auto-sprint-args skill for the full argument contract.`,
   phases: [
     { title: 'Plan' },
     { title: 'Develop' },
@@ -42,6 +32,7 @@ Minimal invocation example: { "issues": ["BD-7"], "branch": "feat/my-feature" }`
 //   max_cycles       -- hard ceiling on sprint cycles                  (default: 5)
 //   requirementsFile -- optional context file for the planner          (default: none)
 //   base_branch      -- PR target                                      (default: "main")
+//   skip_dolt_push   -- skip the Harvest "bd dolt push" when true        (default: false)
 
 // NOTE: the arg-parsing block below is intentionally duplicated from lib/parse-sprint-args.mjs,
 // which exists only for unit testing (workflow scripts cannot import arbitrary files).
@@ -68,6 +59,16 @@ if (args) {
     const ids = String(args).split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
     opts = { issues: ids };
   }
+}
+
+// PREFLIGHT (arg schema) -- validate the parsed opts against the invocation contract
+// before doing any work. Fails loudly with the expected shape so a malformed launch
+// (e.g. args passed as a JSON string, missing issues, bad goal) is caught immediately
+// rather than surfacing as a confusing mid-run error. See docs/auto-sprint-ruggedization.md.
+const _argCheck = validateSprintArgs(opts, args);
+if (!_argCheck.ok) {
+  log(`ERROR: ${_argCheck.error} -- ${_argCheck.detail}`);
+  return { error: _argCheck.error };
 }
 
 let branch             = opts.branch           || '';   // empty = auto-detect in setup; reassigned after setup resolves
@@ -275,6 +276,19 @@ const DEFAULT_CALIBRATION = {
     cheap:    40000,
     standard: 80000,
     premium:  150000,
+  },
+  context_limits: {
+    _doc: 'Doer context-window budgeting. Used to predict whether a ready-task streak will fit in the model usable context before autocompact/session-limit truncation, and to split streaks proactively. Keyed by tier.',
+    model_context_tokens: { _doc: 'Total context window per tier (tokens).', cheap: 200000, standard: 200000, premium: 200000 },
+    autocompact_headroom_fraction: 0.72, // usable fraction of the window before autocompact/limit risk (observed doer failures at ~100K+ on Sonnet -> stay well under)
+    base_prompt_tokens: 9000,            // fixed doer system+task prompt + repo orientation
+    per_task_input_overhead_tokens: 3500,// per-task prompt + accumulated tool-result growth
+    output_expansion_factor: 1.0,        // multiplier on estimated output tokens counted against context
+  },
+  parallelism: {
+    _doc: 'Doer concurrency (EXPERIMENTAL -- default 1 = proven serial path). When max_doers>1, independent bd-ready tasks are fanned out into isolated git worktrees, worked by one doer each in parallel, then merged back into the sprint branch sequentially with a conflict->re-queue fallback. This path is NOT yet default: on s10 (win32) it hit cross-platform worktree fragility (worktree "already exists" leak on re-create, and worktree-branch merges landing nothing -> 0 commits). Until that is hardened and validated on all runner OSes, max_doers stays 1 so sprints use the pre-parallelism serial path (which commits doers directly on the sprint branch, no worktree/merge machinery). Set >1 to opt into the experimental parallel path. Width is also capped by the harness concurrency limit and the number of ready tasks. Project-agnostic: no assumptions about language, layout, or task shape.',
+    max_doers: 1,
+    worktree_root: '.auto-sprint/wt',
   },
   historical: {
     _doc: 'Written by harvester after each sprint. Contains actual per-role output token averages from sprint-log JSONL files. Used by auto-sprint.js computeSprintQuote() to improve future estimates. Do not edit manually.',
@@ -912,6 +926,206 @@ function truncateStreakToCeiling(streakIds, bucketById, calibration, tier) {
   return kept;
 }
 
+// validateSprintArgs: validates the parsed sprint opts. Returns { ok:true } or
+// { ok:false, error, detail }. Pure -- no I/O. Enforces the invocation contract
+// in meta.description.
+function validateSprintArgs(opts, rawArgs) {
+  const expected = 'Expected a JSON OBJECT, e.g. {"issues":["BD-7"],"branch":"feat/x"}';
+  if (opts == null || typeof opts !== 'object' || Array.isArray(opts)) {
+    return { ok: false, error: 'invalid args: not an object', detail: `${expected}. Received: ${JSON.stringify(rawArgs)}` };
+  }
+  const issues = opts.issues;
+  if (!Array.isArray(issues) || issues.length === 0) {
+    return { ok: false, error: 'invalid args: issues', detail: `"issues" must be a non-empty array of beads IDs. ${expected}. Received: ${JSON.stringify(rawArgs)}` };
+  }
+  if (!issues.every(s => typeof s === 'string' && s.trim().length > 0)) {
+    return { ok: false, error: 'invalid args: issues entries', detail: 'every entry in "issues" must be a non-empty string beads ID' };
+  }
+  if (opts.branch != null && (typeof opts.branch !== 'string' || opts.branch.trim() === '')) {
+    return { ok: false, error: 'invalid args: branch', detail: '"branch" must be a non-empty string when provided' };
+  }
+  if (opts.goal != null && !['P1', 'P1/P2', 'P1/P2/P3'].includes(opts.goal)) {
+    return { ok: false, error: 'invalid args: goal', detail: '"goal" must be one of "P1" | "P1/P2" | "P1/P2/P3"' };
+  }
+  if (opts.max_cycles != null && !(Number.isInteger(Number(opts.max_cycles)) && Number(opts.max_cycles) > 0)) {
+    return { ok: false, error: 'invalid args: max_cycles', detail: '"max_cycles" must be a positive integer' };
+  }
+  if (opts.base_branch != null && (typeof opts.base_branch !== 'string' || opts.base_branch.trim() === '')) {
+    return { ok: false, error: 'invalid args: base_branch', detail: '"base_branch" must be a non-empty string when provided' };
+  }
+  if (opts.skip_dolt_push != null && typeof opts.skip_dolt_push !== 'boolean') {
+    return { ok: false, error: 'invalid args: skip_dolt_push', detail: '"skip_dolt_push" must be a boolean when provided' };
+  }
+  return { ok: true };
+}
+
+// assertCalibrationComplete: walks every numeric calibration path the cost/context
+// arithmetic reads and heals any missing or NaN value from defaults. Operates on a
+// deep-enough clone so neither the input calibration nor the defaults are mutated.
+// Returns { calibration, healed } where healed is an array of human-readable strings
+// describing each healed path (caller WARNs per entry).
+function assertCalibrationComplete(calibration, defaults) {
+  const getPath = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  const setPath = (obj, path, val) => {
+    const keys = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k = keys[i];
+      // Clone-on-write so the caller's nested objects are never mutated.
+      cur[k] = Object.assign({}, cur[k]);
+      cur = cur[k];
+    }
+    cur[keys[keys.length - 1]] = val;
+  };
+  const requiredPaths = [
+    'model_prices_per_1m_output_tokens.cheap',
+    'model_prices_per_1m_output_tokens.standard',
+    'model_prices_per_1m_output_tokens.premium',
+    'complexity_buckets.S.doer_tokens',
+    'complexity_buckets.M.doer_tokens',
+    'complexity_buckets.L.doer_tokens',
+    'reviewer_ratio.value',
+    'cycle_assumptions.optimistic',
+    'cycle_assumptions.expected',
+    'cycle_assumptions.pessimistic',
+    'fixed_overhead_tokens.setup',
+    'fixed_overhead_tokens.planner',
+    'fixed_overhead_tokens.plan_reviewer',
+    'fixed_overhead_tokens.harvester',
+    'fixed_overhead_tokens.ci_watcher',
+    'fixed_overhead_tokens.log_flush_per_cycle',
+    'input_cost_multiplier.value',
+    'outlier_thresholds.notable_pct',
+    'outlier_thresholds.outlier_pct',
+    'outlier_thresholds.calibration_failure_pct',
+    'doer_token_ceiling.cheap',
+    'doer_token_ceiling.standard',
+    'doer_token_ceiling.premium',
+    'context_limits.model_context_tokens.cheap',
+    'context_limits.model_context_tokens.standard',
+    'context_limits.model_context_tokens.premium',
+    'context_limits.autocompact_headroom_fraction',
+    'context_limits.base_prompt_tokens',
+    'context_limits.per_task_input_overhead_tokens',
+    'parallelism.max_doers',
+  ];
+  const healed = [];
+  const result = Object.assign({}, calibration);
+  for (const path of requiredPaths) {
+    const val = getPath(result, path);
+    if (typeof val !== 'number' || Number.isNaN(val)) {
+      const def = getPath(defaults, path);
+      setPath(result, path, def);
+      healed.push(`calibration field ${path} missing/invalid -- healed to ${def}`);
+    }
+  }
+  return { calibration: result, healed };
+}
+
+// checkModelAliasStaleness: returns "tier=id" strings for any TIER_TO_MODEL value
+// that looks like a dated pin (ends in -YYYYMMDD). Caller WARNs if non-empty.
+function checkModelAliasStaleness(tierToModel) {
+  const stale = [];
+  for (const [tier, id] of Object.entries(tierToModel || {})) {
+    if (typeof id === 'string' && /-\d{8}$/.test(id)) stale.push(`${tier}=${id}`);
+  }
+  return stale; // caller WARNs if non-empty
+}
+
+// fitStreakToContext: predicts whether an in-order streak fits the doer's usable
+// context and returns the longest prefix that does. Mirrors truncateStreakToCeiling's
+// per-task token estimate. Returns { fittedIds, estContext, available, wouldOverflow }.
+function fitStreakToContext(streakIds, bucketById, calibration, tier) {
+  const cl = (calibration && calibration.context_limits) || {};
+  const windowTokens = (cl.model_context_tokens || {})[tier];
+  const frac = cl.autocompact_headroom_fraction;
+  if (typeof windowTokens !== 'number' || typeof frac !== 'number' || windowTokens <= 0) {
+    return { fittedIds: streakIds.slice(), estContext: 0, available: Infinity, wouldOverflow: false };
+  }
+  const available = windowTokens * frac;
+  const base = cl.base_prompt_tokens || 0;
+  const perTask = cl.per_task_input_overhead_tokens || 0;
+  const outMul = cl.output_expansion_factor != null ? cl.output_expansion_factor : 1.0;
+  // reuse the same output estimate as truncateStreakToCeiling
+  const hist = (calibration && calibration.historical) || {};
+  const buckets = (calibration && calibration.complexity_buckets) || {};
+  const histToks = hist.bucket_avg_tokens || {};
+  const estOut = id => {
+    const b = bucketById ? bucketById[id] : undefined;
+    const h = histToks[b];
+    if (hist.sprints_sampled >= 1 && h != null) return Math.round(h);
+    const def = buckets[b] || buckets.M || { doer_tokens: 0 };
+    return def.doer_tokens || 0;
+  };
+  let sum = base, kept = [];
+  for (const id of streakIds) {
+    const cost = perTask + estOut(id) * outMul;
+    if (kept.length > 0 && sum + cost > available) break; // always keep >=1
+    kept.push(id); sum += cost;
+  }
+  return { fittedIds: kept, estContext: sum, available, wouldOverflow: kept.length < streakIds.length };
+}
+
+// Build a per-phase wall-clock report from ordered epoch stamps captured at phase boundaries.
+// Each stamp is {name, epoch}; the elapsed time attributed to a phase is the delta from its
+// stamp to the NEXT stamp. Turns "the sprint is slow" into "develop was N of M seconds", which
+// is what proves the parallel-doer win with numbers. Pure -- no Date/clock access of its own.
+function buildPhaseTiming(stamps) {
+  const clean = (stamps || []).filter(s => s && s.name && Number.isFinite(s.epoch));
+  const rows = [];
+  for (let i = 0; i < clean.length - 1; i++) {
+    const seconds = Math.max(0, clean[i + 1].epoch - clean[i].epoch);
+    rows.push({ phase: clean[i].name, seconds });
+  }
+  const totalSeconds = rows.reduce((a, r) => a + r.seconds, 0);
+  const fmt = s => {
+    const m = Math.floor(s / 60), sec = s % 60;
+    return m > 0 ? `${m}m${sec.toString().padStart(2, '0')}s` : `${sec}s`;
+  };
+  const pct = s => (totalSeconds > 0 ? Math.round((s / totalSeconds) * 100) : 0);
+  const text = rows.length
+    ? rows.map(r => `  ${r.phase}: ${fmt(r.seconds)} (${pct(r.seconds)}%)`).join('\n') +
+      `\n  TOTAL: ${fmt(totalSeconds)}`
+    : '  (no phase timing captured)';
+  return { rows, totalSeconds, text };
+}
+
+// Flatten ready streaks into a deterministic, de-duplicated task batch for parallel doers.
+// Each parallel doer works exactly ONE task in its own worktree, so the per-doer context is a
+// single task (no context-fit split needed here -- that split only matters when one doer chains
+// multiple tasks, which the parallel path does not do). We simply take up to `maxDoers` ready
+// tasks. Ordering is by task id so the later sequential merge is reproducible run-to-run.
+// Leftover ready tasks are returned as `deferred` and resurface on the next getReadyStreaks call.
+// Pure -- no I/O, no Date/Math.random.
+function computeDoerBatch(streaks, maxDoers) {
+  const seen = {};
+  const tasks = [];
+  for (const s of (streaks || [])) {
+    const model = s && s.model;
+    for (const id of ((s && s.ids) || [])) {
+      if (id != null && !seen[id]) { seen[id] = true; tasks.push({ id, model }); }
+    }
+  }
+  tasks.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const cap = Math.max(1, maxDoers || 1);
+  const width = Math.min(cap, tasks.length || 1);
+  return { batch: tasks.slice(0, width), deferred: tasks.slice(width), width, readyCount: tasks.length };
+}
+
+// Derive the filesystem-safe worktree path and temp branch name for a parallel doer's task.
+// The temp branch is namespaced by the sprint branch so concurrent sprints never collide.
+// Both are sanitized so arbitrary bd ids / branch names (any of hundreds of projects) are safe
+// as path and ref components. Pure.
+function worktreeNamesFor(sprintBranch, taskId, worktreeRoot) {
+  const safeId = String(taskId).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const safeBranch = String(sprintBranch).replace(/[^a-zA-Z0-9._-]/g, '-');
+  const root = (worktreeRoot || '.auto-sprint/wt').replace(/\/+$/g, '');
+  return {
+    path: `${root}/${safeId}`,
+    branch: `auto-sprint/wt/${safeBranch}/${safeId}`,
+  };
+}
+
 // PURE_FUNCTIONS_END
 
 // ------------------------------------------------------------- role schemas
@@ -1062,10 +1276,52 @@ async function parallel(tasks) {
   return Promise.all(tasks);
 }
 
+// bd may prepend a `warning: ...` line to its --json stdout (notably bd 1.1.0's
+// "warning: beads.role not configured (GH#2950)"). In a normal terminal that goes to
+// stderr, but inside the workflow's sandboxed shell-dispatch subagents stderr merges
+// into the captured stdout, so the warning is glued in front of the JSON. Feeding that
+// straight into JSON.parse() throws; the surrounding catch then silently returns an empty
+// ready/blocker set, and Develop concludes "no ready tasks" (spurious deadlock / skipped
+// develop with zero doers -- the s10 win32 failure). BD_JSON extracts just the JSON span
+// (first '['/'{' to the last ']'/'}') so parsing tolerates leading/trailing non-JSON noise.
+// Deliberately backslash-free (indexOf/lastIndexOf on literal bracket chars) so it survives
+// the backtick -> shell(double-quote) -> node round-trip with no escaping. Interpolated as
+// `JSON.parse(${BD_JSON})` inside the node -e extractor strings below.
+const BD_JSON = `(()=>{const s=d.indexOf('['),o=d.indexOf('{');let a=s<0?o:(o<0?s:Math.min(s,o));const e=Math.max(d.lastIndexOf(']'),d.lastIndexOf('}'));return a>=0&&e>=a?d.slice(a,e+1):d;})()`;
+
+// bdSubtreeSnippet: returns a JS snippet (embedded in a `node -e` extractor, AFTER
+// `const g = JSON.parse(...)`) that builds `subtree` = the STRICT sprint inventory for
+// `rootsArr`: the roots, their dotted-ID descendants (beads' <parent>.<n> hierarchy), and
+// anything transitively reachable from that set via DependsOn edges.
+//
+// Why: `bd graph --json <root>` returns the ENTIRE connected component -- including the
+// root's PARENT and therefore its SIBLINGS. The old extractors scraped every `.issues[].id`
+// out of that blob, so unrelated sibling tasks (e.g. gh-toy-4ef, a sibling of gh-toy-mi2
+// under a shared parent) leaked into the active sprint inventory, making getReadyStreaks
+// dispatch work outside the charter and the final reviewer hallucinate "missing" tasks.
+//
+// The ID-prefix pass is the wiring-independent core: beads always expresses parent->child
+// as `<parent>.<n>` IDs, so `id === r || id.startsWith(r + '.')` captures exactly a root's
+// descendants and never its siblings -- and it works even when DependsOn edges are absent
+// (verified: apra-pm's own DB has all-null DependsOn), so the subtree is never
+// under-inclusive (no false "no ready tasks" deadlock). The DependsOn BFS then additionally
+// pulls in explicitly-wired prerequisites. Backslash-free for the backtick->shell->node
+// round-trip. Reads `g` (the parsed graph) and `subtree` (a Set) from the enclosing scope.
+function bdSubtreeSnippet(rootsArr) {
+  const rootsLit = (rootsArr || []).join(' ');
+  return `const _roots='${rootsLit}'.split(' ').filter(Boolean);` +
+    `const subtree=new Set(_roots);` +
+    `const _nodes=(g.layout&&g.layout.Nodes)||{};` +
+    `const _ids=new Set([...Object.keys(_nodes),...((g.issues||[]).map(i=>i.id))]);` +
+    `for(const _id of _ids){for(const _r of _roots){if(_id===_r||_id.indexOf(_r+'.')===0){subtree.add(_id);break;}}}` +
+    `const _q=Array.from(subtree);` +
+    `while(_q.length>0){const _c=_q.shift();const _n=_nodes[_c];if(_n&&_n.DependsOn){for(const _dd of _n.DependsOn){if(!subtree.has(_dd)){subtree.add(_dd);_q.push(_dd);}}}}`;
+}
+
 async function countBeadsBlockers(thr, roots) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
-  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-  const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(roots)}console.log(Array.from(subtree).join(' '))}catch{}"`;
+  const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
   const cmds = [
     ...roots.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --status=open --json | ${openExtract}`,
@@ -1076,8 +1332,8 @@ async function countBeadsBlockers(thr, roots) {
 
 async function getReadyStreaks(rootIds) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
-  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-  const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
+  const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
+  const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
   const cmds = [
     ...rootIds.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --ready --type=task --json | ${taskExtract}`,
@@ -1101,14 +1357,78 @@ async function commitFeedback(repo, branch, notes, role, label, phase) {
 
 async function checkCycleState(rootIds) {
   // Extract only the fields needed for planDone check to keep output small.
-  const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const issues=(JSON.parse(d).issues||[]);console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
-  const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
+  const graphExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}const issues=(g.issues||[]).filter(i=>subtree.has(i.id));console.log(JSON.stringify(issues.map(i=>({id:i.id,t:i.issue_type,s:i.status,d:!!(i.description||'').trim()}))))}catch{console.log('[]')}"`;
+  const ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).map(i=>i.id).join(' '))}catch{}"`;
   const cmds = [
     ...rootIds.map(id => `bd graph --json ${id} | ${graphExtract}`),
     `bd list --status=in_progress --type=task --json | ${ipExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'cycle-state', phase: 'Plan' });
   return parseCycleState(r?.outputs, rootIds.length);
+}
+
+// getSprintOpenFeatures: the OPEN features that live in THIS sprint's subtree, as [{id,title}].
+// The integration tester must test/close only these -- NOT `bd list --type=feature --status=open`,
+// which returns every open feature in the whole beads DB (a populated DB has features from other
+// epics/sprints, so an unscoped list makes the tester test, close, or file bugs against unrelated
+// work). Uses the same strict bdSubtreeSnippet inventory as the develop-phase extractors, so
+// siblings/parents dragged in by `bd graph`'s connected component are excluded.
+async function getSprintOpenFeatures(rootIds) {
+  const featExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}const ff=(g.issues||[]).filter(i=>subtree.has(i.id)&&i.issue_type==='feature'&&i.status!=='closed');console.log(JSON.stringify(ff.map(i=>({id:i.id,title:(i.title||'').slice(0,120)}))))}catch{console.log('[]')}"`;
+  const cmds = rootIds.map(id => `bd graph --json ${id} | ${featExtract}`);
+  const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'integ-scope', phase: 'Test' });
+  const byId = new Map();
+  for (const out of (r?.outputs || [])) {
+    try { for (const f of JSON.parse(out)) if (f && f.id) byId.set(f.id, f); } catch {}
+  }
+  return Array.from(byId.values());
+}
+
+// ---- sprint state file: concurrency lock + phase checkpoint / resume ----
+// A branch-keyed JSON file under sprint-logs/.state/ records the last good phase and
+// cycle so a crashed run resumes forward instead of restarting. Its mtime doubles as a
+// liveness lock: a file touched within SPRINT_STATE_TTL_S means another run is active.
+// All time/mtime math is done inside node subprocesses (Date.now() is banned in the
+// workflow script body, but fine inside `node -e`). Cross-platform: pure node fs, no stat(1).
+const SPRINT_STATE_TTL_S = 3600;
+function sprintStateFileFor(branchName) {
+  const safe = branchName.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'default';
+  return `sprint-logs/.state/${safe}.state.json`;
+}
+// Returns { exists, ageS, state }. ageS is the file's age in seconds (null when absent).
+async function readSprintState(stateFileRel, label) {
+  const script =
+    `node -e "` +
+    `const fs=require('fs');const p='${stateFileRel}';` +
+    `if(!fs.existsSync(p)){console.log(JSON.stringify({exists:false,ageS:null,state:null}));process.exit(0);}` +
+    `const age=Math.floor((Date.now()-fs.statSync(p).mtimeMs)/1000);` +
+    `let st=null;try{st=JSON.parse(fs.readFileSync(p,'utf8'));}catch(e){}` +
+    `console.log(JSON.stringify({exists:true,ageS:age,state:st}));` +
+    `"`;
+  const r = await dispatchShell([script], { model: MODEL_HAIKU, label: label || 'state-read', phase: 'Plan' });
+  try { return JSON.parse((r?.outputs?.[0] || '').trim()); } catch { return { exists: false, ageS: null, state: null }; }
+}
+// Writes the state object as JSON. The JSON is hex-encoded in the workflow body (which
+// has ONLY standard JS built-ins -- NOT Buffer/process/require) and decoded inside the
+// node subprocess (which has them). Hex is quote-safe so it embeds cleanly in the
+// double-quoted `node -e` string; charCodeAt/fromCharCode round-trip UTF-16 exactly.
+// Rewriting the file updates its mtime = lock heartbeat.
+async function writeSprintState(stateFileRel, stateObj, phaseName, label) {
+  const json = JSON.stringify(stateObj);
+  let hex = '';
+  for (let i = 0; i < json.length; i++) hex += json.charCodeAt(i).toString(16).padStart(4, '0');
+  const script =
+    `node -e "` +
+    `const fs=require('fs'),path=require('path');const p='${stateFileRel}';const h='${hex}';` +
+    `let s='';for(let i=0;i<h.length;i+=4)s+=String.fromCharCode(parseInt(h.substr(i,4),16));` +
+    `fs.mkdirSync(path.dirname(p),{recursive:true});` +
+    `fs.writeFileSync(p,s);` +
+    `console.log('WROTE');` +
+    `"`;
+  await dispatchShell([script], { model: MODEL_HAIKU, label: label || 'state-write', phase: phaseName || 'Plan' });
+}
+async function clearSprintState(stateFileRel, label) {
+  await dispatchShell([`rm -f "${stateFileRel}"`], { model: MODEL_HAIKU, label: label || 'state-clear', phase: 'Harvest' });
 }
 
 // ------------------------------------------------------------------ STATE
@@ -1126,22 +1446,67 @@ phase('Plan');
 // Phase 1: deterministic setup steps -- run via dispatchShell so each command
 // executes exactly once with a bounded turn cap (no LLM looping on simple checks).
 //
-// Fixed output indices (always 6 elements regardless of branch/no-branch):
+// Fixed output indices (always 8 elements regardless of branch/no-branch):
 //   0: repo root (git rev-parse --show-toplevel)
-//   1: branch checkout result (or "no-op" when branch was not specified)
-//   2: confirmed branch name (git rev-parse --abbrev-ref HEAD)
-//   3: startedAt timestamp (date +%Y%m%d_%H%M%S)
-//   4: deploy.md exists (YES/NO)
-//   5: integ-test-playbook.md exists (YES/NO)
+//   1: fetch result (FETCHED / FETCH_FAIL) -- run BEFORE checkout so a new sprint
+//      branch is cut from the freshest origin/<base_branch> (guards stale-main branching).
+//      Also (side effect, no stdout) registers the sprint scaffolding dirs in the repo's
+//      local git exclude so the state file and any worktree roots never leak into a doer's
+//      `git add -A` / the committed sprint-logs/ tree and pollute the PR diff.
+//   2: branch checkout result (or "no-op" when branch was not specified)
+//   3: confirmed branch name (git rev-parse --abbrev-ref HEAD)
+//   4: startedAt timestamp (date +%Y%m%d_%H%M%S)
+//   5: deploy.md exists (YES/NO)
+//   6: integ-test-playbook.md exists (YES/NO)
+//   7: newline-joined list of permission entries declared in deploy.md /
+//      integ-test-playbook.md's "## Permissions" sections that are NOT yet
+//      in .claude/settings.json's permissions.allow (empty string if none --
+//      computed deterministically here so Step 5's prompt to the agent never
+//      has to say "you may grant yourself permissions" when there's nothing
+//      to grant).
 const setupShellCmds = [
   `git rev-parse --show-toplevel`,
+  // Fetch first so branch creation below can base a NEW sprint branch on the freshest
+  // origin/<base_branch> instead of a possibly-stale local HEAD (stale-main guard).
+  // The `{ ... }` block writes only to a file (no stdout), so the slot's stdout stays
+  // exactly FETCHED/FETCH_FAIL. Uses `git rev-parse --git-path` so it resolves correctly
+  // in linked worktrees too; the trailing `;` guarantees the fetch runs regardless.
+  `EXCL=$(git rev-parse --git-path info/exclude 2>/dev/null); ` +
+    `if [ -n "$EXCL" ]; then mkdir -p "$(dirname "$EXCL")"; ` +
+    `grep -qxF 'sprint-logs/.state/' "$EXCL" 2>/dev/null || ` +
+    `printf 'sprint-logs/.state/\\n.auto-sprint/\\n' >> "$EXCL"; fi; ` +
+    `git fetch origin --quiet && echo FETCHED || echo FETCH_FAIL`,
   branch
-    ? `git checkout "${branch}" 2>/dev/null || git checkout --track "origin/${branch}" 2>/dev/null || git checkout -b "${branch}"`
+    // Prefer the freshest origin/<base_branch> as the new branch's base (stale-main guard), but if
+    // that ref is absent (repo's default is e.g. master, or fetch failed) fall back to creating from
+    // local HEAD -- never leave HEAD on the wrong branch, which would silently run the sprint there.
+    ? `git checkout "${branch}" 2>/dev/null || git checkout --track "origin/${branch}" 2>/dev/null || git checkout -b "${branch}" "origin/${base_branch}" 2>/dev/null || git checkout -b "${branch}"`
     : `echo "no-op"`,
   `git rev-parse --abbrev-ref HEAD`,
   `date +%Y%m%d_%H%M%S`,
   `test -f deploy.md && echo YES || echo NO`,
   `test -f integ-test-playbook.md && echo YES || echo NO`,
+  `node -e "` +
+    `const fs=require('fs');` +
+    `function permsFrom(file){` +
+      `if(!fs.existsSync(file))return[];` +
+      `const text=fs.readFileSync(file,'utf8');` +
+      `const idx=text.indexOf('## Permissions');` +
+      `if(idx<0)return[];` +
+      `const rest=text.slice(idx);` +
+      `const next=rest.indexOf('\\n## ',3);` +
+      `const section=next>=0?rest.slice(0,next):rest;` +
+      // Any Tool(...) entry (not just flush-left Bash): allow a leading bullet/indent and inner ')'.
+      `return(section.match(/^[ \\t]*[-*]?[ \\t]*[A-Za-z_][A-Za-z0-9_]*\\([^\\n]*\\)[ \\t]*$/gm)||[])` +
+        `.map(s=>s.replace(/^[ \\t]*[-*]?[ \\t]*/,'').trim());` +
+    `}` +
+    `const declared=[...new Set([...permsFrom('deploy.md'),...permsFrom('integ-test-playbook.md')])];` +
+    `let existing=[];` +
+    `try{existing=(JSON.parse(fs.readFileSync('.claude/settings.json','utf8')).permissions||{}).allow||[];}catch(e){}` +
+    `const missing=declared.filter(p=>!existing.includes(p));` +
+    // Newline-delimited, not comma: a permission pattern may contain commas, e.g. Bash(cmd --a=1,2).
+    `console.log(missing.join(String.fromCharCode(10)));` +
+  `"`,
 ];
 const setupShell = await dispatchShell(setupShellCmds, {
   model: MODEL_HAIKU, label: 'setup-shell', phase: 'Plan',
@@ -1149,18 +1514,36 @@ const setupShell = await dispatchShell(setupShellCmds, {
 
 const _outs = setupShell && Array.isArray(setupShell.outputs) ? setupShell.outputs : [];
 const _detectedRepo    = (_outs[0] || '').trim();
-const _detectedBranch  = (_outs[2] || '').trim();
-const _detectedTs      = (_outs[3] || '').trim();
-const _deployExists    = (_outs[4] || '').trim() === 'YES';
-const _playbookExists  = (_outs[5] || '').trim() === 'YES';
+const _fetchResult     = (_outs[1] || '').trim();
+const _detectedBranch  = (_outs[3] || '').trim();
+const _detectedTs      = (_outs[4] || '').trim();
+const _deployExists    = (_outs[5] || '').trim() === 'YES';
+const _playbookExists  = (_outs[6] || '').trim() === 'YES';
+const _missingPerms    = (_outs[7] || '').trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
 if (!_detectedRepo || !_detectedBranch) {
   log('ERROR: setup-shell failed -- could not detect repo root or branch');
   return { error: 'setup failed' };
 }
 
+// PREFLIGHT (latest HEAD) -- a failed fetch means we cannot guarantee the sprint branch
+// was cut from the latest origin/<base_branch>; there is no safe silent fallback. Hard-fail.
+if (_fetchResult === 'FETCH_FAIL') {
+  log(`ERROR: preflight -- git fetch origin failed; cannot guarantee branch is off latest ${base_branch}. Check network/remote and retry.`);
+  return { error: 'preflight: git fetch failed' };
+}
+
 // Phase 2: free-form setup steps (permissions merge, calibration, transcript dir).
 // maxTurns: 20 backstop prevents a runaway agent from stalling indefinitely.
+const step5Block = _missingPerms.length > 0
+  ? (
+    `Step 5: Add these specific missing permission entries to .claude/settings.json's\n` +
+    `  permissions.allow array (create the file/array if absent). Add ONLY these entries,\n` +
+    `  nothing else, and do not remove or modify anything else in the file:\n` +
+    _missingPerms.map(p => `    - ${p}`).join('\n') + `\n\n`
+  )
+  : `Step 5: Already satisfied -- every permission declared in deploy.md / integ-test-playbook.md\n` +
+    `  is already present in .claude/settings.json. Do nothing for this step.\n\n`;
 const setup = await dispatch(
   `Sprint workspace setup (Phase 2 -- deterministic steps already done).\n\n` +
   `Pre-known values (do NOT re-run these commands):\n` +
@@ -1171,15 +1554,7 @@ const setup = await dispatch(
   `  playbookExists: ${_playbookExists}\n\n` +
   `Your job is only Steps 5-7 below. Return ALL fields in your schema response,\n` +
   `including the pre-known values above.\n\n` +
-  `Step 5: Merge deploy permissions into .claude/settings.json.\n` +
-  `  For each of deploy.md and integ-test-playbook.md that exists:\n` +
-  `    a. Read the file and extract lines under the "## Permissions" section\n` +
-  `       (stop at the next ## heading). Each non-empty line is a permission entry\n` +
-  `       such as "Bash(docker *)" or "Bash(npm run *)".\n` +
-  `    b. Read .claude/settings.json (create it as {} if absent).\n` +
-  `    c. For each extracted permission not already in permissions.allow, add it.\n` +
-  `    d. Write the updated .claude/settings.json back.\n` +
-  `  If neither file has a ## Permissions section, skip this step.\n\n` +
+  step5Block +
   `Step 6: Load or bootstrap calibration data.\n` +
   `  If sprint-logs/calibration.json exists in the repo root:\n` +
   `    Run: cat sprint-logs/calibration.json\n` +
@@ -1215,12 +1590,55 @@ if (branch === 'main' || branch === 'master') {
   return { error: 'protected branch' };
 }
 
+// ---- CONCURRENCY LOCK + RESUME (branch-keyed state file) ----
+// Placed after setup so the confirmed branch name keys the state file. Every branch below
+// is a NO-OP when no state file exists -- a fresh run follows the exact prior code path.
+const stateFileRel = sprintStateFileFor(branch);
+const _priorState = await readSprintState(stateFileRel, 'state-read');
+let effectiveStartedAt = setup.startedAt;
+if (_priorState.exists && typeof _priorState.ageS === 'number' && _priorState.ageS < SPRINT_STATE_TTL_S) {
+  log(`ERROR: preflight -- another auto-sprint run appears active on branch "${branch}" (state updated ${_priorState.ageS}s ago < ${SPRINT_STATE_TTL_S}s TTL). Refusing to start a second overlapping run (guards concurrent-checkout corruption). If the prior run truly crashed, wait out the TTL or delete ${repo}/${stateFileRel}.`);
+  return { error: 'preflight: sprint already running' };
+}
+if (_priorState.exists && _priorState.state) {
+  const _rc = Number(_priorState.state.cycle) || 0;
+  if (_priorState.state.startedAt) effectiveStartedAt = _priorState.state.startedAt;  // keep log-file continuity
+  if (_rc > 0) cycleCount = _rc - 1;  // re-enter the loop at the crashed cycle (loop increments first)
+  log(`RESUME: stale state for "${branch}" (age ${_priorState.ageS}s, lastGoodPhase=${_priorState.state.phase || '?'}, cycle=${_rc}) -- resuming from cycle ${_rc} instead of restarting. Beads state (durable closed tasks, planDone detection, orphan reset) drives intra-cycle correctness; no junk issues are re-created.`);
+}
+
+// ---- PREFLIGHT: beads schema gate (bd remote-migrate block, #4259) ----
+// If the repo's beads DB is remote-backed and its Dolt schema is BEHIND the installed bd, bd
+// refuses to auto-migrate the shared remote (independent migration forks the schema), and every
+// write the sprint makes -- planner `bd create`, doer `bd update --claim` / `bd close` -- is
+// blocked. Left undetected the sprint dies mid-run with a cryptic error and no PR. A read-only
+// `bd ready` still surfaces the gate as a warning, so probe for it up front and fail fast with
+// the exact fix. Signature strings are matched loosely so this survives minor bd wording changes;
+// a repo with no bd DB yet ("no beads database found") does NOT match, so there is no false abort.
+const _bdGate = await dispatchShell(
+  [`bd ready 2>&1 | grep -iE "refusing to auto-apply|writes are blocked|remote-backed database|forks the schema|BD_ALLOW_REMOTE_MIGRATE" | head -3 || true`],
+  { model: MODEL_HAIKU, label: 'preflight-bd-schema', phase: 'Plan' }
+);
+const _gateHit = ((_bdGate && _bdGate.outputs && _bdGate.outputs[0]) || '').trim();
+if (_gateHit) {
+  log(
+    `ERROR: preflight -- BEADS SCHEMA GATE. This repo's bd database is remote-backed and its Dolt ` +
+    `schema is behind the installed bd, so bd is blocking all writes to avoid forking the shared ` +
+    `remote (#4259). A sprint cannot claim/close/create issues in this state. Detected: ` +
+    `"${_gateHit.slice(0, 180)}". FIX (single-owner DB, the common case): on the OLD bd run ` +
+    `\`bd dolt push\`; install the new bd; then \`BD_ALLOW_REMOTE_MIGRATE=1 bd migrate && bd dolt push\`. ` +
+    `Full runbook (incl. the multi-clone case): docs/beads-1.1.0-migration.md. Aborting before any ` +
+    `work so no partial sprint or PR is produced.`
+  );
+  return { error: 'preflight: beads schema gate (remote-migrate block)' };
+}
+
 // Parse calibration from the raw string the setup agent returned verbatim.
 // Deep-merge with DEFAULT_CALIBRATION so any missing/new field always has a valid value.
 // historical gets its own merge because it accumulates real sprint history on top of the zeros.
 let _parsedCalib = {};
 try { _parsedCalib = JSON.parse(setup.calibrationRaw || '{}'); } catch {}
-const calibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
+const _mergedCalibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
   historical:                      Object.assign({}, DEFAULT_CALIBRATION.historical,                      _parsedCalib.historical                      || {}),
   complexity_buckets:              _parsedCalib.complexity_buckets              || DEFAULT_CALIBRATION.complexity_buckets,
   model_prices_per_1m_output_tokens: _parsedCalib.model_prices_per_1m_output_tokens || DEFAULT_CALIBRATION.model_prices_per_1m_output_tokens,
@@ -1231,7 +1649,17 @@ const calibration = Object.assign({}, DEFAULT_CALIBRATION, _parsedCalib, {
   input_cost_multiplier:           _parsedCalib.input_cost_multiplier           || DEFAULT_CALIBRATION.input_cost_multiplier,
   outlier_thresholds:              _parsedCalib.outlier_thresholds              || DEFAULT_CALIBRATION.outlier_thresholds,
   doer_token_ceiling:              _parsedCalib.doer_token_ceiling              || DEFAULT_CALIBRATION.doer_token_ceiling,
+  context_limits:                  _parsedCalib.context_limits                  || DEFAULT_CALIBRATION.context_limits,
 });
+// PREFLIGHT (calibration completeness) -- heal any numeric field the cost/context
+// arithmetic reads that is missing or NaN on a stale on-disk calibration.json, filling
+// from DEFAULT_CALIBRATION so estimation never produces NaN. Auto-heal + WARN.
+const _calCheck = assertCalibrationComplete(_mergedCalibration, DEFAULT_CALIBRATION);
+const calibration = _calCheck.calibration;
+for (const h of _calCheck.healed) log(`WARN: ${h}`);
+// PREFLIGHT (model-alias staleness) -- warn if any tier maps to a dated model pin.
+const _staleAliases = checkModelAliasStaleness(TIER_TO_MODEL);
+if (_staleAliases.length) log(`WARN: TIER_TO_MODEL has dated-looking model IDs (prefer bare aliases): ${_staleAliases.join(', ')}`);
 // Sync output prices from loaded calibration so dispatchLedger uses correct rates.
 Object.assign(OUTPUT_PRICE_PER_M, calibration.model_prices_per_1m_output_tokens || {});
 
@@ -1248,11 +1676,25 @@ let taskAssignments = [];
 // Timestamp (yyyymmdd_hhmmss) is captured by the setup agent so it stays
 // stable across workflow resumes (Date.now() is banned in workflow scripts).
 const sprintLogBranch = branch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '') || 'default';
-const sprintLogFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.jsonl`;
+const sprintLogFile = `sprint-logs/${sprintLogBranch}-${effectiveStartedAt}.jsonl`;
 const integTestEnabled = setup.deployMdExists && setup.playbookExists;
 // startedAt "20260622_020952" -> ISO "2026-06-22T02:09:52Z" (pure string, no Date.now())
-const sprintTs = setup.startedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
+const sprintTs = effectiveStartedAt.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6Z');
 let flushedCount = 0;  // how many dispatchLedger entries have been appended to sprintLogFile
+
+// Snapshot of the resolved setup, reused when writing phase checkpoints below.
+// NOTE: deliberately does NOT carry calibrationRaw. The checkpoint is hex-encoded onto a
+// `node -e` command line (writeSprintState); the full calibration JSON there pushed the
+// command length toward the Windows ~32KB limit for no benefit -- resume never reads it
+// (it re-derives calibration from the fresh Phase-2 setup, see _parsedCalib). Keep this
+// object small: every field here is embedded in every heartbeat write.
+const _stateBase = {
+  schema_version: 1, branch, base_branch, rootIds,
+  startedAt: effectiveStartedAt, repo, transcriptDir: setup.transcriptDir || '',
+  integTestEnabled,
+};
+// Acquire the lock / record the initial checkpoint now that setup has resolved.
+await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Plan', planApproved: false }, 'Plan', 'state-init');
 
 // Appends only the NEW (not yet flushed) ledger entries to the sprint log file.
 // Fire-and-forget: does NOT await, and does NOT commit or push.
@@ -1295,7 +1737,7 @@ log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles
 {
   const metaLine = JSON.stringify({
     ts: sprintTs, type: 'meta',
-    branch, startedAt: setup.startedAt,
+    branch, startedAt: effectiveStartedAt,
     roots: rootIds, goal,
     transcriptDir: setup.transcriptDir || '',
   });
@@ -1308,7 +1750,7 @@ log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles
     `Line:\n${metaLine}\n\n` +
     `Step 3: Commit and push:\n` +
     `  git -C "${repo}" add sprint-logs/\n` +
-    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-meta ${branch} ${setup.startedAt}"\n` +
+    `  git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: sprint-meta ${branch} ${effectiveStartedAt}"\n` +
     `  git -C "${repo}" push origin ${branch}\n` +
     `Do not modify any other file. Return "OK" when done.`,
     { model: MODEL_HAIKU, label: 'sprint-meta', phase: 'Plan' }
@@ -1316,6 +1758,27 @@ log(`Sprint goals: ${rootSummary} | Goal: ${goal} (P<=${threshold}) | Max cycles
 }
 
 // ------------------------------------------------------------------ SPRINT LOOP
+
+// Per-phase wall-clock instrumentation. We cannot self-time (Date.now() is banned in the
+// workflow sandbox), so we capture a cheap `date +%s` epoch at each phase boundary and diff
+// them at the end (buildPhaseTiming). This is what turns "the sprint is slow" into a concrete
+// per-phase breakdown and lets the parallel-doer win be shown in numbers.
+const phaseTimeline = [];
+// Arrow (not `async function`) on purpose: appendNewEntries is asserted to be the LAST top-level
+// `async function` in this file by test/sprint-log-flush.test.mjs, which slices to the next one.
+const stamp = async (name) => {
+  // Attribute the timing probe to the phase it actually marks (name prefix), not always 'Plan',
+  // so the per-phase cost ledger buildPhaseTiming reports stays trustworthy.
+  const _ph = /^plan/.test(name) ? 'Plan'
+    : /^develop/.test(name) ? 'Develop'
+    : /^test/.test(name) ? 'Test'
+    : /^(harvest|end)/.test(name) ? 'Harvest'
+    : 'Plan';
+  const r = await dispatchShell(['date +%s'], { model: MODEL_HAIKU, label: `stamp-${name}`, phase: _ph });
+  const epoch = parseInt(((r?.outputs?.[0]) || '').trim(), 10);
+  if (Number.isFinite(epoch)) phaseTimeline.push({ name, epoch });
+};
+await stamp('setup');
 
 while (cycleCount < maxCycles) {
   cycleCount++;
@@ -1325,6 +1788,7 @@ while (cycleCount < maxCycles) {
   // ---------------------------------------------------------------- RESUME CHECK + CYCLE CHECKPOINT
 
   phase('Plan');
+  await stamp(`plan-c${cycleCount}`);
 
   // Write per-cycle checkpoint entry and check cycle state in parallel -- no data dependency.
   // The cycle-checkpoint uses type='cycle-start' (distinct from the one-time type='meta' above).
@@ -1343,6 +1807,10 @@ while (cycleCount < maxCycles) {
     checkCycleState(rootIds),
   ]);
   log(`Cycle state: planDone=${cycleState.planDone} inProgress=[${cycleState.inProgressIds.join(', ')}]`);
+
+  // Phase checkpoint (heartbeat): record cycle + phase so a crash resumes here, and refresh
+  // the state-file mtime so the concurrency lock stays live through this cycle.
+  await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Plan', planApproved: cycleState.planDone }, 'Plan', `state-c${cycleCount}-plan`);
 
   // Reset any tasks orphaned in_progress from a previous crashed run.
   if (cycleState.inProgressIds.length > 0) {
@@ -1507,20 +1975,70 @@ while (cycleCount < maxCycles) {
   // ---------------------------------------------------------------- DEVELOP
 
   phase('Develop');
+  await stamp(`develop-c${cycleCount}`);
+
+  // Phase checkpoint (heartbeat): plan approved for this cycle, entering develop.
+  await writeSprintState(stateFileRel, { ..._stateBase, cycle: cycleCount, phase: 'Develop', planApproved: true }, 'Develop', `state-c${cycleCount}-dev`);
 
   const MAX_DEV_ITER = 20;
   let devIter = 0;
   let devFeedback = '';
+  // Parallel-doer config (per-cycle, read once from healed calibration).
+  const _par = (calibration && calibration.parallelism) || {};
+  const maxDoers = Math.max(1, _par.max_doers || 1);
+  const worktreeRoot = _par.worktree_root || '.auto-sprint/wt';
+  // If a parallel iteration makes zero progress (every doer failed or every merge conflicted),
+  // force the NEXT iteration onto the serial path. Serial doers commit directly on the sprint
+  // branch (no cross-branch merge -> no merge conflict), guaranteeing forward progress and
+  // preventing a same-batch conflict loop. Cleared as soon as a serial iteration runs.
+  let forceSerialIter = false;
 
   while (devIter < MAX_DEV_ITER) {
+    // Lock heartbeat: refresh the state file's mtime every develop iteration. A single
+    // develop iteration (a doer batch + review) can exceed SPRINT_STATE_TTL_S; without a
+    // heartbeat here the lock would "expire" mid-run and a second invocation on the same
+    // branch could start concurrently and corrupt the shared checkout. Cheap relative to
+    // the per-iteration doer/review dispatches.
+    await writeSprintState(
+      stateFileRel,
+      { ..._stateBase, cycle: cycleCount, phase: 'Develop', planApproved: true },
+      'Develop',
+      `heartbeat-c${cycleCount}-i${devIter}`,
+    );
     const streakResult = await getReadyStreaks(rootIds);
     if (streakResult.totalCount === 0) {
+      // Distinguish genuine completion from a dependency DEADLOCK. If the sprint subtree
+      // still has open issues at/above the goal threshold but NONE are ready on the FIRST
+      // develop iteration, surface it loudly with the blocked leaves (the "'missing issues'
+      // when all P1s are dependency-blocked" failure). We HARD-ABORT only on the very first
+      // cycle -- when the initial plan produced no workable leaves at all -- because that is
+      // the true unrecoverable case. In LATER cycles a ready==0 first iteration is usually
+      // just "this cycle's leaves are done"; the multi-cycle re-plan / exit-check self-heals
+      // it, so we log the diagnostic but fall through instead of aborting (aborting there
+      // would skip harvest and lose the PR for work already completed).
+      if (devIter === 0) {
+        const _open = await countBeadsBlockers(threshold, rootIds);
+        if (_open.count > 0) {
+          const _diag = await dispatchShell(
+            [`bd list --status=open --type=task --json | node -e "const d=require('fs').readFileSync(0,'utf8');try{const a=JSON.parse(${BD_JSON}).map(i=>({id:i.id,blocked_by:i.blocked_by||i.dependencies||[]}));process.stdout.write(JSON.stringify(a).slice(0,1200))}catch{process.stdout.write('[]')}"`],
+            { model: MODEL_HAIKU, label: `deadlock-diag-c${cycleCount}`, phase: 'Develop' }
+          );
+          const _diagText = `${_open.count} open issue(s) at/above ${goal} in the sprint subtree but NONE are ready on the first develop iteration. The dependency DAG may be blocked (commonly backwards or parent-child edges; note 'bd dep cycles' MISSES parent-child deadlocks -- inspect blocked_by on leaf tasks). Open leaf tasks + blocked_by: ${(_diag?.outputs?.[0] || '[]').trim()}`;
+          if (cycleCount === 1) {
+            log(`ERROR: DEADLOCK (cycle 1 plan produced no workable leaves) -- ${_diagText}`);
+            abortReason = 'deadlock: plan produced open issues but no ready leaves';
+            break;
+          }
+          // Later cycle: diagnostic only -- let the normal exit-check / next-cycle re-plan decide.
+          log(`WARN: no ready leaves at cycle ${cycleCount} start though open issues remain -- ${_diagText}`);
+        }
+      }
       log(`No ready tasks -- develop phase complete (${devIter} iterations)`);
       break;
     }
     log(`Dev iter ${devIter} c${cycleCount}: ${streakResult.totalCount} ready task(s) across ${streakResult.streaks.length} model streak(s)`);
 
-    // Dispatch one doer per model streak; collect all worked task IDs for the reviewer.
+    // Dispatch doers; collect all worked task IDs for the reviewer.
     const workedIds = [];
     let streakAbort = false;
     let doerNullReset = false;
@@ -1529,13 +2047,142 @@ while (cycleCount < maxCycles) {
     // last approved plan-review's taskAssignments held at workflow scope.
     const bucketById = Object.fromEntries((taskAssignments || []).map(t => [t.id, t.bucket]));
 
-    for (const streak of streakResult.streaks) {
+    // ---- PARALLEL DOERS (worktree fan-out) ---------------------------------
+    // When more than one bd-ready task exists and calibration allows width>1, work independent
+    // ready tasks CONCURRENTLY, each in its own git worktree + temp branch off the current sprint
+    // HEAD, then merge back sequentially with a conflict->re-queue fallback. bd-ready tasks are
+    // DAG-independent, so the only risk is physical file overlap, handled at merge time. All beads
+    // state transitions stay centralized here (doers run NO bd) so concurrent worktrees never
+    // diverge the .beads DB. Degrades to the serial path for width==1, all-worktree-create-fail,
+    // or after a zero-progress parallel iteration (forceSerialIter). Never worse than serial.
+    const _effMaxDoers = forceSerialIter ? 1 : maxDoers;
+    forceSerialIter = false;
+    const _plan = computeDoerBatch(streakResult.streaks, _effMaxDoers);
+    let parallelHandled = false;
+
+    if (_plan.width > 1) {
+      const wt = _plan.batch.map(t => ({ ...t, ...worktreeNamesFor(branch, t.id, worktreeRoot) }));
+      log(`Parallel develop: ${_plan.width} doer(s) in worktrees (${labelTaskIds(wt.map(w => w.id))})${_plan.deferred.length ? `; ${_plan.deferred.length} task(s) deferred to next iter` : ''}`);
+
+      // Create one worktree + temp branch per task (idempotent: clear any leaked prior worktree/
+      // branch first). Each command echoes OK/FAIL <id> so we only work tasks that isolated cleanly.
+      const createRes = await dispatchShell(
+        wt.map(w =>
+          `git -C "${repo}" worktree remove --force "${repo}/${w.path}" 2>/dev/null; ` +
+          `git -C "${repo}" branch -D "${w.branch}" 2>/dev/null; ` +
+          `git -C "${repo}" worktree add -b "${w.branch}" "${repo}/${w.path}" "${branch}" >/dev/null 2>&1 && echo "OK ${w.id}" || echo "FAIL ${w.id}"`
+        ),
+        { model: MODEL_HAIKU, label: `wt-create-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: wt.length + 2 }
+      );
+      const createdOk = {};
+      (createRes?.outputs || []).forEach((o, i) => { if (/\bOK\b/.test(o || '')) createdOk[wt[i].id] = true; });
+      const okWt = wt.filter(w => createdOk[w.id]);
+
+      if (okWt.length === 0) {
+        log(`All worktree creations failed -- falling back to serial for this iteration`);
+        await dispatchShell(
+          wt.flatMap(w => [
+            `git -C "${repo}" worktree remove --force "${repo}/${w.path}" 2>/dev/null || true`,
+            `git -C "${repo}" branch -D "${w.branch}" 2>/dev/null || true`,
+          ]),
+          { model: MODEL_HAIKU, label: `wt-cleanup-c${cycleCount}-i${devIter}`, phase: 'Develop' }
+        );
+      } else {
+        parallelHandled = true;
+        // Read each task's spec centrally (human-readable bd show) and INLINE it into the doer
+        // prompt, so doers need no bd access inside their worktree (worktree .beads DB may be
+        // stale or absent across the hundreds of projects this runs on).
+        const specRes = await dispatchShell(
+          okWt.map(w => `bd show ${w.id}`),
+          { model: MODEL_HAIKU, label: `spec-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: okWt.length + 2 }
+        );
+        const specById = {};
+        okWt.forEach((w, i) => { specById[w.id] = ((specRes?.outputs?.[i]) || '').trim().slice(0, 4000); });
+
+        // Claim the batch centrally (single source of truth), then fan out doers.
+        await dispatchShell(okWt.map(w => `bd update ${w.id} --claim`),
+          { model: MODEL_HAIKU, label: `claim-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: okWt.length + 2 });
+
+        const doerOutcomes = await parallel(okWt.map(w =>
+          dispatch(
+            `You are working in an ISOLATED git worktree -- other doers run concurrently in their own worktrees.\n` +
+            `Worktree path: ${repo}/${w.path}  (cd into it first; you are on temp branch ${w.branch})\n` +
+            `Work ONLY task ${w.id}. Do NOT work any other task.\n\n` +
+            (devFeedback
+              ? `Reviewer feedback from the previous iteration (also in feedback.md at ${repo}):\n${devFeedback}\nAddress every relevant finding.\n\n`
+              : '') +
+            `Task ${w.id} specification:\n${specById[w.id] || '(spec unavailable; infer from the repo and task id)'}\n\n` +
+            `Steps:\n` +
+            `  - Implement the work for task ${w.id} INSIDE ${repo}/${w.path} ONLY (code, tests, config -- whatever it requires).\n` +
+            `  - Commit in that worktree: git -C "${repo}/${w.path}" add -A && git -C "${repo}/${w.path}" -c user.name='doer' -c user.email='doer@pm.local' commit -m "impl ${w.id}"\n` +
+            `  - Do NOT run ANY bd command. Do NOT touch the main checkout or the ${branch} branch. Do NOT push. Do NOT run git merge.\n` +
+            `Return status "VERIFY". Always return VERIFY -- never anything else.`,
+            { model: w.model, label: `doer-c${cycleCount}-i${devIter}-${w.id}`, phase: 'Develop', schema: DOER_STATUS_SCHEMA,
+              agentType: 'doer', context: `task ${w.id} (worktree)` }
+          ).then(r => ({ w, ok: !!r && r.status === 'VERIFY' })).catch(() => ({ w, ok: false }))
+        ));
+
+        // Merge sequentially into the sprint branch (deterministic id order from computeDoerBatch).
+        // Clean merge -> close centrally; conflict or doer failure -> re-queue centrally.
+        for (const { w, ok } of doerOutcomes) {
+          if (!ok) {
+            await dispatchShell([`bd update ${w.id} --status=open`],
+              { model: MODEL_HAIKU, label: `requeue-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' });
+            log(`Doer failed for ${w.id} -- re-queued (will retry next iter)`);
+            continue;
+          }
+          const mres = await dispatchShell(
+            [`git -C "${repo}" merge --no-ff --no-edit "${w.branch}" >/dev/null 2>&1 && echo MERGE_OK || (git -C "${repo}" merge --abort >/dev/null 2>&1; echo MERGE_CONFLICT)`],
+            { model: MODEL_HAIKU, label: `merge-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' }
+          );
+          if (/MERGE_OK/.test((mres?.outputs?.[0]) || '')) {
+            await dispatchShell([`bd close ${w.id}`],
+              { model: MODEL_HAIKU, label: `close-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' });
+            workedIds.push(w.id);
+            log(`Merged + closed ${w.id}`);
+          } else {
+            await dispatchShell([`bd update ${w.id} --status=open`],
+              { model: MODEL_HAIKU, label: `conflict-${w.id}-c${cycleCount}-i${devIter}`, phase: 'Develop' });
+            log(`Merge conflict for ${w.id} -- aborted, re-queued (degrades to serial as ready count drops)`);
+          }
+        }
+
+        // Always tear down every worktree + temp branch (even failed ones): a leak must never
+        // block the next iteration's idempotent create.
+        await dispatchShell(
+          wt.flatMap(w => [
+            `git -C "${repo}" worktree remove --force "${repo}/${w.path}" 2>/dev/null || true`,
+            `git -C "${repo}" branch -D "${w.branch}" 2>/dev/null || true`,
+          ]),
+          { model: MODEL_HAIKU, label: `wt-cleanup-c${cycleCount}-i${devIter}`, phase: 'Develop', maxTurns: wt.length * 2 + 2 }
+        );
+
+        // Zero progress this parallel iteration (all failed / all conflicted): force serial next
+        // iteration so a same-batch conflict cannot loop forever.
+        if (workedIds.length === 0) {
+          forceSerialIter = true;
+          log(`Parallel iteration closed 0 tasks -- forcing serial path next iteration to guarantee progress`);
+        }
+      }
+    }
+
+    for (const streak of (parallelHandled ? [] : streakResult.streaks)) {
       // Truncate the streak to the longest prefix that fits the doer token ceiling for
       // this tier. Remaining IDs are left unworked and resurface on the next
       // getReadyStreaks iteration.
-      const fittedIds = truncateStreakToCeiling(streak.ids, bucketById, calibration, streak.model);
+      // Fit the streak by BOTH the output-token ceiling AND the predicted context window,
+      // taking the more restrictive prefix. The context predictor proactively splits a
+      // streak that would exceed the doer's usable context (below the autocompact/session
+      // limit) -- pre-empting the "doer exhausts context -> returns null -> work lost"
+      // failure. Deferred tasks resurface on the next getReadyStreaks iteration (lossless).
+      const _ceilFit = truncateStreakToCeiling(streak.ids, bucketById, calibration, streak.model);
+      const _ctxFit  = fitStreakToContext(streak.ids, bucketById, calibration, streak.model);
+      const fittedIds = _ceilFit.length <= _ctxFit.fittedIds.length ? _ceilFit : _ctxFit.fittedIds;
       if (fittedIds.length < streak.ids.length) {
-        log(`Streak ${streak.model} truncated to token ceiling: working ${fittedIds.length}/${streak.ids.length} task(s) (${labelTaskIds(fittedIds)}); ${streak.ids.length - fittedIds.length} deferred`);
+        const _reason = _ctxFit.fittedIds.length < _ceilFit.length
+          ? `context-limited (est ${Math.round(_ctxFit.estContext)} tok > usable ${Math.round(_ctxFit.available)} tok)`
+          : `token ceiling`;
+        log(`Streak ${streak.model} split by ${_reason}: working ${fittedIds.length}/${streak.ids.length} task(s) (${labelTaskIds(fittedIds)}); ${streak.ids.length - fittedIds.length} deferred`);
       }
       const doerLabel = `doer-c${cycleCount}-i${devIter}: ${labelTaskIds(fittedIds)}`;
       const streakEstUsd = sprintQuote
@@ -1567,7 +2214,7 @@ while (cycleCount < maxCycles) {
 
       if (!doerResult) {
         log(`Doer returned null (streak ${streak.model}) -- resetting orphaned in_progress tasks and retrying`);
-        const _ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).map(i=>i.id).join(' '))}catch{}"`;
+        const _ipExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(${BD_JSON}).map(i=>i.id).join(' '))}catch{}"`;
         const ipResult = await dispatchShell(
           [`bd list --status=in_progress --type=task --json | ${_ipExtract}`],
           { model: MODEL_HAIKU, label: `reset-orphans-c${cycleCount}-i${devIter}`, phase: 'Develop' }
@@ -1594,6 +2241,13 @@ while (cycleCount < maxCycles) {
     devIter++;
     if (doerNullReset) continue;
     if (streakAbort) break;
+    if (workedIds.length === 0) {
+      // No task merged this iteration (e.g. every parallel merge conflicted and re-queued).
+      // Nothing to review; loop back -- getReadyStreaks re-derives work and forceSerialIter
+      // (set above) guarantees the next iteration makes progress.
+      log(`No tasks merged this iteration -- skipping reviewer, re-deriving ready work`);
+      continue;
+    }
 
     // Reviewer tier matches the highest tier used across all streaks:
     // any premium streak -> premium; otherwise standard (cheap work reviewed at standard minimum).
@@ -1659,6 +2313,7 @@ while (cycleCount < maxCycles) {
 
   if (integTestEnabled) {
     phase('Test');
+    await stamp(`test-c${cycleCount}`);
 
     // -- Deploy --
     const deployLabel = `deployer-c${cycleCount}`;
@@ -1687,32 +2342,44 @@ while (cycleCount < maxCycles) {
         { model: MODEL_SONNET, label: `teardown-c${cycleCount}-fail`, phase: 'Test', agentType: 'deployer' }
       );
     } else {
-      // -- Integration test run --
-      const integLabel = `integ-runner-c${cycleCount}`;
+      // -- Integration test run (scoped to THIS sprint's open features) --
+      // Scope the tester to the sprint subtree's open features. Do NOT let it `bd list
+      // --type=feature --status=open` (every open feature in the whole DB) -- that would
+      // test/close/file-bugs against unrelated features from other epics/sprints.
+      const _sprintFeatures = await getSprintOpenFeatures(rootIds);
+      if (_sprintFeatures.length === 0) {
+        log('No open features in the sprint subtree -- skipping integration tests this cycle.');
+      } else {
+        const integLabel = `integ-runner-c${cycleCount}`;
+        const _featList = _sprintFeatures.map(f => `  ${f.id} -- ${f.title}`).join('\n');
+        log(`Integration scope: ${_sprintFeatures.length} sprint feature(s) [${labelTaskIds(_sprintFeatures.map(f => f.id))}]`);
 
-      const integResult = await dispatch(
-        `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
-        `Sprint goals: ${rootSummary}\n\n` +
-        `Run: bd list --type=feature --status=open\n` +
-        `For each open feature, execute its integration tests.\n\n` +
-        `For each feature:\n` +
-        `  PASS: all tests pass -> bd close <feature-id>\n` +
-        `  FAIL: tests fail -> bd create --title="[integ] <description>" ` +
-        `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
-        `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
-        `  Keep feature open on failure or if inconclusive.\n\n` +
-        `Priority rules:\n` +
-        `  P0: system won't start or core path completely broken\n` +
-        `  P1: requirement from sprint goal explicitly not met\n` +
-        `  P2: requirement partially met, degraded behaviour\n` +
-        `  P3: quality, performance, or UX issue not blocking core function\n\n` +
-        `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
-        `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
-        { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
-      );
-      if (integResult) {
-        log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
-        log(`Summary: ${integResult.summary}`);
+        const integResult = await dispatch(
+          `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
+          `Sprint goals: ${rootSummary}\n\n` +
+          `Integration-test ONLY these open features from THIS sprint. Do NOT list, test, close, ` +
+          `or file bugs against any beads issue that is not in this list (do NOT run ` +
+          `"bd list --type=feature"):\n${_featList}\n\n` +
+          `For each feature above:\n` +
+          `  Run "bd show <feature-id>" to read its acceptance criteria, then execute its integration tests.\n` +
+          `  PASS: all tests pass -> bd close <feature-id>\n` +
+          `  FAIL: tests fail -> bd create --title="[integ] <description>" ` +
+          `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
+          `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
+          `  Keep feature open on failure or if inconclusive.\n\n` +
+          `Priority rules:\n` +
+          `  P0: system won't start or core path completely broken\n` +
+          `  P1: requirement from sprint goal explicitly not met\n` +
+          `  P2: requirement partially met, degraded behaviour\n` +
+          `  P3: quality, performance, or UX issue not blocking core function\n\n` +
+          `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
+          `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
+          { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
+        );
+        if (integResult) {
+          log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
+          log(`Summary: ${integResult.summary}`);
+        }
       }
 
       // -- Teardown --
@@ -1736,9 +2403,9 @@ while (cycleCount < maxCycles) {
 
   let blockers;
   {
-    const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.parse(d).issues.map(i=>i.id).join(' '))}catch{}"`;
-    const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
-    const _taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(d).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
+    const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
+    const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+    const _taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
     const exitCmds = [
       ...rootIds.map(id => `bd graph --json ${id} | ${_idExtract}`),
       `bd list --status=open --json | ${_openExtract}`,
@@ -1789,6 +2456,25 @@ while (cycleCount < maxCycles) {
 // ------------------------------------------------------------------ FINAL REVIEW
 
 phase('Harvest');
+await stamp('harvest');
+
+// Remove sprint process-scaffold files (feedback.md, requirements.md) BEFORE the final review.
+// These are written during plan/develop review iterations and can be swept into a commit by a
+// doer's `git add -A`. If they survive into the harvest diff, the final reviewer correctly
+// rejects the sprint ("stray file would pollute the PR"), which blocks PR creation AND the
+// downstream bd-export -- cascading into pr-exists / final-changeset-clean / beads-sprint-closed
+// failures even when the actual goal was met. The later beads-export-cleanup step also strips
+// them, but that runs only AFTER an APPROVED review, so the cleanup must also happen up front.
+await dispatchShell(
+  [
+    `git -C "${repo}" rm -f --ignore-unmatch feedback.md requirements.md 2>/dev/null; ` +
+    `rm -f "${repo}/feedback.md" "${repo}/requirements.md" 2>/dev/null; ` +
+    `if git -C "${repo}" diff --cached --quiet; then echo "no process files staged"; else ` +
+    `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit -m "chore: remove sprint process files before harvest" && ` +
+    `git -C "${repo}" push origin ${branch}; fi`,
+  ],
+  { model: MODEL_HAIKU, label: `harvest-clean-process-files-c${cycleCount}`, phase: 'Harvest', maxTurns: 4 }
+);
 
 const finalReviewLabel = 'final-reviewer';
 const finalReview = await dispatch(
@@ -1809,6 +2495,7 @@ log(`Final review: ${finalReview && finalReview.verdict || 'null'}`);
 if (!approved(finalReview)) {
   const notes = (finalReview && finalReview.notes) || '';
   log(`Final review not approved -- aborting before harvest. Notes: ${notes.slice(0, 300)}`);
+  await clearSprintState(stateFileRel, 'state-clear-finalrejected');
   return { cycles: cycleCount, goalMet, goal, abortReason: abortReason || 'final review rejected', finalReviewNotes: notes };
 }
 
@@ -1826,15 +2513,15 @@ const tasksCompleted = goalMet
   : Math.max(0, (sprintQuote ? sprintQuote.tasks.length : 0) - prevOpenIds.length);
 const tasksOpen = goalMet ? 0 : prevOpenIds.length;
 const sprintSummary = buildSprintSummary(sprintAnalysis, sprintQuote, calibration, {
-  branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt: setup.startedAt,
+  branch, goal, goalMet, cycleCount, tasksCompleted, tasksOpen, startedAt: effectiveStartedAt,
 });
 // Append Sprint Execution Summary section -- emitted regardless of goalMet.
 const executionSummary = buildExecutionSummary(logEntries, {
-  cycleCount, goalMet, goal, tasksOpen, openIssueIds: prevOpenIds, startedAt: setup.startedAt,
+  cycleCount, goalMet, goal, tasksOpen, openIssueIds: prevOpenIds, startedAt: effectiveStartedAt,
 });
 sprintSummary.summaryText += '\n' + executionSummary.summaryText;
 log('Sprint summary:\n' + sprintSummary.summaryText);
-const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${setup.startedAt}.analysis.md`;
+const analysisArtifactFile = `sprint-logs/${sprintLogBranch}-${effectiveStartedAt}.analysis.md`;
 
 const harvestLabel = 'harvester';
 const harvestResult = await dispatch(
@@ -1866,11 +2553,12 @@ if (!harvestResult || harvestResult.status !== 'OK') {
       `mkdir -p "${repo}/sprint-logs"`,
       `printf '%s' '${safeContent}' > "${repo}/${analysisArtifactFile}"`,
       `git -C "${repo}" add "${analysisArtifactFile}"`,
-      `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "chore: sprint-analysis fallback ${branch} ${setup.startedAt}"`,
+      `git -C "${repo}" -c user.name='pm' -c user.email='pm@pm.local' commit --allow-empty -m "chore: sprint-analysis fallback ${branch} ${effectiveStartedAt}"`,
     ],
     { model: MODEL_HAIKU, label: 'harvest-analysis-fallback', phase: 'Harvest' }
   );
   log(`Analysis artifact written via fallback: ${analysisArtifactFile}`);
+  await clearSprintState(stateFileRel, 'state-clear-harvestfailed');
   return { cycles: cycleCount, goalMet, goal, harvest: 'failed' };
 }
 
@@ -1880,7 +2568,7 @@ if (!harvestResult || harvestResult.status !== 'OK') {
 // The doer closes tasks; the original sprint-goal epics must be closed explicitly.
 // These have no data dependency between them, so run in parallel.
 
-const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, setup.startedAt, taskAssignments, logEntries);
+const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis, effectiveStartedAt, taskAssignments, logEntries);
 const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
 
 await parallel([
@@ -1915,7 +2603,7 @@ await dispatch(
   `Persist beads state and clean sprint scaffolding from the PR diff.\n\n` +
   `Step 1 -- Stage sprint-logs and evict scaffold files from the working tree (unconditional):\n` +
   `  git -C "${repo}" add sprint-logs/\n` +
-  `  git -C "${repo}" rm -f feedback.md requirements.md 2>/dev/null || true\n` +
+  `  git -C "${repo}" rm -f --ignore-unmatch feedback.md requirements.md 2>/dev/null || true\n` +
   `  rm -f "${repo}/feedback.md" "${repo}/requirements.md" 2>/dev/null || true\n\n` +
   `Step 2 -- Export beads state:\n` +
   `  bd export -o "${repo}/.beads/issues.jsonl"\n` +
@@ -1946,17 +2634,23 @@ await dispatch(
 
 // Sync beads Dolt remote so refs/dolt/data is up to date.
 // Non-fatal: a missing remote or network error must not abort harvest.
-await dispatch(
-  `Sync beads state to the Dolt remote.\n\n` +
-  `Run:\n` +
-  `  bd dolt push\n\n` +
-  `Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n` +
-  `If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n` +
-  `  "bd dolt push failed (non-fatal): <reason>"\n` +
-  `and continue -- do NOT throw, return an error, or abort the workflow.\n\n` +
-  `Return "OK" when done (regardless of whether the push succeeded or failed).`,
-  { model: MODEL_HAIKU, label: 'dolt-push', phase: 'Harvest' }
-);
+// Skippable via the optional skip_dolt_push arg (the e2e passes it so sprints never
+// write to a real Dolt remote on GitHub).
+if (!opts.skip_dolt_push) {
+  await dispatch(
+    `Sync beads state to the Dolt remote.\n\n` +
+    `Run:\n` +
+    `  bd dolt push\n\n` +
+    `Capture stdout and stderr. If the command exits 0, log "bd dolt push: OK".\n` +
+    `If the command exits non-zero (e.g. no dolt remote configured, network error), log a warning:\n` +
+    `  "bd dolt push failed (non-fatal): <reason>"\n` +
+    `and continue -- do NOT throw, return an error, or abort the workflow.\n\n` +
+    `Return "OK" when done (regardless of whether the push succeeded or failed).`,
+    { model: MODEL_HAIKU, label: 'dolt-push', phase: 'Harvest' }
+  );
+} else {
+  log('Skipping dolt push as requested by opts.skip_dolt_push.');
+}
 
 // ------------------------------------------------------------------ PR
 
@@ -2060,4 +2754,16 @@ log(`  ${'TOTAL'.padEnd(20)} $${sprintTotal.toFixed(4).padStart(8)}`);
 log(`  (input token cost not included -- see ${sprintLogFile} for per-dispatch detail)`);
 log('================================================\n');
 
-return { cycles: cycleCount, goalMet, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)) };
+// Final per-phase wall-clock stamp + report. Shows where the sprint's time actually went
+// (e.g. "develop was 70% of total") and is the evidence for the parallel-doer speedup.
+await stamp('end');
+const phaseTiming = buildPhaseTiming(phaseTimeline);
+log('=== Sprint wall-clock by phase ===');
+log(phaseTiming.text);
+log('==================================\n');
+
+// Sprint completed cleanly -- release the concurrency lock so the next run starts fresh.
+// (An unclean crash skips this, leaving the state file for a resume.)
+await clearSprintState(stateFileRel, 'state-clear-done');
+return { cycles: cycleCount, goalMet, goal, harvest: 'ok', sprintCostUsd: parseFloat(sprintTotal.toFixed(4)),
+  phaseTimingSeconds: phaseTiming.totalSeconds, phaseTiming: phaseTiming.rows };
