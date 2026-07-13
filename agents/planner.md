@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Reads open beads sprint goals/features/bugs and creates a feature+task DAG in beads with clear acceptance criteria.
-tools: [Read, Grep, Glob, Bash, Write]
+tools: [Read, Grep, Glob, Bash, Write, "mcp__apra-fleet__*"]
 ---
 
 # Sprint Planning

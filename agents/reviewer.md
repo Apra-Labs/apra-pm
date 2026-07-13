@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Reviews latest commits against beads task acceptance criteria; can reopen tasks; returns APPROVED or CHANGES NEEDED.
-tools: [Read, Grep, Glob, Bash, Write]
+tools: [Read, Grep, Glob, Bash, Write, "mcp__apra-fleet__*"]
 ---
 
 # Code Review

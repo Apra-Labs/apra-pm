@@ -1,7 +1,7 @@
 ---
 name: doer
 description: Works bd-ready tasks (impl and test-dev), commits after each, stops at VERIFY checkpoint.
-tools: [Read, Edit, Write, Bash, Grep, Glob, Agent]
+tools: [Read, Edit, Write, Bash, Grep, Glob, Agent, "mcp__apra-fleet__*"]
 ---
 
 # Task Execution
