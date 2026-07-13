@@ -76,19 +76,24 @@ Commit the docs/ changes with a descriptive message.
 
 Commit these changes.
 
-## Step 5 -- Defer low-priority open issues
+## Step 5 -- Confirm low-priority open issues are visible as backlog
 
 ```bash
 bd list --status=open --priority=3
 bd list --status=open --priority=4
 ```
 
-For each P3/P4 issue still open, close with a carried-forward reason:
-```bash
-bd close <id> --reason="deferred to next sprint"
-```
+**Do NOT close these.** Leave every P3/P4 issue open and untouched -- a closed issue drops
+out of `bd list --status=open` and `bd ready`, which is exactly what would hide it from
+next sprint's planner. Deferred work stays visible by staying open at low priority under
+the sprint root (see `pm/beads.md` "Backlog"); closing is only for issues that are actually
+resolved, stale, or superseded, and this step never makes that call. If a P3/P4 issue
+genuinely lacks enough detail to act on later without re-investigation, add that detail
+with `bd note <id> "..."` -- do not close it as a substitute for noting it.
 
-Do NOT close P1 or P2 issues unless explicitly instructed.
+**The harvester never closes any issue, at any priority, for any reason.** Closing is the
+orchestrator's/doer's/reviewer's call, made against explicit acceptance criteria -- not
+something to decide here as a side effect of writing the sprint summary.
 
 ## Step 6 -- Push
 
@@ -111,7 +116,7 @@ placeholder):
 ```json
 {
   "status": "OK",
-  "notes": "Wrote sprint analysis artifact, extracted durable docs, updated README/CHANGELOG, deferred 2 P3 issues, pushed branch."
+  "notes": "Wrote sprint analysis artifact, extracted durable docs, updated README/CHANGELOG, confirmed 2 P3 issues remain open as backlog, pushed branch."
 }
 ```
 
@@ -130,4 +135,6 @@ or as prose if you are answering a human directly.
 - NEVER remove or modify files under `sprint-logs/` -- these are durable cost and audit logs
 - NEVER create PLAN.md, progress.json, or requirements.md
 - NEVER reformat or recompute the costAnalysis block -- insert it verbatim
+- NEVER close any beads issue, at any priority, for any reason -- not even P3/P4 "defer"
+  candidates in Step 5. Closing is not this agent's decision to make.
 - Durable knowledge only in docs/ -- a reader a year from now should find it illuminating
