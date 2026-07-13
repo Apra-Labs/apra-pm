@@ -39,17 +39,17 @@ writes these directly into beads -- there is no PLAN.md:
 ```
 bd create "T1.1: <title>" -p 1 --parent <sprint-id> --assignee <track> \
   --acceptance="<what must be true for this task to be done>" \
-  --notes="model: standard-tier"                                   # -> task-id
+  --metadata '{"model": "standard-tier"}'                          # -> task-id
 bd create "T1.2: <title>" -p 2 --parent <sprint-id> --assignee <track> \
-  --acceptance="..." --notes="model: cheap-tier"
+  --acceptance="..." --metadata '{"model": "cheap-tier"}'
 bd dep add <T1.2-id> <T1.1-id>             # T1.2 blocked until T1.1 done
 ```
-The acceptance criteria are the reviewer's contract; the model tier in notes is the
+The acceptance criteria are the reviewer's contract; the model tier in metadata is the
 doer's dispatch tier. Both live on the task -- nothing is written to a plan file.
 
 **Doer dispatch** (doer) -- read the task, claim it, implement, close it:
 ```
-bd show <task-id>                          # read description + acceptance + model tier
+bd show <task-id>                          # read description + acceptance + model tier metadata
 bd update <task-id> --claim                # claim (open -> in_progress, assigns self)
 bd close <task-id>                         # when the work is complete
 bd ready                                   # confirm what is unblocked next
@@ -118,7 +118,7 @@ bd list --status=open                  # work still to do
 bd list --status=in_progress           # tasks claimed by an interrupted dispatch
 bd ready                               # everything unblocked right now, across tracks
 bd list --tree <sprint-id>               # full sprint tree: tasks, status, assignee
-bd show <task-id>                      # full context: description, acceptance, model tier, notes
+bd show <task-id>                      # full context: description, acceptance, model tier metadata, notes
 ```
 beads reflects claim/close actions, not on-disk completion -- always confirm against
 `git log <base>..<branch>` and `git status` before acting. A task marked

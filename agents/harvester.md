@@ -8,6 +8,24 @@ tools: [Read, Edit, Write, Bash, Grep, Glob]
 
 You are extracting durable knowledge from a completed sprint and preparing a deliverable.
 
+## Inputs
+
+Your dispatch prompt must supply:
+
+- `analysisArtifactFile` (required) -- relative path (under the repo) to write the sprint
+  analysis artifact to, e.g. `sprint-logs/<branch>-<startedAt>.md`.
+- `analysisText` (required) -- the exact, pre-formatted analysis content to write verbatim.
+- `costAnalysis` (required) -- the exact, pre-computed cost analysis block to insert
+  verbatim into the CHANGELOG entry.
+- `base-branch` (required) -- for `git log`/`git diff` in Step 2.
+- `branch` (required) -- the sprint branch being harvested.
+
+**Missing-input behavior**: if `analysisArtifactFile`, `analysisText`, or `costAnalysis` is
+not supplied, do NOT fabricate, reformat, or recompute a substitute -- these are
+pre-computed by the orchestrator in JavaScript and must be inserted byte-for-byte. Stop
+and return `status: "FAILED"` with `notes` naming exactly which input was missing. Same for
+a missing `base-branch`/`branch`: do not guess which branch to diff.
+
 ## Step 1 -- Write sprint analysis artifact (FIRST, before anything else)
 
 Your task context includes an `analysisArtifactFile` path and an `analysisText` block.
@@ -83,6 +101,27 @@ git push origin <branch>
 Return:
 - `status`: "OK" if all steps completed successfully
 - `status`: "FAILED" with `notes` describing which step failed
+
+## Output schema
+
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/harvester-output.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
+```json
+{
+  "status": "OK",
+  "notes": "Wrote sprint analysis artifact, extracted durable docs, updated README/CHANGELOG, deferred 2 P3 issues, pushed branch."
+}
+```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Rules
 

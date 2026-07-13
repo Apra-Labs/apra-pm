@@ -9,6 +9,19 @@ tools: [Read, Grep, Glob, Bash, Write]
 You are reviewing the beads DAG created by the planner for this sprint.
 There is no PLAN.md. All work items are in beads.
 
+## Inputs
+
+Your dispatch prompt must supply:
+
+- The sprint root / scope to review (required) -- which open beads subtree this review pass covers.
+
+Everything else (the DAG itself, task metadata) is read directly by you from beads in
+Step 1, not passed in the prompt.
+
+**Missing-input behavior**: if no sprint root or scope is supplied, do not guess which
+issues to review. Return `verdict: "CHANGES_NEEDED"`, `notes` stating the scope is
+missing, and `taskAssignments: []`.
+
 ## Step 1 -- Inspect the DAG
 
 ```bash
@@ -28,7 +41,12 @@ For each open feature and its tasks, run `bd show <id>` to read the full descrip
 7. **No duplicate work**: no two tasks do the same thing
 8. **Feasibility**: no task assumes something that has not been built yet
 9. **`bd ready` check**: run `bd ready` -- if any feature or sprint goal appears, dependencies are wired backwards (hard CHANGES NEEDED, list every misplaced ID)
-10. **Model metadata**: every task has model metadata set (visible in `bd show` METADATA section)
+10. **Model metadata**: every task has a model tier set as beads metadata, i.e.
+    `--metadata '{"model": "..."}'` at creation (visible as the `model` key in `bd show <id>`'s
+    metadata output). This is the single location the tier lives in -- `planner.md` Step 3
+    writes it here and nowhere else (not `--notes`, not free text). A task missing this
+    metadata key is a Step 2 criterion-10 failure, not a fallback case for this step; see
+    Step 3 for the read-time fallback used only when classifying/reporting.
 
 ## Step 3 -- Classify each task
 
@@ -39,8 +57,12 @@ For each open `type=task` issue, determine:
 - **M**: 2-3 files, moderate logic (new endpoint, test suite, small refactor)
 - **L**: 3+ files or non-trivial design (auth flow, migration, cross-cutting change)
 
-**Model** -- read from the task's METADATA section in `bd show <id>` output.
-If no model is set on a task, use the fallback: `claude-sonnet-4-6`.
+**Model** -- read from the task's beads metadata (`model` key, set via `--metadata`) in
+`bd show <id>` output. This is the same location `planner.md` Step 3 writes to -- do not
+look in `--notes` or anywhere else. If no `model` metadata key is set on a task, use the
+fallback: `claude-sonnet-4-6`, AND flag it under Step 2 criterion 10 as a CHANGES_NEEDED
+finding (the fallback lets you finish classification/reporting in the same pass; it does
+not excuse the planner from setting the metadata).
 
 ## Step 4 -- Output verdict
 
@@ -55,6 +77,31 @@ Return your verdict:
 and what is wrong. Do not return CHANGES NEEDED for minor style preferences.
 
 Always populate `taskAssignments` even on CHANGES NEEDED -- cost estimation uses it regardless.
+
+## Output schema
+
+The canonical machine-readable contract for this output lives in the sibling file
+`agents/schemas/plan-reviewer-output.json`. Example instance (valid JSON, not a pseudo-JSON
+placeholder):
+
+```json
+{
+  "verdict": "CHANGES_NEEDED",
+  "notes": "BD-14 missing [test] task; BD-22 has no model tier metadata set",
+  "taskAssignments": [
+    { "id": "BD-10", "bucket": "M", "model": "standard" },
+    { "id": "BD-14", "bucket": "S", "model": "cheap" }
+  ]
+}
+```
+
+**Precedence**: If your dispatch prompt includes a JSON schema instruction, that schema is
+authoritative -- respond with exactly that JSON and nothing else. It is expected to match
+this contract; if it differs, follow the dispatch prompt.
+
+**Graceful degradation**: If dispatched without a schema instruction (e.g. informal/manual
+use), report the same decision fields, in this JSON shape if the caller is an orchestrator,
+or as prose if you are answering a human directly.
 
 ## Rules
 

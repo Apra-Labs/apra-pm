@@ -96,17 +96,17 @@ skip design and note in `requirements.md` that none was needed.
 
 1. Dispatch `planner` (inline, premium-tier). It explores, drafts, self-critiques, then
    writes the plan **directly into beads** -- one task per plan item under the sprint root,
-   each with `--acceptance="..."` (the reviewer's contract), `--notes="model:
-   <tier>"` (cheap-tier for mechanical work, standard-tier for standard implementation,
+   each with `--acceptance="..."` (the reviewer's contract), `--metadata
+   '{"model": "<tier>"}'` (cheap-tier for mechanical work, standard-tier for standard implementation,
    premium-tier for hard design), a priority matching the sprint goal, and dependencies
    wired with `bd dep add` (see `beads.md`). It does NOT write PLAN.md.
 2. Loop, capped at three rounds: dispatch `plan-reviewer` (inline, standard-tier). It
    inspects the beads DAG (`bd graph --compact <sprint-id>`, `bd ready`, `bd show <id>`)
    for coverage, task size, acceptance criteria, dependency direction, and model-tier
-   assignment, classifying each task's complexity bucket (S/M/L). Read the
-   `feedback.md` verdict. `CHANGES NEEDED` -> dispatch `planner` to revise the beads
-   tasks -> re-review. `APPROVED` -> continue. If three rounds leave the plan
-   unapproved, abort and flag the user.
+   assignment, classifying each task's complexity bucket (S/M/L). Read its returned
+   verdict (structured output only -- it never writes a file). `CHANGES NEEDED` ->
+   dispatch `planner` to revise the beads tasks -> re-review. `APPROVED` -> continue.
+   If three rounds leave the plan unapproved, abort and flag the user.
 
 Beads now holds the full execution state -- the tasks, their acceptance criteria,
 their model tiers, and their dependency order. There is no PLAN.md to commit and no
@@ -126,9 +126,10 @@ on that tier, then one `reviewer` over all worked tasks. The doer claims each ta
 (`bd update <id> --claim`), implements, commits, and closes it (`bd close <id>`); the
 orchestrator does not touch beads between doer and reviewer. The reviewer runs
 standard-tier, escalating to premium-tier if any streak this iteration ran premium-tier; on
-CHANGES NEEDED it writes `reopenIds` and `newTasks` to feedback.md and the
-orchestrator runs `bd update <id> --status=open` for each, returning them to
-`bd ready` next iteration (see `beads.md` and `doer-reviewer-loop.md`).
+CHANGES NEEDED it returns `reopenIds` and `newTasks` as structured output (it never
+writes a file) and the orchestrator runs `bd update <id> --status=open` for each,
+returning them to `bd ready` next iteration (see `beads.md` and
+`doer-reviewer-loop.md`).
 
 The Develop phase exits when `bd ready` returns nothing, `bd list --status=open` at
 the goal priority is empty, **and** the last reviewer verdict was APPROVED -- a
@@ -174,7 +175,7 @@ MANDATORY CHECKLIST -- verify each before exiting:
   [ ] 4. Cost analysis committed (or skipped if no Node.js)
   [ ] 5. Sprint root + delivered issues closed
   [ ] 6. bd export committed to branch (.beads/*.jsonl updated)
-  [ ] 7. Sprint scaffolding (requirements.md, feedback.md) removed from PR diff
+  [ ] 7. Sprint scaffolding (requirements.md, design.md) removed from PR diff
   [ ] 8. PR raised with gh pr create
 ```
 
@@ -216,10 +217,11 @@ MANDATORY CHECKLIST -- verify each before exiting:
    Record the PR link on the sprint root with `bd update <sprint-id> --notes "pr: <url>"`
    once the PR is raised (step 8).
 7. **Clean sprint scaffolding from the PR** -- the PR's net diff must be product
-   only. The tracking files (`requirements.md`, `design.md`, `feedback.md`) are
-   sprint narrative and the reviewer message bus, not product; beads holds the
-   durable task record, and these stay visible in the branch history as proof the
-   loop ran. For each such file, decide by whether it existed on the base branch:
+   only. The tracking files (`requirements.md`, `design.md`) are sprint narrative,
+   not product; beads holds the durable task record, and the reviewer's verdict is
+   returned as structured output rather than written to a file, so these narrative
+   files stay visible in the branch history as proof the loop ran. For each such
+   file, decide by whether it existed on the base branch:
    - **Sprint created it** (absent on base): `git rm` it.
    - **The repo already had it** (present on base, the sprint only touched it):
      restore it to base content -- `git checkout <base> -- <file>` -- so the diff
@@ -257,12 +259,12 @@ track runs its OWN full pipeline (`planner` -> `plan-reviewer` -> `doer` ->
    track owns what.
 3. **Integrate.** When a track is APPROVED, merge its branch into the integration
    base branch (never the trunk): `git -C <repo> merge <track-branch>`. Merge code
-   only -- the per-track narrative files (`feedback.md`, `requirements.md`,
-   `design.md`) are sprint scaffolding for that one track and stay on its branch.
-   Drop them before the merge (e.g. `git rm` on the track branch, or resolve the
-   merge in favour of removing them) so two tracks never collide on a same-named
-   file. beads holds the cross-track task record, so nothing durable is lost. Notify
-   dependent tracks to rebase on the updated base.
+   only -- the per-track narrative files (`requirements.md`, `design.md`) are sprint
+   scaffolding for that one track and stay on its branch. Drop them before the merge
+   (e.g. `git rm` on the track branch, or resolve the merge in favour of removing
+   them) so two tracks never collide on a same-named file. beads holds the
+   cross-track task record, so nothing durable is lost. Notify dependent tracks to
+   rebase on the updated base.
 4. **Finish.** When all tracks are merged: raise one PR from the integration branch,
    confirm CI, remove all worktrees.
 
@@ -292,8 +294,10 @@ re-orient:
    `bd list --tree <sprint-id>`) -- what is open, claimed, and unblocked. Beads
    reflects claim/close actions, not on-disk completion, so confirm against git next.
 2. Per track worktree: `git -C <repo> log --oneline <base>..<branch>` (what is
-   committed). On a track mid-review, also `git -C <repo> log --oneline --
-   feedback.md` for reviewer progress.
+   committed). The reviewer's verdict is returned as structured output, not written
+   to a file -- if the orchestrator crashed before applying it, there is no verdict
+   to recover; treat any task last known to be under review as needing a fresh
+   `reviewer` dispatch.
 3. `git -C <repo> -C <worktree> status` -- uncommitted changes?
 
 Then act:
