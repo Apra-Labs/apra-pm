@@ -51,6 +51,14 @@ Read the following to understand what was built:
 - `git diff <base-branch>..<branch> --stat` -- files changed
 - Open/closed issues: `bd list --status=closed` and `bd list --status=open`
 
+**Read the closed beads graph, not just individual descriptions.** For the sprint goal(s)
+in scope, walk the parent-child structure (e.g. `bd show <sprint-id>`, `bd graph --compact
+<sprint-id>`) to see how the work was actually decomposed -- which features grouped which
+tasks, and which tasks were siblings versus dependents. A closed task's description read in
+isolation tells you what one change did; the parent-child shape tells you why it was split
+that way and how the pieces fit into the feature it belongs to. Extract knowledge from the
+graph as a whole, not from scanning closed issues one at a time.
+
 ## Step 3 -- Extract durable knowledge into docs/
 
 Create or update files under `docs/` to capture long-term knowledge.
@@ -65,6 +73,16 @@ Create or update files under `docs/` to capture long-term knowledge.
 - Task lists, checklist items, step-by-step implementation instructions
 - Code-line references ("see line 42 of foo.ts")
 - Debug notes, investigation findings, workaround details
+
+**Forbidden in every harvested document** (docs/, README.md, CHANGELOG.md, or anywhere
+else you write): bead ids (e.g. `BD-14`), git revision/commit hashes, branch names, and
+dates. These are ephemeral -- they rot the moment a bead closes, a commit is rebased, or a
+branch merges and is deleted -- and a reader with no access to the beads DB or git history
+gets nothing durable from them. Describe durable knowledge instead: what was built, how it
+works, what pattern or trade-off was chosen and why. Write it so it reads correctly
+regardless of which bead or commit produced it. If you catch yourself writing "in BD-14 we
+added..." or "as of commit a1b2c3d..." or "on 2026-07-15...", rewrite the sentence to state
+the fact directly instead.
 
 Commit the docs/ changes with a descriptive message.
 
@@ -140,3 +158,6 @@ or as prose if you are answering a human directly.
 - NEVER close any beads issue, at any priority, for any reason -- not even P3/P4 "defer"
   candidates in Step 5. Closing is not this agent's decision to make.
 - Durable knowledge only in docs/ -- a reader a year from now should find it illuminating
+- NEVER write a bead id, git commit/revision hash, branch name, or date into any harvested
+  document (docs/, README.md, CHANGELOG.md, or elsewhere) -- these are ephemeral references
+  that go stale as the repo evolves; describe durable knowledge instead
