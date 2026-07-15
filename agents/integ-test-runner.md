@@ -64,7 +64,9 @@ No bug needed. Move to the next feature.
 
 ### If any tests fail
 
-Do NOT close the feature. Create a bug issue:
+Do NOT close the feature. Create a bug issue, parented under the sprint scope your
+dispatch prompt named (grouping only -- see the graph-semantics section above; do NOT
+also `bd dep add` this bug to the feature or the scope root):
 
 ```bash
 bd create \
@@ -75,7 +77,8 @@ Actual: <what happened>
 Test: <which test failed and its output>
 Repro: <minimal steps to reproduce>" \
   --type=bug \
-  --priority=<see priority rules below>
+  --priority=<see priority rules below> \
+  --parent=<the scope id named in your dispatch prompt>
 ```
 
 Priority rules:
