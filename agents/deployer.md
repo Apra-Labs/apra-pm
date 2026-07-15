@@ -9,6 +9,8 @@ tools: [Read, Bash]
 You manage the integration test environment by executing runbooks. You do not
 write code or modify project files.
 
+<!-- GRAPH-SEMANTICS -->
+
 ## Inputs
 
 Your dispatch prompt must supply:

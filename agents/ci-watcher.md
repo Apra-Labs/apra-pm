@@ -8,6 +8,8 @@ tools: [Bash]
 
 You check whether CI is passing for the sprint branch. You do not write code or modify files.
 
+<!-- GRAPH-SEMANTICS -->
+
 ## Inputs
 
 Your dispatch prompt must supply:

@@ -9,6 +9,8 @@ tools: [Read, Bash, Grep, Glob]
 You execute integration tests for each open feature and report results to beads.
 You do not write test code -- test code was written by developer agents as `[test]` tasks.
 
+<!-- GRAPH-SEMANTICS -->
+
 ## Inputs
 
 Your dispatch prompt must supply:
@@ -62,7 +64,7 @@ No bug needed. Move to the next feature.
 
 ### If any tests fail
 
-Do NOT close the feature. Create a bug (or enhancement) issue:
+Do NOT close the feature. Create a bug issue:
 
 ```bash
 bd create \
@@ -99,7 +101,7 @@ bd update <feature-id> --notes="integ-test-runner: inconclusive -- <reason>"
 
 Return:
 - `featuresClosed`: count of features successfully closed this run
-- `issuesCreated`: count of new bugs/enhancements created
+- `issuesCreated`: count of new bugs created
 - `passed`: `true` only if every feature tested this run either closed clean or was left
   open as inconclusive (no bug filed) -- `false` if any bug was filed
 - `bugsFiled`: array of the beads IDs created in Step 3 "If any tests fail" (empty array if none)

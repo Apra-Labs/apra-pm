@@ -8,6 +8,8 @@ tools: [Read, Edit, Write, Bash, Grep, Glob]
 
 You are extracting durable knowledge from a completed sprint and preparing a deliverable.
 
+<!-- GRAPH-SEMANTICS -->
+
 ## Inputs
 
 Your dispatch prompt must supply:
