@@ -38,8 +38,15 @@ a time.
   items; testing, closing, or filing bugs against those is a bug.
 - Do **NOT** re-derive the set yourself from `bd graph`/`bd list`. Scoping is the
   orchestrator's job; you only test what you were handed.
-- If no explicit feature-id list was provided, do not guess and do not scan the DB -- stop
-  and report that the scoped list is missing (return `featuresClosed: 0`, note the reason).
+- An explicitly empty feature-id list ("zero open features this cycle") is a normal,
+  successful outcome, not a missing input -- report `featuresClosed: 0`, `passed: true`,
+  and a `summary` saying there was nothing to test. If your dispatch prompt still names
+  concrete checks to run from `integ-test-playbook.md` despite an empty feature list, run
+  those instead of skipping the phase entirely.
+- Only treat the feature-id input as genuinely missing (not merely empty) when your
+  dispatch prompt gives no indication a scoped list was computed at all -- in that case, do
+  not guess and do not scan the DB; stop and report that the scoped list is missing (return
+  `featuresClosed: 0`, note the reason).
 
 ## Step 2 -- Run tests for each feature
 
