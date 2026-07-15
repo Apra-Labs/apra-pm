@@ -9,6 +9,8 @@ tools: [Read, Grep, Glob, Bash, Write]
 You are planning a sprint by creating a structured beads DAG. You do NOT write PLAN.md.
 All work items live in beads so they can drive the sprint loop and exit check.
 
+<!-- GRAPH-SEMANTICS -->
+
 ## Inputs
 
 Your dispatch prompt must supply (or point you at):
@@ -41,7 +43,8 @@ For each sprint goal create type=feature issues as direct children:
 - Title: a concrete deliverable ("User can reset password via email")
 - Description: what done looks like, who uses it, acceptance criteria
 - Priority: inherit from sprint goal (P1) or set P2 for secondary features
-- Wire: `bd dep add <sprint-id> <feature-id>` so the sprint goal is blocked until the feature is done
+- Wire: `bd create ... --parent <sprint-id>` (grouping only -- do NOT also
+  `bd dep add <sprint-id> <feature-id>`; see the graph-semantics section above)
 
 Each feature must be independently verifiable: integration tests either pass or fail.
 
@@ -64,7 +67,7 @@ For each feature create two classes of tasks:
 **Model tier** (required on every task, both impl and test): set the model tier as beads
 metadata at creation time, not in `--notes`:
 ```bash
-bd create ... --metadata '{"model": "<cheap-tier|standard-tier|premium-tier model name>"}'
+bd create ... --metadata '{"model": "<cheap|standard|premium>"}'
 ```
 This is the ONLY location the model tier is recorded. Any consumer -- including
 `plan-reviewer.md` (Step 3) and the orchestrator that dispatches doers -- reads the model
@@ -73,37 +76,51 @@ also (or instead) put it in `--notes`, a METADATA-section comment, or anywhere e
 
 Pick the tier using these criteria:
 
-- **cheap-tier** -- mechanical work: rename, move, config tweak, simple wiring,
+- **cheap** -- mechanical work: rename, move, config tweak, simple wiring,
   boilerplate.
-- **standard-tier** -- standard implementation: a new function, an API endpoint, a
+- **standard** -- standard implementation: a new function, an API endpoint, a
   test suite, a focused refactor.
-- **premium-tier** -- hard work: architecture, multi-file design, high-ambiguity or
+- **premium** -- hard work: architecture, multi-file design, high-ambiguity or
   cross-cutting reasoning.
 
 Pick from the models actually available in the current environment. A user override
 always wins.
 
 Wire dependencies (semantics: `bd dep add A B` means A is blocked by B -- B must finish before A can close):
-- `bd dep add <feature-id> <impl-task>` (feature blocked until impl task is done)
-- `bd dep add <feature-id> <test-task>` (feature blocked until test task is done)
-- `bd dep add <test-task> <impl-task>` (test task blocked until impl task is done)
-- For tasks that depend on a prior task: `bd dep add <later-task> <earlier-task>`
+- `bd create ... --parent <feature-id>` for both impl and test tasks (grouping only --
+  do NOT `bd dep add <feature-id> <impl-task>` or `<feature-id> <test-task>`; a feature's
+  "not done until its tasks close" status comes from its children, never from a `blocks`
+  edge back onto them)
+- `bd dep add <test-task> <impl-task>` (test task blocked until impl task is done -- this
+  IS correct: impl-task and test-task are siblings, not ancestor/descendant)
+- For tasks that depend on a prior sibling task: `bd dep add <later-task> <earlier-task>`
 
 ## Step 4 -- Validate your own DAG
 
-Before finishing, run:
+Before finishing, run (scoped to your sprint -- see the graph-semantics section above for
+why bare `bd ready`/`bd blocked` are the wrong check):
 ```bash
 bd graph --compact <sprint-id>
-bd blocked
-bd ready
+bd blocked --parent <sprint-id>
+bd list --parent <sprint-id> --ready --json
 ```
 
 **Acyclicity check (mandatory):** A correct DAG has no cycles. Verify:
-1. `bd ready` must return at least one issue. If it returns nothing, there is a cycle -- every issue is blocked by another. Find and break the cycle before finishing.
-2. A parent issue must NEVER depend on its own children. `bd dep add <sprint-id> <feature>` means sprint is blocked by feature -- correct. `bd dep add <feature> <sprint-id>` would be a cycle -- never do this.
-3. Check `bd blocked` -- every blocked issue must be blocked by something that is itself unblocked (eventually reachable from `bd ready`). If a blocked issue traces back to itself, that is a cycle.
+1. `bd list --parent <sprint-id> --ready --json` must return at least one issue whenever
+   open work exists under `<sprint-id>`. If it returns nothing, there is a cycle -- every
+   issue is blocked by another. Find and break the cycle before finishing. (A bare `bd
+   ready` is NOT a valid substitute for this check -- it returns project-wide results and
+   will show unrelated ready work even when your entire sprint scope is deadlocked.)
+2. A feature/task must NEVER have a `blocks` edge to or from its own `--parent`
+   ancestor/descendant -- see the graph-semantics section above. Only `parent-child` edges
+   (via `--parent`) should exist between a bead and its parent; `blocks` edges belong only
+   between siblings.
+3. Check `bd blocked --parent <sprint-id>` -- every blocked issue must be blocked by
+   something that is itself unblocked (eventually reachable from the scoped `--ready`
+   list). If a blocked issue traces back to itself, that is a cycle.
 
-If you find a cycle: remove the offending dependency with `bd dep remove <A> <B>`, fix the direction, and re-run `bd ready` to confirm issues are unblocked.
+If you find a cycle: remove the offending dependency with `bd dep remove <A> <B>`, fix the
+direction, and re-run the scoped `--ready` query to confirm issues are unblocked.
 
 Also check each open feature:
 - Has at least one [impl] task AND one [test] task?
@@ -120,7 +137,7 @@ If features and tasks already exist in beads from a prior planning pass:
 - Do NOT re-plan or recreate issues that are already closed
 - For each open feature or bug: are there enough tasks to resolve it?
 - Create missing tasks; update descriptions that lack acceptance criteria
-- Do NOT add new scope beyond the original sprint goals and open bugs/enhancements already in beads
+- Do NOT add new scope beyond the original sprint goals and open bugs/features already in beads
 
 ## Output schema
 
@@ -133,7 +150,7 @@ evaluates against its own Output schema (see `plan-reviewer.md` and its sibling
 
 - NEVER create PLAN.md or progress.json
 - NEVER close any issues -- you only create and link
-- NEVER add scope beyond the sprint goals you were given and open bugs/enhancements
+- NEVER add scope beyond the sprint goals you were given and open bugs/features
 - Every task must be completable in one agent session
 - A task with no acceptance criteria is incomplete -- fix it before finishing
 - Every task must carry a model tier in `--metadata '{"model": "..."}'` -- fix before finishing

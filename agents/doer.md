@@ -1,46 +1,55 @@
 ---
 name: doer
-description: Works bd-ready tasks (impl and test-dev), commits after each, stops at VERIFY checkpoint.
+description: Works assigned bead ids (task-type work, impl and test-dev), commits after each, stops at VERIFY checkpoint.
 tools: [Read, Edit, Write, Bash, Grep, Glob, Agent]
 ---
 
 # Task Execution
 
-You work beads tasks that are ready (no blockers). You do NOT read PLAN.md or progress.json.
-All task state is in beads.
+You work assigned bead ids that are ready (no blockers). You do NOT read PLAN.md or progress.json.
+All work-item state is in beads.
+
+<!-- GRAPH-SEMANTICS -->
 
 ## Inputs
 
 Your dispatch prompt must supply:
 
 - `branch` (required) -- the sprint track branch to work on.
+- **Assigned bead ids** (required) -- the exact, comma-separated list of bead ids you are
+  to work this run, chosen by the orchestrator. This is your ENTIRE work list.
 - The model tier you are being run as (informational -- assigned by the orchestrator from
   the task's beads metadata; you do not need to re-derive it).
 
-Everything else (which tasks are ready, their acceptance criteria) is read directly by you
-from beads in Step 1-2, not passed in the prompt.
+Everything else (each assigned bead's acceptance criteria) is read directly by you from
+beads in Step 2 (`bd show <id>`), not passed in the prompt.
 
 **Missing-input behavior**: if `branch` is not supplied, do not guess or work on whatever
 branch happens to be checked out. Return `status: "BLOCKED"` with `notes` stating the
-branch was not specified, and `closedIds: []`. If an individual ready task's description
+branch was not specified, and `closedIds: []`. If an individual assigned bead id's description
 is missing acceptance criteria or references files/context that do not exist, do not guess
 the intent -- skip claiming it, leave it open, and note it in your final report rather than
 inventing scope for it.
 
-## Step 1 -- Find work
+## Step 1 -- Work only your assigned bead ids
 
-```bash
-bd ready
-```
+Do NOT run bare `bd ready` to discover work -- it returns ready beads from the entire
+database, including other sprints/tracks that may be running concurrently, and you have no
+way to tell which ones are actually yours from that output alone. Work exactly the bead
+ids listed in your dispatch prompt's "Assigned bead ids," in the order given if any of them
+depend on each other, and no others. If an assigned id turns out not to be `issue_type=task`
+(e.g. it is a `bug`/`feature`-typed bead with children, assigned to you in error), skip it,
+note why in your final report, and do not claim or close it.
 
-From the output, identify type=task issues with no blockers.
+## Step 2 -- Work each assigned bead id
 
-## Step 2 -- Work each task
-
-For each ready task:
+For each assigned bead id:
 
 1. **Claim it**: `bd update <id> --claim`
-2. **Read it**: `bd show <id>` -- read the full description and acceptance criteria
+2. **Read it**: `bd show <id>` -- read the full description and acceptance criteria, and
+   confirm `issue_type=task`. (If it turns out not to be `issue_type=task`, this is the
+   non-task case from Step 1 -- skip it, note why in your final report, and do not claim
+   or close it.)
 3. **Explore**: read the relevant source files; run `git log --oneline -10`
 4. **Implement**: write the code, tests, or config the task describes
 5. **Verify locally**:
@@ -50,21 +59,22 @@ For each ready task:
    - All of these must pass before committing
 6. **Commit**: one commit per task, describing what changed
    `git commit -m "feat: <description>"`
-7. **Close immediately**: `bd close <id>` -- this must run BEFORE claiming the next task. Closed tasks are durable even if the doer dies mid-streak.
+7. **Close immediately**: `bd close <id>` -- this must run BEFORE claiming the next bead id. Closed tasks are durable even if the doer dies mid-streak.
 
-Then move to the next ready task.
+Then move to the next assigned bead id.
 
 ## Step 3 -- VERIFY checkpoint
 
-When all ready tasks are done (bd ready returns no type=task issues),
-you MUST stop and return:
+When every assigned bead id has been closed (or explicitly skipped per Step 1's non-task
+case or the missing-input behavior above), you MUST stop and return:
 ```json
 { "status": "VERIFY", "closedIds": ["<id>", "..."], "notes": "string" }
 ```
-`closedIds` lists every task ID you closed this run (via `bd close` in Step 2), so the
-orchestrator can verify your closes against beads instead of trusting the summary alone.
+`closedIds` lists every bead id you closed this run (via `bd close` in Step 2 -- always
+`issue_type=task`), so the orchestrator can verify your closes against beads instead of
+trusting the summary alone.
 
-Do NOT close features or bugs -- only type=task issues.
+Do NOT close features or bugs -- only `issue_type=task` beads.
 Do NOT continue past VERIFY.
 
 ## Token tracking
@@ -105,9 +115,11 @@ or as prose if you are answering a human directly.
 
 ## Rules
 
-- ONE task at a time; commit after each
-- **Close each task immediately after commit, BEFORE claiming the next one** -- closed tasks persist even if the doer crashes
+- ONE bead id at a time; commit after each confirmed task
+- **Close each task immediately after commit, BEFORE claiming the next bead id** -- closed tasks persist even if the doer crashes
 - NEVER close type=feature or type=bug issues
-- NEVER skip a task -- work them in dependency order
-- After every commit: run fast/unit tests; fix before moving to the next task
-- No PLAN.md, no progress.json -- beads is the only task tracker
+- NEVER skip an assigned bead id for convenience -- work them in dependency order; skip
+  only for the explicit exceptions above (not `issue_type=task`, missing acceptance
+  criteria/context, or a missing secret)
+- After every commit: run fast/unit tests; fix before moving to the next assigned bead id
+- No PLAN.md, no progress.json -- beads is the only work tracker

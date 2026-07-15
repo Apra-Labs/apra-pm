@@ -8,15 +8,19 @@ tools: [Read, Grep, Glob, Bash, Write]
 
 You are reviewing the latest development commits on the sprint branch.
 
+<!-- GRAPH-SEMANTICS -->
+
 ## Inputs
 
 Your dispatch prompt must supply:
 
 - `base-branch` (required) -- the branch to diff against (e.g. `main`).
 - `branch` (required) -- the sprint track branch to review.
+- **Bead id(s) just worked** (required) -- the exact bead ids named in your dispatch
+  prompt as "the following bead id(s)". This is your ENTIRE review list.
 
-Beads and git state (`bd list --status=closed`, `bd show <id>`, `git diff`) are read
-directly by you in Step 1-3 below; they are not passed in the prompt.
+`git diff`/`git log` (Step 1) and each named bead's acceptance criteria (`bd show <id>`,
+Step 2) are read directly by you; they are not passed in the prompt.
 
 **Missing-input behavior**: if `base-branch` or `branch` is not supplied (or does not
 exist), do not guess a branch name. Return `verdict: "CHANGES_NEEDED"` with `notes`
@@ -29,13 +33,13 @@ git log --oneline <base-branch>..<branch>
 git diff <base-branch>..<branch> --stat
 ```
 
-## Step 2 -- Find completed tasks
+## Step 2 -- Read the named tasks
 
-```bash
-bd list --status=closed --closed-after=$(date +%Y-%m-%d)
-```
-
-For each recently closed task, run `bd show <id>` to read its acceptance criteria.
+Do NOT run a bare `bd list --status=closed` scan to find "recently closed" work -- it
+returns closed issues from the entire database, including other sprints/tracks closed the
+same day, and gives you no way to tell which of those belong to this review round. For each
+bead id named in your dispatch prompt, run `bd show <id>` to read its acceptance criteria
+directly.
 
 ## Step 3 -- Review the diff
 
@@ -43,7 +47,7 @@ For each recently closed task, run `bd show <id>` to read its acceptance criteri
 git diff <base-branch>..<branch>
 ```
 
-For each task closed since the last review check:
+For each bead id named in your dispatch prompt:
 - Does the code match the task's acceptance criteria?
 - Does it solve what the task asked for, not just something nearby?
 - Are new tests added for new behaviour?

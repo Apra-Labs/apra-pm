@@ -9,6 +9,8 @@ tools: [Read, Grep, Glob, Bash, Write]
 You are reviewing the beads DAG created by the planner for this sprint.
 There is no PLAN.md. All work items are in beads.
 
+<!-- GRAPH-SEMANTICS -->
+
 ## Inputs
 
 Your dispatch prompt must supply:
@@ -37,10 +39,24 @@ For each open feature and its tasks, run `bd show <id>` to read the full descrip
 3. **Acceptance criteria**: every task description states concretely what done looks like
 4. **Task size**: no task should require more than ~3 file changes; flag larger ones
 5. **Dependency wiring**: test tasks are downstream of implementation tasks (not parallel)
-6. **No scope creep**: tasks address only the original sprint goals and open bugs/enhancements
+6. **No scope creep**: tasks address only the original sprint goals and open bugs/features
 7. **No duplicate work**: no two tasks do the same thing
 8. **Feasibility**: no task assumes something that has not been built yet
-9. **Ready-work check, scoped to this review's subtree**: run `bd list --parent <scope> --ready --json` (NOT bare `bd ready`, which lists ready work across the entire database -- including every other open epic/sprint -- and is not a signal about this DAG). Also do NOT expect the epic/sprint-goal issue itself to ever be absent from a bare `bd ready`/`bd blocked` scan by being "blocked by its children": beads rejects that edge outright (`bd dep add <epic> <child>` errors "epics can only block other epics, not tasks"), so an epic is never wired to wait on its own children via dependencies -- that is expected, not a defect. What actually matters: the scoped `--ready` list should be non-empty whenever open tasks exist under `<scope>` (if it is empty while open tasks remain, there is a cycle -- diagnose with `bd blocked --parent <scope>` and `bd dep list <id>` on the suspicious issues, hard CHANGES NEEDED, list every ID in the cycle). Epic-level completion tracking (has everything under this epic actually finished) is a separate question -- use `bd epic status <scope>` for that, not `bd ready`.
+9. **Ready-work check, scoped to this review's subtree** (see the graph-semantics section
+   above): run `bd list --parent <scope> --ready --json` -- NOT bare `bd ready`, which
+   lists ready work across the entire database and is not a signal about this DAG. The
+   scoped `--ready` list should be non-empty whenever open tasks exist under `<scope>`; if
+   it is empty while open tasks remain, there is a cycle -- diagnose with `bd blocked
+   --parent <scope>` and `bd dep list <id>` on the suspicious issues, hard CHANGES NEEDED,
+   list every ID in the cycle. Do NOT assume this cycle is structurally impossible for any
+   scope-root type except `epic` -- bd's protection is narrower than that (see the
+   graph-semantics section); treat this scoped check as the only reliable signal,
+   regardless of the scope root's issue_type. Epic-level completion tracking (has
+   everything under this epic actually finished) is a separate question -- use `bd epic
+   status <scope>` for that ONLY when `<scope>` is itself `issue_type=epic` (check via `bd
+   show <scope> --json` first: on a non-epic scope, `bd epic status` silently lists
+   unrelated epics instead of erroring) -- fall back to `dependent_count`/manual child
+   inspection for non-epic scopes.
 10. **Model metadata**: every task has a model tier set as beads metadata, i.e.
     `--metadata '{"model": "..."}'` at creation (visible as the `model` key in `bd show <id>`'s
     metadata output). This is the single location the tier lives in -- `planner.md` Step 3
