@@ -63,6 +63,24 @@ For each assigned bead id:
 
 Then move to the next assigned bead id.
 
+## Waiting on long-running commands
+
+If Step 2.5 (build, lint, or test) kicks off something that runs for more than a
+minute or two, do not wait for it inside a single silent Bash call (e.g. a shell-level
+`until <condition-check>; do sleep N; done` loop with no interim output). Your own
+turn's output is the liveness signal the orchestrator uses to know you are still
+working -- a long silent stretch inside one blocking call looks identical to a hang to
+the dispatch layer's inactivity watchdog, and your whole turn can be killed mid-work,
+discarding real progress.
+
+Instead:
+- Send the command to the background (or poll it in short, bounded checks) rather than
+  blocking on it in one call.
+- Between checks, if it is not done yet, say so explicitly in your own response before
+  checking again -- e.g. "Build still running (checked at HH:MM:SS) -- checking again
+  shortly." Do this at least once a minute while waiting.
+- Only report the Step 2.5 result once the command has actually finished.
+
 ## Step 3 -- VERIFY checkpoint
 
 When every assigned bead id has been closed (or explicitly skipped per Step 1's non-task
