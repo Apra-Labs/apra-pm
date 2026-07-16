@@ -59,6 +59,18 @@ For each open feature:
 3. Run the integration tests for this feature. The test tasks describe what to run.
 4. Observe the result carefully: which assertions passed, which failed, with what output
 
+**Waiting on a long-running test run**: integration test runs can legitimately take
+many minutes. Never wait for one inside a single silent Bash call (e.g. a shell-level
+`until <condition-check>; do sleep N; done` loop with no interim output) -- your own
+turn's output is the liveness signal the orchestrator uses to know you are still
+working, and a long silent stretch inside one blocking call looks identical to a hang
+to the dispatch layer's inactivity watchdog, killing your whole run mid-work and
+discarding progress. Instead, send the test run to the background (or poll it in
+short, bounded checks), and between checks -- if it is not done yet -- say so explicitly
+before checking again, e.g. "Integration tests still running (checked at HH:MM:SS,
+N/M features done so far) -- checking again shortly." Do this at least once a minute
+while waiting.
+
 ## Step 3 -- Record results
 
 ### If all tests pass

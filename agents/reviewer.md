@@ -72,6 +72,17 @@ npm test                 # or cargo test, pytest, etc.
 
 All must pass. If any fail: CHANGES NEEDED.
 
+**Waiting on the test suite**: if `npm test` (or the project equivalent) plausibly runs
+for more than a minute or two, do not wait for it inside a single silent Bash call (e.g.
+a shell-level `until <condition-check>; do sleep N; done` loop with no interim output).
+Your own turn's output is the liveness signal the orchestrator uses to know you are
+still working -- a long silent stretch inside one blocking call looks identical to a
+hang to the dispatch layer's inactivity watchdog, and your whole review can be killed
+mid-work. Instead, send the test run to the background (or poll it in short, bounded
+checks), and between checks -- if it is not done yet -- say so explicitly before checking
+again, e.g. "Test suite still running (checked at HH:MM:SS) -- checking again shortly."
+Do this at least once a minute while waiting.
+
 ## Step 5 -- Verdict
 
 Return your structured output ONLY. You never call `bd update`, `bd close`, `bd create`,
