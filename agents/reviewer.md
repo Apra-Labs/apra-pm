@@ -81,7 +81,21 @@ hang to the dispatch layer's inactivity watchdog, and your whole review can be k
 mid-work. Instead, send the test run to the background (or poll it in short, bounded
 checks), and between checks -- if it is not done yet -- say so explicitly before checking
 again, e.g. "Test suite still running (checked at HH:MM:SS) -- checking again shortly."
-Do this at least once a minute while waiting.
+Do this at least once a minute while waiting. Backgrounding and polling are not two
+alternative techniques -- they are the same obligation. If you background the test run,
+you must then keep actively checking on it (a real tool call: re-reading its output, or
+a Monitor-style wait) at least once a minute until it finishes. Saying "I'll wait for it
+to complete" once and then issuing no further tool calls is exactly the failure this
+section exists to prevent. If your own tool infrastructure force-backgrounds a
+"foreground" command you issued (some sandboxes cap a single foreground command at
+roughly 1-2 minutes and hand it back as a running background job), treat that exactly
+the same as a deliberate backgrounding: keep checking on it with real tool calls --
+re-read its output, or use `Monitor` if your environment provides it -- rather than
+giving up. Sleep-based waiting is blocked for a reason; use bounded, repeated checks,
+not a delay loop, and do not try to route around the sleep-block by chaining several
+short sleeps. Do not end your turn or return a verdict while the test suite is still
+running -- a backgrounded run with no reported final outcome is not a completed step,
+no matter how many times you've already narrated "still running."
 
 ## Step 5 -- Verdict
 

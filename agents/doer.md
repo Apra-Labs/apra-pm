@@ -75,11 +75,26 @@ discarding real progress.
 
 Instead:
 - Send the command to the background (or poll it in short, bounded checks) rather than
-  blocking on it in one call.
+  blocking on it in one call. Backgrounding and polling are not two alternative ways to
+  wait -- they are the same obligation. If you background a command you must then keep
+  actively checking on it (a real tool call: re-reading its output, or a Monitor-style
+  wait) at least once a minute until it finishes. Saying "I'll wait for it to complete"
+  once and then issuing no further tool calls is exactly the failure this section
+  exists to prevent -- it defeats the whole point of backgrounding.
 - Between checks, if it is not done yet, say so explicitly in your own response before
   checking again -- e.g. "Build still running (checked at HH:MM:SS) -- checking again
   shortly." Do this at least once a minute while waiting.
-- Only report the Step 2.5 result once the command has actually finished.
+- If your own tool infrastructure force-backgrounds a "foreground" command you issued
+  (some sandboxes cap a single foreground command at roughly 1-2 minutes and hand it
+  back to you as a running background job), treat that exactly the same as if you had
+  chosen to background it yourself: keep checking on it with real tool calls -- re-read
+  its output, or use `Monitor` if your environment provides it -- rather than giving up.
+  Sleep-based waiting is blocked for a reason; use bounded, repeated checks, not a delay
+  loop, and do not try to route around the sleep-block by chaining several short sleeps.
+- Only report the Step 2.5 result once the command has actually finished. Do not end
+  your turn or give a final response while the build is still running -- a backgrounded
+  job with no reported final outcome is not a completed step, no matter how many times
+  you've already narrated "still running."
 
 ## Step 3 -- VERIFY checkpoint
 
