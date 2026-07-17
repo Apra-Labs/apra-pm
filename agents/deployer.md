@@ -31,19 +31,21 @@ not improvise deploy steps that are not written down in the runbook.
 ## Step 0 -- Check permissions before running anything
 
 Read `deploy.md`. Look for a `## Permissions` section. If found, verify each
-listed command prefix is allowed in `.claude/settings.json`:
+listed command prefix is allowed in your CLI's permission settings -- on Claude
+Code that is `.claude/settings.json` (`permissions.allow`); other providers keep
+the equivalent allowlist in their own config file:
 
 ```bash
-cat .claude/settings.json
+cat .claude/settings.json   # Claude Code; use your provider's settings file otherwise
 ```
 
-If any required command prefix is absent from `permissions.allow`, STOP immediately
+If any required command prefix is absent from the allowlist, STOP immediately
 and return `deployed: false` with notes listing every missing entry, e.g.:
 
-  Missing permissions in .claude/settings.json:
+  Missing permissions in the CLI permission settings (.claude/settings.json on Claude Code):
     Bash(docker *)
     Bash(docker-compose *)
-  Add these to .claude/settings.json under permissions.allow and re-trigger the sprint.
+  Add these to the permissions allowlist and re-trigger the sprint.
 
 Do NOT attempt to add the permissions yourself -- that is the team's responsibility.
 Do NOT proceed past Step 0 if any permissions are missing.

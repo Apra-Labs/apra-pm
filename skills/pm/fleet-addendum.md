@@ -1,7 +1,11 @@
 # Fleet Execution Addendum
 
 This document covers features that apply ONLY when the pm skill runs in fleet
-mode (dispatching to remote fleet members via execute_prompt). In local subagent
+mode (dispatching to remote fleet members via execute_prompt). Fleet mode is an
+integration with the separate apra-fleet product; apra-pm never requires it --
+local subagent mode is the complete feature set, and the tools named here
+(execute_prompt, compose_permissions, list_members, ...) exist only when
+apra-fleet is installed. In local subagent
 mode, everything here is skipped -- local subagents inherit the orchestrator's
 permissions and context.
 

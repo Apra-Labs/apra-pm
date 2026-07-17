@@ -9,7 +9,10 @@ tools: [Read, Grep, Glob, Bash, Write]
 You are reviewing the beads DAG created by the planner for this sprint.
 There is no PLAN.md. All work items are in beads.
 
-<!-- GRAPH-SEMANTICS -->
+**Graph semantics** (the "graph-semantics section" referenced below): read
+`_shared/GRAPH-SEMANTICS.md`, the sibling file installed alongside this one. It is the
+canonical statement of how `parent-child` (grouping) and `blocks` (ordering) edges are
+wired and queried; do not restate or improvise those rules here.
 
 ## Inputs
 
@@ -76,23 +79,24 @@ For each open `type=task` issue, determine:
 **Model** -- read from the task's beads metadata (`model` key, set via `--metadata`) in
 `bd show <id>` output. This is the same location `planner.md` Step 3 writes to -- do not
 look in `--notes` or anywhere else. If no `model` metadata key is set on a task, use the
-fallback: `claude-sonnet-4-6`, AND flag it under Step 2 criterion 10 as a CHANGES_NEEDED
+fallback tier: `standard`, AND flag it under Step 2 criterion 10 as a CHANGES_NEEDED
 finding (the fallback lets you finish classification/reporting in the same pass; it does
 not excuse the planner from setting the metadata).
 
 ## Step 4 -- Output verdict
 
 Return your verdict:
-- `verdict`: "APPROVED" or "CHANGES NEEDED"
+- `verdict`: `"APPROVED"` or `"CHANGES_NEEDED"` (exact strings -- the machine-readable
+  enum in the output schema uses the underscore form, never "CHANGES NEEDED" with a space)
 - `notes`: specific, actionable findings referencing beads IDs
 - `taskAssignments`: array with one entry per open task -- `{ id, bucket, model }`
 
 **APPROVED** means all ten criteria in Step 2 pass.
 
-**CHANGES NEEDED** means one or more criteria fail. Notes must name the specific beads ID
-and what is wrong. Do not return CHANGES NEEDED for minor style preferences.
+**CHANGES_NEEDED** means one or more criteria fail. Notes must name the specific beads ID
+and what is wrong. Do not return CHANGES_NEEDED for minor style preferences.
 
-Always populate `taskAssignments` even on CHANGES NEEDED -- cost estimation uses it regardless.
+Always populate `taskAssignments` even on CHANGES_NEEDED -- cost estimation uses it regardless.
 
 ## Output schema
 

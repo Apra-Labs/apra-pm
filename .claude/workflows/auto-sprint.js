@@ -17,8 +17,9 @@ export const meta = {
 //   plan-reviewer     -- validates DAG: coverage, task size, acceptance criteria
 //   doer              -- works bd-ready tasks (impl and test-dev), VERIFY checkpoint
 //   reviewer          -- reviews doer output, can reopen tasks
-//   deployer          -- follows deploy.md + integ-test-playbook.md (setup/reset/teardown)
-//   integ-test-runner -- executes tests, closes features, files bugs/enhancements
+//   deployer          -- follows deploy.md ONLY (deploy + smoke test); never the playbook
+//   integ-test-runner -- owns integ-test-playbook.md end to end (setup/reset/teardown),
+//                        executes tests, closes features, files bugs/enhancements
 //   ci-watcher        -- polls CI; creates beads task if not configured
 //   harvester         -- docs, CHANGELOG, token summary, PR
 //
@@ -580,7 +581,8 @@ function parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds) {
 // parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks in the
 // subtree by model, ordered by min priority.
 // readyListIdx is the explicit index of the ready-tasks JSON command in outputs[].
-function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
+// rootIds (optional): sprint-root ids to exclude from dispatchable leaf work.
+function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel, rootIds) {
   if (!Array.isArray(outputs) || outputs.length < readyListIdx + 1) return { totalCount: 0, streaks: [] };
   const subtree = collectSubtreeIds(outputs, rootCount);
   let readyTasks = [];
@@ -588,6 +590,17 @@ function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
     const all = JSON.parse(outputs[readyListIdx]);
     readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
   } catch { readyTasks = []; }
+
+  // Dispatch-time leaf filter (GRAPH-SEMANTICS.md): decomposed items are GROUPED via
+  // --parent, never dep-blocked by their own children, so a sprint root or a bead with
+  // children can itself show up as "ready". It must not be dispatched as leaf work --
+  // exclude the sprint roots and any bead that has dotted-ID descendants in the subtree
+  // (beads expresses parent->child as <parent>.<n> ids). This is the dispatch-time
+  // filter the canonical doc prescribes instead of parent->child blocks edges.
+  const rootSet = new Set(Array.isArray(rootIds) ? rootIds : []);
+  const subtreeArr = Array.from(subtree);
+  readyTasks = readyTasks.filter(t =>
+    !rootSet.has(t.id) && !subtreeArr.some(id => id.indexOf(t.id + '.') === 0));
 
   // Hoist the known-tiers set and reverse map outside the loop (constant across tasks).
   const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
@@ -1179,6 +1192,7 @@ function loadRoleSchema(role) {
 const REVIEW_SCHEMA      = loadRoleSchema('reviewer');
 const PLAN_REVIEW_SCHEMA = loadRoleSchema('plan-reviewer');
 const DOER_STATUS_SCHEMA = loadRoleSchema('doer');
+const DEPLOYER_SCHEMA    = loadRoleSchema('deployer');
 const INTEG_RUN_SCHEMA   = loadRoleSchema('integ-test-runner');
 const CI_SCHEMA          = loadRoleSchema('ci-watcher');
 const HARVEST_SCHEMA     = loadRoleSchema('harvester');
@@ -1339,7 +1353,7 @@ async function getReadyStreaks(rootIds) {
     `bd list --ready --type=task --json | ${taskExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop' });
-  return parseReadyStreaks(r?.outputs, rootIds.length, rootIds.length, TIER_STANDARD);
+  return parseReadyStreaks(r?.outputs, rootIds.length, rootIds.length, TIER_STANDARD, rootIds);
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
@@ -1851,28 +1865,30 @@ while (cycleCount < maxCycles) {
       `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
       `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
       `\n` +
-      `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
-      `The correct wiring direction is: parents depend on children (children unblock first).\n` +
+      `DEPENDENCY WIRING -- follow your runbook (agents/planner.md) and the canonical rules in\n` +
+      `agents/_shared/GRAPH-SEMANTICS.md exactly: parent-child (via --parent) is for GROUPING\n` +
+      `only; blocks (via "bd dep add A B", meaning A cannot close until B is done) is for\n` +
+      `ORDERING between siblings only. NEVER add a blocks edge between a bead and its own\n` +
+      `--parent ancestor/descendant, in either direction -- a --parent edge plus a blocks edge\n` +
+      `between the same two beads deadlocks both, and "bd dep cycles" will NOT warn you.\n` +
       `\n` +
-      `  Step 1 -- wire sprint goal -> child (goal waits for children):\n` +
-      `    bd dep add <goal-id> <child-id>\n` +
-      `    After this: "bd ready" will NOT show the sprint goal (it's waiting). Children show as ready.\n` +
+      `  Step 1 -- group: break each sprint goal into child issues with\n` +
+      `    bd create --parent <goal-id> (type=feature for sub-goals, type=task for leaf work),\n` +
+      `    and parent each feature's tasks with bd create --parent <feature-id>.\n` +
+      `    A parent's "not done until its children close" status comes from its children --\n` +
+      `    do NOT bd dep add <goal-id> <child-id> or bd dep add <feature-id> <task-id>.\n` +
       `\n` +
-      `  Step 2 -- wire feature -> tasks (feature waits for tasks):\n` +
-      `    bd dep add <feature-id> <impl-task-id>\n` +
-      `    bd dep add <feature-id> <test-task-id>\n` +
-      `    After this: "bd ready" will show impl-task (the leaf). Feature is now blocked.\n` +
+      `  Step 2 -- order siblings: bd dep add <test-task-id> <impl-task-id> (test task blocked\n` +
+      `    until the impl task closes -- correct: they are siblings). Same pattern for any\n` +
+      `    later sibling task that depends on an earlier one.\n` +
       `\n` +
-      `  Step 3 -- wire test after impl:\n` +
-      `    bd dep add <test-task-id> <impl-task-id>\n` +
-      `    After this: "bd ready" shows only impl-task. test-task unblocks once impl-task closes.\n` +
-      `\n` +
-      `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT sprint goals or blocked parents.\n` +
-      `  If sprint goals appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
+      `  VERIFY after wiring: run "bd list --parent <goal-id> --ready --json" for each sprint\n` +
+      `  goal -- it must be non-empty while open work exists under that goal. If it is empty,\n` +
+      `  there is a cycle: find the blocks edge pointing at a --parent ancestor/descendant\n` +
+      `  and remove it with bd dep remove.\n` +
       `\n` +
       `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
       `\n` +
-      `  Break each sprint goal into child issues: bd create --parent <goal-id> (use type=feature for sub-goals, type=task for leaf work).\n` +
       `  Create type=task issues for each feature: implementation tasks AND integration\n` +
       `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
       `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
@@ -1913,11 +1929,12 @@ while (cycleCount < maxCycles) {
       `Run: bd show <id> to inspect individual issues in depth.\n` +
       `Run: bd ready -- this is your FIRST correctness check.\n` +
       `Do NOT review or comment on issues outside these sprint goals.\n\n` +
-      `Follow your runbook (plan-reviewer.md) step by step:\n` +
+      `Follow your runbook (agents/plan-reviewer.md) step by step:\n` +
       `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
       `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
-      `    from beads metadata. If a task has no model metadata, note it in your verdict\n` +
-      `    notes as a warning but do NOT return CHANGES_NEEDED for it -- the workflow has a fallback.\n` +
+      `    from beads metadata. If a task has no model metadata, flag it as a criterion-10\n` +
+      `    CHANGES_NEEDED finding per your runbook, and use the standard-tier fallback only\n` +
+      `    to finish classifying/reporting in the same pass.\n` +
       `  Step 4: return verdict, notes, and taskAssignments (id + bucket + model per task).\n\n` +
       `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
       `any dependency direction problems.`,
@@ -2116,7 +2133,7 @@ while (cycleCount < maxCycles) {
             `  - Implement the work for task ${w.id} INSIDE ${repo}/${w.path} ONLY (code, tests, config -- whatever it requires).\n` +
             `  - Commit in that worktree: git -C "${repo}/${w.path}" add -A && git -C "${repo}/${w.path}" -c user.name='doer' -c user.email='doer@pm.local' commit -m "impl ${w.id}"\n` +
             `  - Do NOT run ANY bd command. Do NOT touch the main checkout or the ${branch} branch. Do NOT push. Do NOT run git merge.\n` +
-            `Return status "VERIFY". Always return VERIFY -- never anything else.`,
+            `Return status "VERIFY" when done. Return status "BLOCKED" only for your runbook's blocked cases (missing secret) -- never any other status.`,
             { model: w.model, label: `doer-c${cycleCount}-i${devIter}-${w.id}`, phase: 'Develop', schema: DOER_STATUS_SCHEMA,
               agentType: 'doer', context: `task ${w.id} (worktree)` }
           ).then(r => ({ w, ok: !!r && r.status === 'VERIFY' })).catch(() => ({ w, ok: false }))
@@ -2207,7 +2224,8 @@ while (cycleCount < maxCycles) {
         `  - Closed tasks are durable even if the doer crashes mid-streak\n` +
         `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
         `Work all listed tasks then stop and return status "VERIFY".\n` +
-        `Always return VERIFY -- never return anything else.`,
+        `Return status "BLOCKED" only for your runbook's blocked cases (agents/doer.md:\n` +
+        `missing secret, unspecified branch) -- never any other status.`,
         { model: streak.model, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer',
           context: `tasks ${fittedIds.join(', ')}` }
       );
@@ -2230,8 +2248,17 @@ while (cycleCount < maxCycles) {
       }
 
       if (doerResult.status !== 'VERIFY') {
-        log(`Unexpected doer status "${doerResult.status}" -- aborting`);
-        abortReason = 'unexpected doer status';
+        const _doerNotes = (doerResult.notes || '').slice(0, 200);
+        if (doerResult.status === 'BLOCKED') {
+          // Contract case (doer-output.json enum): the doer hit a runbook blocker
+          // (missing secret/branch). Not a malfunction -- abort with the blocker so the
+          // user can resolve it and re-run.
+          log(`Doer BLOCKED (streak ${streak.model}): ${_doerNotes || 'no details'} -- aborting sprint`);
+          abortReason = `doer blocked: ${_doerNotes || 'no details'}`;
+        } else {
+          log(`Unexpected doer status "${doerResult.status}" -- aborting`);
+          abortReason = 'unexpected doer status';
+        }
         streakAbort = true;
         break;
       }
@@ -2264,7 +2291,9 @@ while (cycleCount < maxCycles) {
       `Run: git -C "${repo}" diff ${base_branch}...${branch} to see the changes.\n` +
       `Do NOT comment on code or issues outside the listed tasks.\n` +
       `Check: code correctness, test coverage, adherence to each task's acceptance criteria.\n` +
-      `If a task needs rework, reopen it: bd update <id> --status=open\n` +
+      `Follow your runbook (agents/reviewer.md): run NO bd mutations yourself. If a task\n` +
+      `needs rework, list its id in reopenIds in your structured output -- the workflow\n` +
+      `applies the reopen transitions for you.\n` +
       `CHANGES_NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
       `APPROVED means all committed work meets acceptance criteria.`,
       { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer',
@@ -2275,6 +2304,34 @@ while (cycleCount < maxCycles) {
     if (!approved(review)) {
       devFeedback = (review && review.notes) || '';
       log(`Reviewer feedback: ${devFeedback.slice(0, 120)}`);
+
+      // Apply the reviewer's structured verdict. The reviewer is a pure reader of
+      // beads (agents/reviewer.md: never bd update/close/create) -- the WORKFLOW owns
+      // the reopen/create transitions, otherwise CHANGES_NEEDED tasks stay closed and
+      // the next iteration exits Develop as if the review had passed.
+      const _reopenAll = Array.isArray(review && review.reopenIds) ? review.reopenIds : [];
+      const _reopenIds = _reopenAll.filter(id => workedIds.includes(id));
+      if (_reopenAll.length > _reopenIds.length) {
+        log(`Reviewer listed ${_reopenAll.length - _reopenIds.length} reopenId(s) outside this iteration's worked tasks -- ignored`);
+      }
+      const _newTasks = Array.isArray(review && review.newTasks) ? review.newTasks : [];
+      const _shQuote = s => String(s || '').replace(/"/g, "'");
+      const _prioNum = p => { const m = String(p || '').match(/[0-4]/); return m ? m[0] : '2'; };
+      const applyCmds = [
+        ..._reopenIds.map(id => `bd update ${id} --status=open`),
+        ..._newTasks.map(t =>
+          `bd create --title="${_shQuote(t.title || 'review follow-up').slice(0, 120)}" ` +
+          `--description="${_shQuote(t.description).slice(0, 500)}" ` +
+          `--type=task --priority=${_prioNum(t.priority)} --parent=${rootIds[0]}`
+        ),
+      ];
+      if (applyCmds.length > 0) {
+        await dispatchShell(applyCmds, {
+          model: MODEL_HAIKU, label: `review-apply-c${cycleCount}-i${devIter}`, phase: 'Develop',
+          maxTurns: applyCmds.length + 2,
+        });
+        log(`Applied review verdict: ${_reopenIds.length} task(s) reopened, ${_newTasks.length} follow-up task(s) created`);
+      }
       // Fire-and-forget: write feedback.md to disk only -- next doer's 'git add -A' picks it up.
       // The plan-reviewer commitFeedback (below) MUST remain awaited and commit+push so the
       // planner can read it from remote. Dev-path feedback is local-only.
@@ -2316,79 +2373,71 @@ while (cycleCount < maxCycles) {
     await stamp(`test-c${cycleCount}`);
 
     // -- Deploy --
+    // Role split (agents/deployer.md, agents/integ-test-runner.md): the deployer follows
+    // deploy.md ONLY (deploy + smoke test) -- the playbook's Setup/Reset/Teardown belong
+    // to integ-test-runner, which owns integ-test-playbook.md end to end. The deployer
+    // refuses playbook operations by contract, so never dispatch them to it.
     const deployLabel = `deployer-c${cycleCount}`;
     const deployResult = await dispatch(
-      `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n\n` +
-      `Follow the integration test playbook and deploy.md:\n` +
-      (cycleCount === 1
-        ? `1. Run the Setup section of integ-test-playbook.md to bring up the test environment.\n`
-        : `1. Run the Reset section of integ-test-playbook.md to restore pristine state.\n`) +
-      `2. Follow all steps in deploy.md to deploy the build.\n` +
-      `3. Run the smoke test defined in deploy.md.\n` +
-      `4. Return deployed: true if the smoke test passes, false otherwise.\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
+      `operation: deploy\n\n` +
+      `Follow your runbook (agents/deployer.md) -- deploy.md ONLY; you do not touch\n` +
+      `integ-test-playbook.md (its Setup/Reset/Teardown belong to integ-test-runner):\n` +
+      `1. Read deploy.md (Deploy, Smoke test, and CI sections).\n` +
+      `2. Execute every command in the '## Deploy' section in order.\n` +
+      `3. Run the command in '## Smoke test'.\n` +
+      `4. Return deployed: true if the smoke test exits 0, false otherwise.\n` +
       `5. If deployed is false, include the error output in notes.`,
       { model: MODEL_SONNET, label: deployLabel, phase: 'Test', agentType: 'deployer',
-        schema: { type: 'object', required: ['deployed'], properties: {
-          deployed: { type: 'boolean' }, notes: { type: 'string' } } } }
+        schema: DEPLOYER_SCHEMA }
     );
 
     if (!deployResult || !deployResult.deployed) {
       const msg = (deployResult && deployResult.notes) || 'no details';
       log(`Deploy failed on cycle ${cycleCount}: ${msg.slice(0, 200)}`);
-      log('Skipping integration tests this cycle -- teardown and continue');
-      // Teardown before next cycle
-      await dispatch(
-        `Run the Teardown section of integ-test-playbook.md to clean up the test environment.`,
-        { model: MODEL_SONNET, label: `teardown-c${cycleCount}-fail`, phase: 'Test', agentType: 'deployer' }
-      );
+      log('Skipping integration tests this cycle -- the test sandbox was never brought up (integ-test-runner owns it), nothing to tear down');
     } else {
       // -- Integration test run (scoped to THIS sprint's open features) --
       // Scope the tester to the sprint subtree's open features. Do NOT let it `bd list
       // --type=feature --status=open` (every open feature in the whole DB) -- that would
       // test/close/file-bugs against unrelated features from other epics/sprints.
+      // An EMPTY feature list still dispatches the runner: the playbook's two parts are
+      // the sprint's standing confidence check (integ-test-runner.md Step 1).
       const _sprintFeatures = await getSprintOpenFeatures(rootIds);
-      if (_sprintFeatures.length === 0) {
-        log('No open features in the sprint subtree -- skipping integration tests this cycle.');
-      } else {
-        const integLabel = `integ-runner-c${cycleCount}`;
-        const _featList = _sprintFeatures.map(f => `  ${f.id} -- ${f.title}`).join('\n');
-        log(`Integration scope: ${_sprintFeatures.length} sprint feature(s) [${labelTaskIds(_sprintFeatures.map(f => f.id))}]`);
+      const integLabel = `integ-runner-c${cycleCount}`;
+      const _featList = _sprintFeatures.length > 0
+        ? _sprintFeatures.map(f => `  ${f.id} -- ${f.title}`).join('\n')
+        : `  (none -- zero open features this cycle; a normal outcome, run the playbook parts only)`;
+      log(`Integration scope: ${_sprintFeatures.length} sprint feature(s)${_sprintFeatures.length ? ` [${labelTaskIds(_sprintFeatures.map(f => f.id))}]` : ''}`);
 
-        const integResult = await dispatch(
-          `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
-          `Sprint goals: ${rootSummary}\n\n` +
-          `Integration-test ONLY these open features from THIS sprint. Do NOT list, test, close, ` +
-          `or file bugs against any beads issue that is not in this list (do NOT run ` +
-          `"bd list --type=feature"):\n${_featList}\n\n` +
-          `For each feature above:\n` +
-          `  Run "bd show <feature-id>" to read its acceptance criteria, then execute its integration tests.\n` +
-          `  PASS: all tests pass -> bd close <feature-id>\n` +
-          `  FAIL: tests fail -> bd create --title="[integ] <description>" ` +
-          `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
-          `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
-          `  Keep feature open on failure or if inconclusive.\n\n` +
-          `Priority rules:\n` +
-          `  P0: system won't start or core path completely broken\n` +
-          `  P1: requirement from sprint goal explicitly not met\n` +
-          `  P2: requirement partially met, degraded behaviour\n` +
-          `  P3: quality, performance, or UX issue not blocking core function\n\n` +
-          `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
-          `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
-          { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
-        );
-        if (integResult) {
-          log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
-          log(`Summary: ${integResult.summary}`);
-        }
+      const integResult = await dispatch(
+        `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
+        `Sprint goals: ${rootSummary}\n\n` +
+        `Follow your runbook (agents/integ-test-runner.md). You own integ-test-playbook.md\n` +
+        `end to end: run part 1 (the real functional suite), bring the sandbox up with the\n` +
+        `playbook's ${cycleCount === 1 ? '## Setup' : '## Reset'} section, run the smoke scenario and the per-feature\n` +
+        `tests inside it, and ALWAYS run the playbook's ## Teardown before returning --\n` +
+        `pass or fail. The product deploy (deploy.md) has already been done by the deployer.\n\n` +
+        `Integration-test ONLY these open features from THIS sprint. Do NOT list, test, close, ` +
+        `or file bugs against any beads issue that is not in this list (do NOT run ` +
+        `"bd list --type=feature"):\n${_featList}\n\n` +
+        `Per-feature testing (bd show -> run its tests -> bd close on pass, keep open on ` +
+        `failure/inconclusive), [integ] bug filing, priority rules, and duplicate checks ` +
+        `(bd search "[integ]") are all in your runbook -- follow it. Parent every new ` +
+        `[integ] bug under sprint root ${rootIds[0]} (the scope for this dispatch).\n\n` +
+        `Return the full contract: featuresClosed (count), issuesCreated (count), ` +
+        `passed (boolean), bugsFiled (array of created bug ids, [] if none), ` +
+        `summary (one paragraph, including the part 1 result line).`,
+        { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
+      );
+      if (integResult) {
+        log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created, passed=${integResult.passed}`);
+        log(`Summary: ${integResult.summary}`);
       }
 
-      // -- Teardown --
-      await dispatch(
-        `Run the Teardown section of integ-test-playbook.md to fully clean up the test environment.`,
-        { model: MODEL_SONNET, label: `teardown-c${cycleCount}`, phase: 'Test', agentType: 'deployer' }
-      );
-
-      // JIT flush: append test-phase entries (deployer, integ-runner, teardown) immediately.
+      // JIT flush: append test-phase entries (deployer, integ-runner) immediately.
+      // No separate teardown dispatch: the runner runs the playbook's Teardown itself,
+      // always, before returning (agents/integ-test-runner.md Step 4).
       await appendNewEntries(`test-c${cycleCount}`, 'Test');
     }
   }
@@ -2416,7 +2465,7 @@ while (cycleCount < maxCycles) {
       blockers = parseBlockers(exitResult.outputs, rootIds.length, rootIds.length, threshold, rootIds);
       // Ready streaks prefetched but not used: develop loop already determined no ready tasks.
       // Parsed here to validate the merged output; result discarded at cycle end.
-      parseReadyStreaks(exitResult.outputs, rootIds.length, rootIds.length + 1, TIER_STANDARD);
+      parseReadyStreaks(exitResult.outputs, rootIds.length, rootIds.length + 1, TIER_STANDARD, rootIds);
     } else {
       // Fallback: outputs too short (agent returned partial results) -- use separate dispatches.
       log('exit-check: outputs.length < rootCount+2 -- falling back to separate dispatches');
@@ -2677,6 +2726,8 @@ let ciResult = null;
 if (prNumber) {
   ciResult = await dispatch(
     `Check CI status for PR #${prNumber} on branch ${branch}.\n` +
+    `This is a PR-scoped dispatch (prNumber supplied -- see agents/ci-watcher.md Inputs);\n` +
+    `the branch+expectedHeadSha form does not apply here.\n` +
     `Run: gh run list --pr ${prNumber} --limit 3 --json status,conclusion,databaseId\n` +
     `If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n` +
     `If runs exist and conclusion is "success": return status "green".\n` +

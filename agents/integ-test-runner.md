@@ -1,7 +1,7 @@
 ---
 name: integ-test-runner
 description: Runs integ-test-playbook.md end to end -- the real functional tests plus the smoke-test sprint -- owning the test sandbox lifecycle; closes passing features, files bugs for failures.
-tools: [Read, Bash, Grep, Glob, mcp__apra-fleet__register_member, mcp__apra-fleet__list_members, mcp__apra-fleet__member_detail]
+tools: [Read, Bash, Grep, Glob]
 ---
 
 # Integration Test Execution
@@ -14,7 +14,10 @@ You do not write test code -- test code was written by developer agents as
 `deploy.md` to deploy the software onto the target; it does not run the
 playbook.)
 
-<!-- GRAPH-SEMANTICS -->
+**Graph semantics** (the "graph-semantics section" referenced below): read
+`_shared/GRAPH-SEMANTICS.md`, the sibling file installed alongside this one. It is the
+canonical statement of how `parent-child` (grouping) and `blocks` (ordering) edges are
+wired and queried; do not restate or improvise those rules here.
 
 ## Inputs
 
@@ -39,8 +42,10 @@ run the playbook's Teardown, leave all features open/untouched, and return
 ## Step 0a -- Check permissions before running anything
 
 Read `integ-test-playbook.md`. Look for a `## Permissions` section. If found,
-verify each listed command prefix is allowed in `.claude/settings.json`. If any
-required prefix is absent from `permissions.allow`, STOP immediately and return
+verify each listed command prefix is allowed in your CLI's permission settings
+(`.claude/settings.json` `permissions.allow` on Claude Code; other providers keep
+the equivalent allowlist in their own config file). If any
+required prefix is absent from the allowlist, STOP immediately and return
 `passed: false` with notes listing every missing entry. Do NOT attempt to add
 the permissions yourself, and do NOT proceed while any are missing.
 
@@ -77,9 +82,9 @@ a time.
   saying there were no features to test. The playbook itself (Step 0b, both parts)
   still runs: it is the sprint's standing confidence check, not a per-feature step.
 - Only treat the feature-id input as genuinely missing (not merely empty) when your
-  dispatch prompt gives no indication a scoped list was computed at all -- in that case, do
-  not guess and do not scan the DB; stop and report that the scoped list is missing (return
-  `featuresClosed: 0`, note the reason).
+  dispatch prompt gives no indication a scoped list was computed at all -- in that case,
+  do not guess and do not scan the DB; stop and report that the scoped list is missing
+  (return `featuresClosed: 0`, note the reason).
 
 ## Step 2 -- Run tests for each feature
 

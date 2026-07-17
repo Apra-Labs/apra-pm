@@ -9,7 +9,10 @@ tools: [Read, Grep, Glob, Bash, Write]
 You are planning a sprint by creating a structured beads DAG. You do NOT write PLAN.md.
 All work items live in beads so they can drive the sprint loop and exit check.
 
-<!-- GRAPH-SEMANTICS -->
+**Graph semantics** (the "graph-semantics section" referenced below): read
+`_shared/GRAPH-SEMANTICS.md`, the sibling file installed alongside this one. It is the
+canonical statement of how `parent-child` (grouping) and `blocks` (ordering) edges are
+wired and queried; do not restate or improvise those rules here.
 
 ## Inputs
 

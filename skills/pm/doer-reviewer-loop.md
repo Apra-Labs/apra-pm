@@ -2,8 +2,9 @@
 
 The execute-phase loop for one track. Every dispatch is an inline subagent call (its
 result returns in the same turn). Beads is the task store; the reviewer's verdict is
-returned as structured output directly to the orchestrator. The doer finds work with
-`bd ready`, claims it with `bd update --claim`, and closes it with `bd close`. The
+returned as structured output directly to the orchestrator. The orchestrator finds
+ready work with `bd ready` and hands the doer explicit bead ids; the doer claims each
+with `bd update --claim` and closes it with `bd close`. The
 reviewer reads acceptance criteria with `bd show` and returns its verdict
 (`verdict`/`notes`/`reopenIds`/`newTasks`) as structured output -- it never touches
 beads. On CHANGES NEEDED the orchestrator reads that structured output and runs the
@@ -38,7 +39,7 @@ covers the wrong diff.
 
 ```
 Plan APPROVED, beads tasks created (each with acceptance criteria + model tier in
-notes). goal priority = the sprint's exit threshold.
+metadata). goal priority = the sprint's exit threshold.
   loop:
     1. Find ready tasks: bd ready (tasks with no open blockers, in the sprint-root subtree).
        If none AND bd list --status=open at the goal priority is empty AND the last
@@ -162,7 +163,8 @@ complexity bucket (S = 1 file/narrow scope, M = 2-3 files/moderate logic,
 L = 3+ files/non-trivial design) and read its assigned model tier from its metadata.
 
 Return your structured output ONLY -- do not write a file:
-  - `verdict`: APPROVED or CHANGES NEEDED
+  - `verdict`: APPROVED or CHANGES_NEEDED (exact strings; the machine value is the
+    underscore form from agents/schemas/plan-reviewer-output.json)
   - `notes`: specific findings with issue IDs and exact bd commands to fix any
     dependency direction problems
   - `taskAssignments`: one entry per task in JSON array form:
@@ -211,7 +213,9 @@ Do NOT run any bd commands. Return your structured output ONLY -- do not write a
   notes: <human-readable notes: one finding per task, referencing the task ID and what
   acceptance criterion was not met>
   reopenIds: ["<id1>", "<id2>"]
-  newTasks: [{"title": "fix: <finding>", "notes": "<detail>", "priority": 0}]
+  newTasks: [{"title": "fix: <finding>", "description": "<detail>", "priority": "P2"}]
+  (newTasks entries use {title, description, priority-as-string} -- the exact shape in
+  agents/schemas/reviewer-output.json)
 
 On APPROVED: reopenIds and newTasks are both empty arrays.
 On CHANGES NEEDED: reopenIds lists every task that failed its acceptance criteria;
@@ -232,7 +236,7 @@ beads updates itself -- the reviewer is a pure reader of beads:
    - Read `reopenIds`. For each id: `bd update <id> --status=open --notes="<relevant finding from notes>"`.
      Reopened tasks return to `bd ready` next iteration.
    - Read `newTasks`. For each entry:
-     `bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --acceptance="<notes>"`.
+     `bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --description="<description>"`.
      Empty array `[]` means no new tasks to create.
 3. On APPROVED: no beads action needed.
 

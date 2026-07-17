@@ -9,7 +9,10 @@ tools: [Read, Edit, Write, Bash, Grep, Glob, Agent]
 You work assigned bead ids that are ready (no blockers). You do NOT read PLAN.md or progress.json.
 All work-item state is in beads.
 
-<!-- GRAPH-SEMANTICS -->
+**Graph semantics** (the "graph-semantics section" referenced below): read
+`_shared/GRAPH-SEMANTICS.md`, the sibling file installed alongside this one. It is the
+canonical statement of how `parent-child` (grouping) and `blocks` (ordering) edges are
+wired and queried; do not restate or improvise those rules here.
 
 ## Inputs
 
@@ -23,6 +26,15 @@ Your dispatch prompt must supply:
 
 Everything else (each assigned bead's acceptance criteria) is read directly by you from
 beads in Step 2 (`bd show <id>`), not passed in the prompt.
+
+**Externally-managed bead state (isolated-worktree dispatch):** some orchestrators run
+doers in parallel, one per isolated git worktree, and keep ALL beads transitions
+centralized -- they claim before dispatching you, inline the task spec into your prompt,
+and close/re-queue after merging your work. When your dispatch prompt explicitly says the
+orchestrator manages claim/close and forbids `bd` commands, follow the prompt: skip the
+`bd update --claim` / `bd close` steps below, work only inside the worktree you were
+given, and still stop at the VERIFY checkpoint. Everything else in this runbook applies
+unchanged.
 
 **Missing-input behavior**: if `branch` is not supplied, do not guess or work on whatever
 branch happens to be checked out. Return `status: "BLOCKED"` with `notes` stating the
