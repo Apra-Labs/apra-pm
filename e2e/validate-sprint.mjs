@@ -9,7 +9,16 @@
 //   3. final-changeset-clean  the PR's net diff carries NO process scaffolding
 //                             (requirements.md, feedback.md)
 //   4. process-discipline     those scaffolding files DID appear in intermediate commits
-//                             AND feedback.md contained an APPROVED/CHANGES NEEDED verdict
+//                             AND feedback.md contained an APPROVED/CHANGES NEEDED verdict.
+//                             skills/pm/*.md forbids the reviewer/plan-reviewer from ever
+//                             writing feedback.md (structured output only), so every
+//                             skill-driven suite (s1/s7/s8/s9) excludes this gate. s10 runs
+//                             .claude/workflows/auto-sprint.js instead, which still writes
+//                             and strips feedback.md as a file-based message bus, but it
+//                             excludes the gate too (see suites.json history) -- so no
+//                             suite currently exercises it. Left in place for a future
+//                             suite that wants to assert on auto-sprint.js's feedback.md
+//                             mechanism specifically.
 //   5. planner-created-tasks  a "plan:" commit exists in the branch history
 //   6. beads-closed           P1 issues were closed (from any durable source)
 //   7. beads-sprint-closed    P1 closures evidenced in committed branch .beads/*.jsonl
