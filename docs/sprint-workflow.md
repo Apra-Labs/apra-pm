@@ -108,7 +108,8 @@ notifies the team. CI setup enters the normal develop loop like any other task.
 ### 3. integ-test-playbook.md
 
 A runbook for the integration test environment -- separate from the application
-deployment. Teams write this once per project; agents follow it every cycle.
+deployment. Teams write this once per project; the integ-test-runner agent
+(not the deployer, which only follows deploy.md) executes it every cycle.
 
 Required sections:
 
@@ -138,7 +139,8 @@ proceeds to harvest. The team will not receive integration test feedback.
 The workflow reads the `## Permissions` sections from both `deploy.md` and
 `integ-test-playbook.md` at startup and merges them into `.claude/settings.json`
 before any agent is dispatched. If a `## Permissions` section is missing or
-incomplete, the deployer will hit interactive prompts and block.
+incomplete, the executing agent (deployer for `deploy.md`, integ-test-runner
+for the playbook) will hit interactive prompts and block.
 
 ```bash
 cat .claude/settings.json | jq '.permissions.allow'
