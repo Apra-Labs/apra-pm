@@ -39,15 +39,36 @@ function loadStrippedSchema(role) {
   return rest;
 }
 
-test('auto-sprint.js has no module-scope require(\'fs\')/require(\'path\') -- it runs in the Workflow tool sandbox, which has neither', () => {
+// Strips block comments, line comments, and all string/template literals from a JS
+// source so what remains is only real executable code. Needed because auto-sprint.js
+// legitimately contains dozens of `require('fs')` occurrences INSIDE backtick
+// template literals -- those build `node -e "..."` shell command strings for a
+// separate, real Node subprocess the doer/Haiku dispatch actually runs (outside the
+// Workflow sandbox), and are not require() calls the Workflow engine itself would
+// ever try to evaluate. A require() call must never appear in what's left after
+// stripping -- that would mean the Workflow script body itself calls require(),
+// which always crashes ("require is not defined") since the sandbox has none.
+function stripStringsAndComments(src) {
+  // Order matters: template literals first (may contain quotes), then line/block
+  // comments, then single/double-quoted strings. `[^\\]` + escaped-char alternation
+  // handles backslash-escaped delimiters/backslashes well enough for this file (no
+  // nested template literals with backticks inside ${...} are used here).
+  return src
+    .replace(/`(?:\\.|[^`\\])*`/gs, '``')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''");
+}
+
+test('auto-sprint.js has no real require() call anywhere in its executable script body -- the Workflow tool sandbox has neither filesystem nor require access', () => {
   const src = readFileSync(targetFile, 'utf-8');
-  // Scoped to the specific `const fs = require('fs')` / `const path = require('path')`
-  // module-scope statements the schema loader used to have -- NOT the many
-  // `node -e "...require('fs')..."` strings elsewhere in the file, which build shell
-  // commands for a separate `node -e` subprocess the doer/Haiku dispatch actually runs
-  // (real Node, outside the Workflow sandbox) and are legitimate.
-  assert.doesNotMatch(src, /^\s*const fs\s*=\s*require\(\s*['"]fs['"]\s*\)/m, 'auto-sprint.js must not require(\'fs\') at module scope -- the Workflow sandbox has no filesystem access');
-  assert.doesNotMatch(src, /^\s*const path\s*=\s*require\(\s*['"]path['"]\s*\)/m, 'auto-sprint.js must not require(\'path\') at module scope -- the Workflow sandbox has no filesystem access');
+  const stripped = stripStringsAndComments(src);
+  // This intentionally catches ANY require(...) left in real code, not just the
+  // specific `const fs = require('fs')` / `const path = require('path')` statements
+  // the old runtime schema loader had -- a future addition anywhere in the file must
+  // fail here too, since the Workflow sandbox rejects require() unconditionally.
+  assert.doesNotMatch(stripped, /\brequire\s*\(/, 'auto-sprint.js must not call require() anywhere in its executable script body -- the Workflow tool sandbox has no filesystem/require access ("require is not defined" crashed apra-pm e2e s10 on 2026-07-17, run 29605783512)');
   assert.doesNotMatch(src, /loadRoleSchema/, 'auto-sprint.js must not load role schemas from disk at runtime -- they must be inlined at build time by scripts/gen-auto-sprint-schemas.mjs');
 });
 
