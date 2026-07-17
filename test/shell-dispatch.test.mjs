@@ -95,9 +95,14 @@ test('parseReadyStreaks: defaults model when metadata missing', () => {
   assert.equal(r.streaks[0].model, MODEL_SONNET);
 });
 
-test('parseReadyStreaks: empty/garbage => {0, []}', () => {
-  assert.deepEqual(parseReadyStreaks(undefined, 1, 1, MODEL_SONNET), { totalCount: 0, streaks: [] });
-  assert.deepEqual(parseReadyStreaks(['BD-1', 'oops'], 1, 1, MODEL_SONNET), { totalCount: 0, streaks: [] });
+test('parseReadyStreaks: empty/garbage => {0, [], extractFailed: true}', () => {
+  assert.deepEqual(parseReadyStreaks(undefined, 1, 1, MODEL_SONNET), { totalCount: 0, streaks: [], extractFailed: true });
+  assert.deepEqual(parseReadyStreaks(['BD-1', 'oops'], 1, 1, MODEL_SONNET), { totalCount: 0, streaks: [], extractFailed: true });
+});
+
+test('parseReadyStreaks: a valid empty array is NOT flagged as extractFailed', () => {
+  const r = parseReadyStreaks(['BD-1', '[]'], 1, 1, MODEL_SONNET);
+  assert.deepEqual(r, { totalCount: 0, streaks: [], extractFailed: false });
 });
 
 // ---- parseCycleState (checkCycleState contract) ------------------------------

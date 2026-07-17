@@ -66,8 +66,9 @@ The setup phase has two parts:
    `setup-shell`). Outputs are addressed by fixed index, so the workflow
    never needs to parse shell output by position guesswork.
 
-2. **Free-form setup** -- the deployer agent reads `integ-test-playbook.md`
-   and executes the `## Setup` section. This is a full agent dispatch with
+2. **Free-form setup** -- the integ-test-runner agent (which owns
+   `integ-test-playbook.md`) executes the playbook's `## Setup` section as
+   part of its own dispatch. This is a full agent dispatch with
    `maxTurns: 20` as a backstop (not the default `shellMaxTurns` formula,
    because the command count is not known ahead of time).
 

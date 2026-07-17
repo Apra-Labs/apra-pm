@@ -143,7 +143,7 @@ test('fallback triggers when outputs.length < rootCount+2 (ready streaks empty)'
   // parseReadyStreaks with readyListIdx=3 on a 3-element array -> too short
   const shortOutputs = ['BD-1', 'BD-2', '[]'];  // length=3, readyListIdx=3 -> missing
   const r = parseReadyStreaks(shortOutputs, 2, 3, TIER_STANDARD);
-  assert.deepEqual(r, { totalCount: 0, streaks: [] }, 'should return empty on short outputs');
+  assert.deepEqual(r, { totalCount: 0, streaks: [], extractFailed: true }, 'should return empty + extractFailed on short outputs');
 });
 
 test('fallback check in source: exit-check outputs.length < rootCount+2', () => {

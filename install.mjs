@@ -54,11 +54,19 @@ function requiredPermissions(cfg) {
 // Additional permissions specific to Claude Code (not understood by other providers).
 function claudeOnlyPermissions() {
   return [
-    'Bash(*)',               // required for fire-and-forget log/feedback writes in the develop loop
-    'Skill(auto-sprint)',    // suppress "Use skill 'auto-sprint'?" prompt
-    'Workflow(auto-sprint)', // suppress "Run a dynamic workflow?" prompt
+    'Bash(*)',                    // required for fire-and-forget log/feedback writes in the develop loop
+    'Skill(auto-sprint)',         // suppress "Use skill 'auto-sprint'?" prompt
+    'Skill(auto-sprint-args)',    // suppress prompt for the args-contract helper skill
+    'Workflow(auto-sprint)',      // suppress "Run a dynamic workflow?" prompt
   ];
 }
+
+// The auto-sprint-args helper skill is Claude-only (the /auto-sprint workflow it
+// documents is a Claude Code native dynamic workflow). Source lives in the repo's
+// .claude/skills/; installed into <configDir>/skills/auto-sprint-args/.
+const ARGS_SKILL_NAME = 'auto-sprint-args';
+function argsSkillSrc(root) { return path.join(root, '.claude', 'skills', ARGS_SKILL_NAME); }
+function argsSkillDest(cfg) { return path.join(cfg.configDir, 'skills', ARGS_SKILL_NAME); }
 
 // --- opencode agent transform -----------------------------------------------
 // OpenCode uses a different agent frontmatter schema:
@@ -172,7 +180,7 @@ function uninstall(cfg, agentsSrc) {
   const agentsDest = path.join(cfg.configDir, 'agents');
   const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
-  const removed = { skill: false, agents: [], permsRemoved: 0, workflow: false };
+  const removed = { skill: false, agents: [], schemas: false, shared: false, permsRemoved: 0, workflow: false, argsSkill: false };
 
   // 1) skill directory
   if (fs.existsSync(skillDest)) {
@@ -194,6 +202,21 @@ function uninstall(cfg, agentsSrc) {
     }
   }
 
+  // 2b) agents/schemas -- entirely install()-owned (apra-fleet-unw.21), safe
+  // to remove wholesale, mirroring the skill directory's whole-dir removal.
+  const schemasDest = path.join(agentsDest, 'schemas');
+  if (fs.existsSync(schemasDest)) {
+    fs.rmSync(schemasDest, { recursive: true, force: true });
+    removed.schemas = true;
+  }
+
+  // 2c) agents/_shared -- entirely install()-owned, same whole-dir removal.
+  const sharedDest = path.join(agentsDest, '_shared');
+  if (fs.existsSync(sharedDest)) {
+    fs.rmSync(sharedDest, { recursive: true, force: true });
+    removed.shared = true;
+  }
+
   // 3) permissions -- drop exactly the entries install() would have added.
   if (fs.existsSync(settingsFile)) {
     const settings = readJson(settingsFile);
@@ -213,6 +236,12 @@ function uninstall(cfg, agentsSrc) {
     if (fs.existsSync(workflowDest)) {
       fs.rmSync(workflowDest, { force: true });
       removed.workflow = true;
+    }
+    // 5) claude-only: the auto-sprint-args helper skill directory
+    const skillDest = argsSkillDest(cfg);
+    if (fs.existsSync(skillDest)) {
+      fs.rmSync(skillDest, { recursive: true, force: true });
+      removed.argsSkill = true;
     }
   }
 
@@ -252,9 +281,13 @@ Options:
 What it installs:
   <configDir>/skills/pm/      the skill (SKILL.md + sub-docs)
   <configDir>/agents/*.md     eight sprint agents (see below)
+  <configDir>/agents/schemas/ machine-readable output/input contracts for the seven
+                              structured-output roles (planner has none -- see
+                              agents/planner.md Output schema)
   <configDir>/settings.json   minimal permissions (merged, non-destructive)
   <configDir>/skills/pm/cost.js  pure JS cost functions extracted from auto-sprint.js (all providers)
-  ~/.claude/workflows/auto-sprint.js  native /auto-sprint workflow (claude only)
+  ~/.claude/workflows/auto-sprint.js       native /auto-sprint workflow (claude only)
+  <configDir>/skills/auto-sprint-args/     args-contract helper skill (claude only)
 
 Agents:
   planner            reads open sprint goals, creates feature+task DAG in beads
@@ -286,9 +319,12 @@ function main() {
     const removed = uninstall(cfg, agentsSrc);
     console.log(`  skill        -> ${removed.skill ? 'removed' : 'not found (nothing to do)'}`);
     console.log(`  agents       -> ${removed.agents.length} removed${removed.agents.length ? ` (${removed.agents.join(', ')})` : ''}`);
+    console.log(`  schemas      -> ${removed.schemas ? 'removed' : 'not found (nothing to do)'}`);
+    console.log(`  shared       -> ${removed.shared ? 'removed' : 'not found (nothing to do)'}`);
     console.log(`  permissions  -> ${removed.permsRemoved} removed`);
     if (cfg.name === 'Claude') {
       console.log(`  workflow     -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);
+      console.log(`  args skill   -> ${removed.argsSkill ? 'removed' : 'not found (nothing to do)'}`);
     }
     console.log('');
     console.log('pm uninstalled.');
@@ -326,6 +362,33 @@ function main() {
     fs.writeFileSync(path.join(agentsDest, a), content);
   }
   console.log(`  [2/4] agents  -> ${agentsDest} (${agents.length}: ${agents.map(a => a.replace('.md', '')).join(', ')})`);
+
+  // 2b) agents/schemas -- the machine-readable output/input contracts each
+  // role's Output/Inputs section points at (apra-fleet-unw.21). Copied
+  // alongside agents/*.md so a caller reading <configDir>/agents/schemas/
+  // (e.g. an installed .claude/workflows/auto-sprint.js, see its
+  // loadRoleSchema()) finds them at the same relative location regardless of
+  // provider.
+  const schemasSrc = path.join(agentsSrc, 'schemas');
+  if (fs.existsSync(schemasSrc)) {
+    const schemasDest = path.join(agentsDest, 'schemas');
+    clearDir(schemasDest);
+    copyDir(schemasSrc, schemasDest);
+    const schemaFiles = fs.readdirSync(schemasSrc).filter(f => f.endsWith('.json'));
+    console.log(`  [2/4] schemas -> ${schemasDest} (${schemaFiles.length} files)`);
+  }
+
+  // 2c) agents/_shared -- canonical prose shared across the agent files (e.g.
+  // GRAPH-SEMANTICS.md, which every graph-touching agent points its readers at).
+  // Must ship alongside agents/*.md or those pointers dangle after install.
+  const sharedSrc = path.join(agentsSrc, '_shared');
+  if (fs.existsSync(sharedSrc)) {
+    const sharedDest = path.join(agentsDest, '_shared');
+    clearDir(sharedDest);
+    copyDir(sharedSrc, sharedDest);
+    const sharedFiles = fs.readdirSync(sharedSrc).filter(f => f.endsWith('.md'));
+    console.log(`  [2/4] shared  -> ${sharedDest} (${sharedFiles.length} files)`);
+  }
 
   // 3) permissions
   let added;
@@ -402,6 +465,18 @@ function main() {
       ensureDir(path.dirname(claudeDest));
       fs.copyFileSync(workflowSrc, claudeDest);
       console.log(`        workflow -> ${claudeDest}  (Claude Code native)`);
+
+      // auto-sprint-args helper skill (claude-only): copy the whole skill dir so the
+      // orchestrator can consult the correct arg contract before launching /auto-sprint.
+      const src = argsSkillSrc(ROOT);
+      if (fs.existsSync(src)) {
+        const dest = argsSkillDest(cfg);
+        clearDir(dest);
+        copyDir(src, dest);
+        console.log(`        skill    -> ${dest}  (${ARGS_SKILL_NAME})`);
+      } else {
+        console.error(`  [!] ${ARGS_SKILL_NAME} skill source not found at ${src} -- skill not installed`);
+      }
     }
   }
 
@@ -438,4 +513,4 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   main();
 }
 
-export { claudeOnlyPermissions, requiredPermissions, mergePermissions, uninstall, providerConfig };
+export { claudeOnlyPermissions, requiredPermissions, mergePermissions, uninstall, providerConfig, argsSkillSrc, argsSkillDest, ARGS_SKILL_NAME };

@@ -9,7 +9,16 @@
 //   3. final-changeset-clean  the PR's net diff carries NO process scaffolding
 //                             (requirements.md, feedback.md)
 //   4. process-discipline     those scaffolding files DID appear in intermediate commits
-//                             AND feedback.md contained an APPROVED/CHANGES NEEDED verdict
+//                             AND feedback.md contained an APPROVED/CHANGES NEEDED verdict.
+//                             skills/pm/*.md forbids the reviewer/plan-reviewer from ever
+//                             writing feedback.md (structured output only), so every
+//                             skill-driven suite (s1/s7/s8/s9) excludes this gate. s10 runs
+//                             .claude/workflows/auto-sprint.js instead, which still writes
+//                             and strips feedback.md as a file-based message bus, but it
+//                             excludes the gate too (see suites.json history) -- so no
+//                             suite currently exercises it. Left in place for a future
+//                             suite that wants to assert on auto-sprint.js's feedback.md
+//                             mechanism specifically.
 //   5. planner-created-tasks  a "plan:" commit exists in the branch history
 //   6. beads-closed           P1 issues were closed (from any durable source)
 //   7. beads-sprint-closed    P1 closures evidenced in committed branch .beads/*.jsonl
@@ -19,8 +28,9 @@
 // evaluateGates() is pure (takes gathered facts, returns verdicts) so it is unit
 // testable; validateSprint() gathers those facts from a git clone + the PR object.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import os from 'node:os';
 
 const SCAFFOLD = ['requirements.md', 'feedback.md'];
 const baseName = (p) => p.split('/').pop().toLowerCase();
@@ -81,7 +91,39 @@ export function evaluateGates(d) {
       ? 'harvest artifact found in net diff (docs/, CHANGELOG, or .analysis.md)'
       : 'no harvest artifact in net diff -- harvester may not have run');
 
+  // Suites that drive the /auto-sprint workflow (s10) additionally assert the
+  // auto-sprint-args helper skill is BOTH installed AND actually exercised, so the
+  // skill is proven useful end-to-end, not merely shipped.
+  if (d.expectArgsSkill) {
+    add('args-skill-installed', !!d.argsSkillInstalled,
+      d.argsSkillInstalled
+        ? 'auto-sprint-args skill present in the provider config dir'
+        : 'auto-sprint-args skill NOT installed -- installer did not place it');
+    add('args-skill-used', !!d.argsSkillUsed,
+      d.argsSkillUsed
+        ? 'orchestrator invoked the auto-sprint-args skill before launching /auto-sprint'
+        : 'no auto-sprint-args skill invocation found in the run transcript');
+  }
+
   return { gates, pass: gates.every((g) => g.pass) };
+}
+
+// Was the auto-sprint-args skill invoked (not merely mentioned) in the run log?
+// Matches the stream-json tool-use shape ("skill"/"name": "auto-sprint-args"), which
+// the prose scenario prompt does not produce, so a prompt echo is not a false positive.
+function argsSkillUsedIn(logPath) {
+  if (!logPath) return false;
+  let log = '';
+  try { log = readFileSync(logPath, 'utf-8'); } catch { return false; }
+  return /"(?:skill|name)"\s*:\s*"auto-sprint-args"/.test(log);
+}
+
+// Is the auto-sprint-args skill installed in the provider's config dir? Claude installs
+// it under ~/.claude/skills/auto-sprint-args/. Checked before teardown uninstalls it.
+function argsSkillInstalledFor(provider) {
+  const base = provider === 'claude' ? join(os.homedir(), '.claude') : null;
+  if (!base) return false;
+  return existsSync(join(base, 'skills', 'auto-sprint-args', 'SKILL.md'));
 }
 
 // ---- fact gathering -----------------------------------------------------------
@@ -147,14 +189,18 @@ function bdSaysClosed(repo, id) {
 // Gather facts from the pushed branch and evaluate. `repo` is the local clone whose
 // origin is the toy; the branch is fetched fresh so this works even though the work
 // was done in a worktree sharing the same .git.
-export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssues = 3, excludeGates = [] }) {
+export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssues = 3, excludeGates = [], expectArgsSkill = false, logPath = null, provider = 'claude' }) {
+  const argsSkillFacts = expectArgsSkill
+    ? { expectArgsSkill: true, argsSkillInstalled: argsSkillInstalledFor(provider), argsSkillUsed: argsSkillUsedIn(logPath) }
+    : {};
+
   git(repo, ['fetch', '-q', 'origin', 'main']);
   git(repo, ['fetch', '-q', 'origin', branch]);
   const head = (git(repo, ['rev-parse', 'FETCH_HEAD']).stdout || '').trim();
   const base = (git(repo, ['rev-parse', 'origin/main']).stdout || '').trim();
 
   if (!head || !base) {
-    return evaluateGates({ pr, commitCount: 0, realCommitCount: 0, finalFiles: [], touchedBasenames: [], feedbackVerdicts: [], closedP1: [], beadsSprintClosed: [], plannerRan: false, minCommits, expectedIssues, excludeGates });
+    return evaluateGates({ pr, commitCount: 0, realCommitCount: 0, finalFiles: [], touchedBasenames: [], feedbackVerdicts: [], closedP1: [], beadsSprintClosed: [], plannerRan: false, minCommits, expectedIssues, excludeGates, ...argsSkillFacts });
   }
   const range = `${base}..${head}`;
 
@@ -220,5 +266,5 @@ export function validateSprint({ repo, branch, pr, minCommits = 10, expectedIssu
   // C3/C4: closure evidenced in committed branch jsonl (headB), not just disk/live db
   const beadsSprintClosed = candidates.filter(id => isClosed(headB.get(id)));
 
-  return evaluateGates({ pr, commitCount, realCommitCount, finalFiles, touchedBasenames, touchedPaths, feedbackVerdicts, closedP1, beadsSprintClosed, plannerRan, minCommits, expectedIssues, excludeGates });
+  return evaluateGates({ pr, commitCount, realCommitCount, finalFiles, touchedBasenames, touchedPaths, feedbackVerdicts, closedP1, beadsSprintClosed, plannerRan, minCommits, expectedIssues, excludeGates, ...argsSkillFacts });
 }

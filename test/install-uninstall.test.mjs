@@ -25,6 +25,14 @@ function seedInstalledConfigDir(cfg, { withCustomExtras = true } = {}) {
     fs.copyFileSync(path.join(agentsSrc, f), path.join(cfg.configDir, 'agents', f));
   }
 
+  const schemasSrc = path.join(agentsSrc, 'schemas');
+  if (fs.existsSync(schemasSrc)) {
+    fs.mkdirSync(path.join(cfg.configDir, 'agents', 'schemas'), { recursive: true });
+    for (const f of fs.readdirSync(schemasSrc).filter((f) => f.endsWith('.json'))) {
+      fs.copyFileSync(path.join(schemasSrc, f), path.join(cfg.configDir, 'agents', 'schemas', f));
+    }
+  }
+
   const perms = [...requiredPermissions(cfg)];
   if (cfg.name === 'Claude') perms.push(...claudeOnlyPermissions());
   if (withCustomExtras) {
@@ -36,6 +44,8 @@ function seedInstalledConfigDir(cfg, { withCustomExtras = true } = {}) {
   if (cfg.name === 'Claude') {
     fs.mkdirSync(path.join(cfg.configDir, 'workflows'), { recursive: true });
     fs.writeFileSync(path.join(cfg.configDir, 'workflows', 'auto-sprint.js'), '// auto-sprint');
+    fs.mkdirSync(path.join(cfg.configDir, 'skills', 'auto-sprint-args'), { recursive: true });
+    fs.writeFileSync(path.join(cfg.configDir, 'skills', 'auto-sprint-args', 'SKILL.md'), '---\nname: auto-sprint-args\n---\nbody');
     if (withCustomExtras) {
       fs.writeFileSync(path.join(cfg.configDir, 'workflows', 'my-other-workflow.js'), 'keep me');
     }
@@ -71,6 +81,16 @@ test('uninstall() removes only the agent files it installed, leaving the user\'s
   fs.rmSync(cfg.configDir, { recursive: true, force: true });
 });
 
+test('uninstall() removes agents/schemas (apra-fleet-unw.21)', () => {
+  const cfg = makeTmpCfg();
+  seedInstalledConfigDir(cfg);
+  assert.equal(fs.existsSync(path.join(cfg.configDir, 'agents', 'schemas')), true, 'test setup: schemas should have been seeded');
+  const removed = uninstall(cfg, agentsSrc);
+  assert.equal(removed.schemas, true);
+  assert.equal(fs.existsSync(path.join(cfg.configDir, 'agents', 'schemas')), false);
+  fs.rmSync(cfg.configDir, { recursive: true, force: true });
+});
+
 test('uninstall() removes only the permissions it added, leaving user-added permissions', () => {
   const cfg = makeTmpCfg();
   const perms = seedInstalledConfigDir(cfg);
@@ -94,6 +114,17 @@ test('uninstall() removes the claude auto-sprint workflow but leaves other workf
   fs.rmSync(cfg.configDir, { recursive: true, force: true });
 });
 
+test('uninstall() removes the auto-sprint-args skill for Claude', () => {
+  const cfg = makeTmpCfg('Claude');
+  seedInstalledConfigDir(cfg);
+  const removed = uninstall(cfg, agentsSrc);
+  assert.equal(removed.argsSkill, true);
+  assert.equal(fs.existsSync(path.join(cfg.configDir, 'skills', 'auto-sprint-args')), false);
+  // the pm skill and the user's custom agent must still have been handled as before
+  assert.equal(fs.existsSync(path.join(cfg.configDir, 'skills', 'pm')), false);
+  fs.rmSync(cfg.configDir, { recursive: true, force: true });
+});
+
 test('uninstall() does not touch workflows for non-claude providers', () => {
   const cfg = makeTmpCfg('Gemini');
   seedInstalledConfigDir(cfg);
@@ -106,6 +137,6 @@ test('uninstall() is a safe no-op when nothing was ever installed', () => {
   const cfg = makeTmpCfg();
   fs.mkdirSync(cfg.configDir, { recursive: true });
   const removed = uninstall(cfg, agentsSrc);
-  assert.deepEqual(removed, { skill: false, agents: [], permsRemoved: 0, workflow: false });
+  assert.deepEqual(removed, { skill: false, agents: [], schemas: false, shared: false, permsRemoved: 0, workflow: false, argsSkill: false });
   fs.rmSync(cfg.configDir, { recursive: true, force: true });
 });

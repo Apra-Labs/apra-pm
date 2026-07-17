@@ -21,14 +21,18 @@ All sprint state is held in:
 
 - **beads (`bd`), the task DB -- the single source of truth and the message bus:**
   sprint root, tasks, dependencies, assignees, acceptance criteria, model-tier assignment,
-  review findings, backlog, PR link. The planner writes tasks here; the doer reads
-  `bd ready` and claims/closes them; the reviewer reads acceptance criteria with
-  `bd show` and reopens tasks on rework. There is no PLAN.md and no progress.json --
+  review findings, backlog, PR link. The planner writes tasks here; the orchestrator
+  reads `bd ready` and hands the doer explicit bead ids, which the doer claims/closes
+  (the doer never discovers work via bare `bd ready` -- see `agents/doer.md` Step 1);
+  the reviewer reads acceptance criteria with
+  `bd show` and returns `reopenIds` for the orchestrator to reopen -- the reviewer never
+  mutates beads directly. There is no PLAN.md and no progress.json --
   beads holds all task state. See `beads.md`.
 - **git, on each track's branch:** the code, the branch history, and the narrative
-  files `requirements.md`, `design.md`, and `feedback.md` (the reviewer's verdict
-  channel). git carries intent and the committed work; beads carries the plan and
-  progress.
+  files `requirements.md` and `design.md`. The `reviewer`'s verdict is returned as
+  structured output directly to the orchestrator (`verdict`/`notes`/`reopenIds`/
+  `newTasks`), not written to a `feedback.md` file. git carries intent and the
+  committed work; beads carries the plan and progress.
 
 On every dispatch completion and after any restart, re-derive position from beads and
 git -- they are the single source of truth.
@@ -39,7 +43,7 @@ A sprint runs as one or more **cycles**. Each cycle moves through three phases i
 order; a fourth phase runs once at sprint close.
 
 - **Plan** -- dispatch `planner` to write the task DAG into beads (titles,
-  acceptance criteria, model-tier notes, priorities, dependencies), loop
+  acceptance criteria, model-tier metadata, priorities, dependencies), loop
   `plan-reviewer` to APPROVED. Skip the loop if planning is already complete (sprint root
   has features and every open feature's tasks carry acceptance criteria); just reset
   any task orphaned `in_progress` from a crashed dispatch back to open.
@@ -48,10 +52,11 @@ order; a fourth phase runs once at sprint close.
   over the worked tasks. Repeat until `bd ready` is empty, no open task remains at
   the goal priority, and the last review verdict is APPROVED.
 - **Test** -- only when both `deploy.md` and `integ-test-playbook.md` are present:
-  `deployer` brings up / resets the environment and deploys, `integ-test-runner`
-  executes tests feature by feature (closes passing features, files bugs for
-  failures), then `deployer` tears down. Skip the whole phase if either file is
-  absent.
+  `deployer` deploys per `deploy.md` (deploy + smoke test), then
+  `integ-test-runner` runs `integ-test-playbook.md` end to end -- the real
+  functional suite, then the smoke-test sprint in a sandbox it brings up and
+  tears down itself -- plus each feature's tests (closes passing features,
+  files bugs for failures). Skip the whole phase if either file is absent.
 - **Harvest** -- runs once after the cycle loop exits (goal met or cycle ceiling
   hit): poll CI via `ci-watcher`, run a final reviewer pass, then `harvester`
   extracts durable knowledge into `docs/` and `CHANGELOG`, and raise the PR.
@@ -85,36 +90,40 @@ Eight subagent roles carry the work, split into two groups.
 `deployer`, `integ-test-runner`, `ci-watcher`, `harvester`.
 
 Roles coordinate through beads (the task state and message bus) and the committed
-code and narrative files (`requirements.md`, `design.md`, `feedback.md`) on the
+code and narrative files (`requirements.md`, `design.md`) on the
 track's branch.
 
 ### Sprint-core roles
 
 - `planner` -- reads `requirements.md` (and `design.md` if present), writes the task
   DAG into beads: one task per item with title/description, `--acceptance="..."`, a
-  model tier in `--notes`, a priority, and dependencies (`bd dep add`). Writes no
-  PLAN.md.
+  model tier in `--metadata '{"model": "..."}'`, a priority, and dependencies
+  (`bd dep add`). Writes no PLAN.md.
 - `plan-reviewer` -- inspects the beads DAG (`bd graph`, `bd ready`, `bd show`),
-  writes `feedback.md` (`APPROVED` / `CHANGES NEEDED`).
-- `doer` -- finds work via `bd ready`, reads the task's acceptance + model tier with
+  returns structured output ONLY (`verdict`: `APPROVED` / `CHANGES_NEEDED`, `notes`,
+  `taskAssignments`); never writes `feedback.md` or `PLAN.md`.
+- `doer` -- works the explicit bead ids the orchestrator hands it (never bare
+  `bd ready` discovery), reads each task's acceptance + model tier with
   `bd show`, claims it (`bd update --claim`), implements one task at a time, commits
   after each, closes it (`bd close`), STOPS at every VERIFY checkpoint.
 - `reviewer` -- reads each worked task's acceptance criteria (`bd show`) + the diff,
-  writes `feedback.md` (`APPROVED` / `CHANGES NEEDED`) with `reopenIds` and `newTasks`
-  arrays on CHANGES NEEDED; never touches beads. The orchestrator reads those arrays
-  and runs `bd update --status=open` / `bd create` itself.
+  returns structured output ONLY (`verdict`: `APPROVED` / `CHANGES_NEEDED`, `notes`,
+  `reopenIds`, `newTasks`); never writes `feedback.md` and never touches beads directly.
+  The orchestrator reads that structured output and runs `bd update --status=open` /
+  `bd create` itself.
 
 ### Lifecycle-support roles
 
 Dispatch these only when their condition holds:
 
 - `deployer` -- in the Test phase, once the Develop exit condition is met (no open
-  tasks at the goal priority, last review APPROVED) and `deploy.md` is present; runs
-  the deploy/reset/teardown runbook.
+  tasks at the goal priority, last review APPROVED) and `deploy.md` is present;
+  follows `deploy.md` to deploy the build and run its smoke test. It does not
+  run `integ-test-playbook.md`.
 - `integ-test-runner` -- in the Test phase, after a successful deploy, when
-  `integ-test-playbook.md` is present; executes integration tests feature by
-  feature against the deployed environment, closing passing features and filing
-  bugs for failures.
+  `integ-test-playbook.md` is present; owns that playbook end to end (real
+  functional suite, then sandbox Setup/Reset, smoke scenario, feature tests,
+  Teardown always), closing passing features and filing bugs for failures.
 - `ci-watcher` -- in Harvest, to poll CI for the sprint HEAD SHA (green / red /
   not configured / pending). [Fleet mode] PM may run `gh` CLI directly instead of
   dispatching (R13).
@@ -159,11 +168,15 @@ needs in the prompt, since agents share the filesystem:
 Matching model power to task complexity is a headline capability of this skill, not
 an option. Models fall into three tiers, strongest to cheapest: **premium-tier**,
 **standard-tier**, **cheap-tier**. **The planner decides the tier each work task runs
-on** and records it in the task's beads notes (`--notes="model: <tier>"`). At
-dispatch time the orchestrator reads it back with `bd show <id>` and dispatches each
-doer on that tier.
+on** and records it as beads metadata (`--metadata '{"model": "<tier>"}'`) -- this is the
+single canonical location the tier lives in; it is never written to `--notes`. At
+dispatch time the orchestrator reads it back with `bd show <id>` (the `model` metadata
+key) and dispatches each doer on that tier. `plan-reviewer` (criterion 10 / Step 3) reads
+the tier from this same metadata key, so a planner that sets it here can never fail
+plan-reviewer's model-metadata check -- the two are aligned by construction.
 
-How the planner chooses the doer tier:
+How the planner chooses the doer tier (mirrors the criteria owned by `agents/planner.md`
+itself -- keep the two in sync if either changes):
 
 - **cheap-tier** -- mechanical work: rename, move, config tweak, simple wiring,
   boilerplate.
@@ -177,7 +190,7 @@ It picks from the models actually available in the current environment.
 Fixed rules:
 
 - The `doer` runs on the tier the planner assigned to the task it will execute,
-  read from the task's beads notes (`bd show <id>`) at dispatch time.
+  read from the task's beads metadata (`bd show <id>`, `model` key) at dispatch time.
 - `planner` runs premium-tier; `plan-reviewer` runs standard-tier. The `reviewer` runs
   standard-tier by default but escalates to premium-tier whenever any doer streak in the
   iteration ran premium-tier -- review must never be weaker than the work it judges.
@@ -221,13 +234,15 @@ R1. NEVER read code to diagnose, fix, or write it. You dispatch agents, read
     (`git worktree add/list/remove`, `git merge`, `git diff <base>...<branch>`),
     beads commands, and PR commands.
 R2. **Project sandboxing** -- every narrative artifact (requirements.md, design.md,
-    feedback.md, status.md) lives inside the track's worktree and nowhere else, and
-    task state lives in the project's single beads DB. Never write project files
+    and in fleet mode status.md) lives inside the track's worktree and nowhere else,
+    and task state lives in the project's single beads DB. Never write project files
     outside a track's worktree or in the skill folder.
 R3. On session start: re-derive position from beads and git -- they are the
-    single source of truth. Update status.md whenever a dispatch completes or
-    a member reports back, not just at phase boundaries. Beads and git are the
-    source of truth -- never rely on memory across sessions.
+    single source of truth; there is no status file to consult in local mode
+    (see `sprint.md` Recovery). **[Fleet mode]** additionally keep status.md
+    current whenever a dispatch completes or a member reports back (mode and
+    pairing records -- see `fleet-addendum.md`). Never rely on memory across
+    sessions.
 R4. **[Fleet mode]** Before dispatch: verify member has required tools via
     `execute_command -> which <tool>` or `<tool> --version`.
 R5. **[Fleet mode]** If a member can finish in one session (1-3 steps), use
@@ -248,9 +263,11 @@ R9. **[Fleet mode]** For unattended execution, use `update_member(unattended=
     tags: ['reviewer']). Never select members by role name or naming convention --
     use tag queries exclusively (see Member selection below).
     See `fleet-addendum.md`.
-R10. During a sprint, every doer/reviewer turn updates beads (claim/close/reopen)
-     and commits its code and feedback.md to the branch -- these carry the living
-     state of the sprint. Only the agent context file stays uncommitted.
+R10. During a sprint, every doer turn updates beads (claim/close) and commits its
+     code to the branch; every reviewer turn returns structured output (`verdict`/
+     `notes`/`reopenIds`/`newTasks`) and the orchestrator applies the resulting
+     reopen -- these carry the living state of the sprint. Only the agent context
+     file stays uncommitted.
 R11. Definition of done includes security audit and documentation -- ensure
      both are covered when adding tools/features.
 R12. At sprint completion: raise a PR, verify CI is green -- do NOT merge.
@@ -353,7 +370,8 @@ and git.
 - **start** -- run the doer-review loop for the next pending phase. See
   `doer-reviewer-loop.md`.
 - **status** -- report position from `bd` queries (`bd list --status=open`,
-  `bd ready`, `bd list --tree`) plus `git log` and the on-branch `feedback.md`.
+  `bd ready`, `bd list --tree`) plus `git log` and the latest reviewer/plan-reviewer
+  structured verdicts.
 - **resume** / **recover** -- reconstruct in-flight state from beads + git and
   continue. See `sprint.md` Recovery.
 - **deploy** -- run the project's `deploy.md` runbook (execute / verify / rollback).
@@ -379,6 +397,6 @@ and git.
   PR linking.
 - `fleet-addendum.md` -- fleet-only execution: permissions, compose_permissions,
   stop_prompt, unattended modes, context-file delivery.
-- `cost.md` -- cost quoting and calibration: Node.js check, extracting pure
-  functions from auto-sprint.js, quote after plan APPROVED, sprint log format,
-  harvest analysis and calibration update.
+- `cost.md` -- cost quoting and calibration: Node.js check, the extracted
+  `cost.js` module installed alongside the skill, quote after plan APPROVED,
+  sprint log format, harvest analysis and calibration update.

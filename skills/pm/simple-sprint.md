@@ -17,7 +17,7 @@ out bigger than expected, promote to a full sprint.
 
 1. Write a concise requirements.md on the branch and commit.
 2. Create a small beads sprint root + a task per item, each with `--acceptance="..."` and a
-   `--notes="model: <tier>"` tag.
+   `--metadata '{"model": "<tier>"}'` tag.
 3. Dispatch the doer (tier sized to the work). The doer claims each task
    (`bd update <id> --claim`), implements, commits, pushes, and closes it
    (`bd close <id>`).
@@ -25,13 +25,14 @@ out bigger than expected, promote to a full sprint.
    criteria (`bd show <id>`) + the diff and outputs a verdict: APPROVED or
    CHANGES NEEDED.
 5. On APPROVED: close the delivered source issues, clean sprint scaffolding from the
-   PR (see sprint.md Completion step 5 -- git rm sprint-created narrative files,
+   PR (see sprint.md Completion step 7 -- git rm sprint-created narrative files,
    restore any the repo already shipped, then verify the net diff is product only),
    commit as pm, raise the PR (or report the diff for local-only), remove the
    worktree.
-6. On CHANGES NEEDED: the orchestrator reads `reopenIds` and `newTasks` from
-   feedback.md; runs `bd update <id> --status=open` for each reopen ID and
-   `bd create` for each new task; then re-dispatches the doer from step 3.
+6. On CHANGES NEEDED: the orchestrator reads `reopenIds` and `newTasks` from the
+   reviewer's structured output (the reviewer never writes feedback.md); runs
+   `bd update <id> --status=open` for each reopen ID and `bd create` for each new
+   task; then re-dispatches the doer from step 3.
 7. Create low-priority beads tasks for any unresolved findings or deferred items.
 8. STOP: do not merge. Surface the PR URL and CI status to the user and await
    explicit instruction.
