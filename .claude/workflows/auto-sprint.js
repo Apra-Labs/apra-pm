@@ -581,7 +581,8 @@ function parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds) {
 // parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks in the
 // subtree by model, ordered by min priority.
 // readyListIdx is the explicit index of the ready-tasks JSON command in outputs[].
-function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
+// rootIds (optional): sprint-root ids to exclude from dispatchable leaf work.
+function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel, rootIds) {
   if (!Array.isArray(outputs) || outputs.length < readyListIdx + 1) return { totalCount: 0, streaks: [] };
   const subtree = collectSubtreeIds(outputs, rootCount);
   let readyTasks = [];
@@ -589,6 +590,17 @@ function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel) {
     const all = JSON.parse(outputs[readyListIdx]);
     readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
   } catch { readyTasks = []; }
+
+  // Dispatch-time leaf filter (GRAPH-SEMANTICS.md): decomposed items are GROUPED via
+  // --parent, never dep-blocked by their own children, so a sprint root or a bead with
+  // children can itself show up as "ready". It must not be dispatched as leaf work --
+  // exclude the sprint roots and any bead that has dotted-ID descendants in the subtree
+  // (beads expresses parent->child as <parent>.<n> ids). This is the dispatch-time
+  // filter the canonical doc prescribes instead of parent->child blocks edges.
+  const rootSet = new Set(Array.isArray(rootIds) ? rootIds : []);
+  const subtreeArr = Array.from(subtree);
+  readyTasks = readyTasks.filter(t =>
+    !rootSet.has(t.id) && !subtreeArr.some(id => id.indexOf(t.id + '.') === 0));
 
   // Hoist the known-tiers set and reverse map outside the loop (constant across tasks).
   const KNOWN_TIERS = new Set([TIER_CHEAP, TIER_STANDARD, TIER_PREMIUM]);
@@ -1341,7 +1353,7 @@ async function getReadyStreaks(rootIds) {
     `bd list --ready --type=task --json | ${taskExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'ready-streaks', phase: 'Develop' });
-  return parseReadyStreaks(r?.outputs, rootIds.length, rootIds.length, TIER_STANDARD);
+  return parseReadyStreaks(r?.outputs, rootIds.length, rootIds.length, TIER_STANDARD, rootIds);
 }
 
 async function commitFeedback(repo, branch, notes, role, label, phase) {
@@ -1853,28 +1865,30 @@ while (cycleCount < maxCycles) {
       `  - BEFORE creating any feature or task, run: bd search "<title>" --status all\n` +
       `    If a matching issue already exists, update it instead of creating a duplicate.\n` +
       `\n` +
-      `DEPENDENCY WIRING -- read this carefully. "bd dep add A B" means A CANNOT CLOSE until B is done.\n` +
-      `The correct wiring direction is: parents depend on children (children unblock first).\n` +
+      `DEPENDENCY WIRING -- follow your runbook (agents/planner.md) and the canonical rules in\n` +
+      `agents/_shared/GRAPH-SEMANTICS.md exactly: parent-child (via --parent) is for GROUPING\n` +
+      `only; blocks (via "bd dep add A B", meaning A cannot close until B is done) is for\n` +
+      `ORDERING between siblings only. NEVER add a blocks edge between a bead and its own\n` +
+      `--parent ancestor/descendant, in either direction -- a --parent edge plus a blocks edge\n` +
+      `between the same two beads deadlocks both, and "bd dep cycles" will NOT warn you.\n` +
       `\n` +
-      `  Step 1 -- wire sprint goal -> child (goal waits for children):\n` +
-      `    bd dep add <goal-id> <child-id>\n` +
-      `    After this: "bd ready" will NOT show the sprint goal (it's waiting). Children show as ready.\n` +
+      `  Step 1 -- group: break each sprint goal into child issues with\n` +
+      `    bd create --parent <goal-id> (type=feature for sub-goals, type=task for leaf work),\n` +
+      `    and parent each feature's tasks with bd create --parent <feature-id>.\n` +
+      `    A parent's "not done until its children close" status comes from its children --\n` +
+      `    do NOT bd dep add <goal-id> <child-id> or bd dep add <feature-id> <task-id>.\n` +
       `\n` +
-      `  Step 2 -- wire feature -> tasks (feature waits for tasks):\n` +
-      `    bd dep add <feature-id> <impl-task-id>\n` +
-      `    bd dep add <feature-id> <test-task-id>\n` +
-      `    After this: "bd ready" will show impl-task (the leaf). Feature is now blocked.\n` +
+      `  Step 2 -- order siblings: bd dep add <test-task-id> <impl-task-id> (test task blocked\n` +
+      `    until the impl task closes -- correct: they are siblings). Same pattern for any\n` +
+      `    later sibling task that depends on an earlier one.\n` +
       `\n` +
-      `  Step 3 -- wire test after impl:\n` +
-      `    bd dep add <test-task-id> <impl-task-id>\n` +
-      `    After this: "bd ready" shows only impl-task. test-task unblocks once impl-task closes.\n` +
-      `\n` +
-      `  VERIFY after wiring: run "bd ready" -- it must return impl tasks, NOT sprint goals or blocked parents.\n` +
-      `  If sprint goals appear in "bd ready" the deps are backwards -- fix them before continuing.\n` +
+      `  VERIFY after wiring: run "bd list --parent <goal-id> --ready --json" for each sprint\n` +
+      `  goal -- it must be non-empty while open work exists under that goal. If it is empty,\n` +
+      `  there is a cycle: find the blocks edge pointing at a --parent ancestor/descendant\n` +
+      `  and remove it with bd dep remove.\n` +
       `\n` +
       `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
       `\n` +
-      `  Break each sprint goal into child issues: bd create --parent <goal-id> (use type=feature for sub-goals, type=task for leaf work).\n` +
       `  Create type=task issues for each feature: implementation tasks AND integration\n` +
       `    test development tasks (prefix test tasks with "[test]" in the title)\n` +
       `  Features P1/P2; tasks one level below their parent feature (P1 feature -> P2 tasks, P2 feature -> P3 tasks)\n` +
@@ -1915,11 +1929,12 @@ while (cycleCount < maxCycles) {
       `Run: bd show <id> to inspect individual issues in depth.\n` +
       `Run: bd ready -- this is your FIRST correctness check.\n` +
       `Do NOT review or comment on issues outside these sprint goals.\n\n` +
-      `Follow your runbook (plan-reviewer.md) step by step:\n` +
+      `Follow your runbook (agents/plan-reviewer.md) step by step:\n` +
       `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
       `  Step 3: classify each task -- assign complexity bucket (S/M/L) and read its model\n` +
-      `    from beads metadata. If a task has no model metadata, note it in your verdict\n` +
-      `    notes as a warning but do NOT return CHANGES_NEEDED for it -- the workflow has a fallback.\n` +
+      `    from beads metadata. If a task has no model metadata, flag it as a criterion-10\n` +
+      `    CHANGES_NEEDED finding per your runbook, and use the standard-tier fallback only\n` +
+      `    to finish classifying/reporting in the same pass.\n` +
       `  Step 4: return verdict, notes, and taskAssignments (id + bucket + model per task).\n\n` +
       `Notes must be specific: include issue IDs and exact "bd dep add" commands to fix\n` +
       `any dependency direction problems.`,
@@ -2118,7 +2133,7 @@ while (cycleCount < maxCycles) {
             `  - Implement the work for task ${w.id} INSIDE ${repo}/${w.path} ONLY (code, tests, config -- whatever it requires).\n` +
             `  - Commit in that worktree: git -C "${repo}/${w.path}" add -A && git -C "${repo}/${w.path}" -c user.name='doer' -c user.email='doer@pm.local' commit -m "impl ${w.id}"\n` +
             `  - Do NOT run ANY bd command. Do NOT touch the main checkout or the ${branch} branch. Do NOT push. Do NOT run git merge.\n` +
-            `Return status "VERIFY". Always return VERIFY -- never anything else.`,
+            `Return status "VERIFY" when done. Return status "BLOCKED" only for your runbook's blocked cases (missing secret) -- never any other status.`,
             { model: w.model, label: `doer-c${cycleCount}-i${devIter}-${w.id}`, phase: 'Develop', schema: DOER_STATUS_SCHEMA,
               agentType: 'doer', context: `task ${w.id} (worktree)` }
           ).then(r => ({ w, ok: !!r && r.status === 'VERIFY' })).catch(() => ({ w, ok: false }))
@@ -2209,7 +2224,8 @@ while (cycleCount < maxCycles) {
         `  - Closed tasks are durable even if the doer crashes mid-streak\n` +
         `  - NEVER close a type=feature or type=bug issue -- only close type=task\n` +
         `Work all listed tasks then stop and return status "VERIFY".\n` +
-        `Always return VERIFY -- never return anything else.`,
+        `Return status "BLOCKED" only for your runbook's blocked cases (agents/doer.md:\n` +
+        `missing secret, unspecified branch) -- never any other status.`,
         { model: streak.model, label: doerLabel, phase: 'Develop', schema: DOER_STATUS_SCHEMA, agentType: 'doer',
           context: `tasks ${fittedIds.join(', ')}` }
       );
@@ -2232,8 +2248,17 @@ while (cycleCount < maxCycles) {
       }
 
       if (doerResult.status !== 'VERIFY') {
-        log(`Unexpected doer status "${doerResult.status}" -- aborting`);
-        abortReason = 'unexpected doer status';
+        const _doerNotes = (doerResult.notes || '').slice(0, 200);
+        if (doerResult.status === 'BLOCKED') {
+          // Contract case (doer-output.json enum): the doer hit a runbook blocker
+          // (missing secret/branch). Not a malfunction -- abort with the blocker so the
+          // user can resolve it and re-run.
+          log(`Doer BLOCKED (streak ${streak.model}): ${_doerNotes || 'no details'} -- aborting sprint`);
+          abortReason = `doer blocked: ${_doerNotes || 'no details'}`;
+        } else {
+          log(`Unexpected doer status "${doerResult.status}" -- aborting`);
+          abortReason = 'unexpected doer status';
+        }
         streakAbort = true;
         break;
       }
@@ -2440,7 +2465,7 @@ while (cycleCount < maxCycles) {
       blockers = parseBlockers(exitResult.outputs, rootIds.length, rootIds.length, threshold, rootIds);
       // Ready streaks prefetched but not used: develop loop already determined no ready tasks.
       // Parsed here to validate the merged output; result discarded at cycle end.
-      parseReadyStreaks(exitResult.outputs, rootIds.length, rootIds.length + 1, TIER_STANDARD);
+      parseReadyStreaks(exitResult.outputs, rootIds.length, rootIds.length + 1, TIER_STANDARD, rootIds);
     } else {
       // Fallback: outputs too short (agent returned partial results) -- use separate dispatches.
       log('exit-check: outputs.length < rootCount+2 -- falling back to separate dispatches');
@@ -2701,6 +2726,8 @@ let ciResult = null;
 if (prNumber) {
   ciResult = await dispatch(
     `Check CI status for PR #${prNumber} on branch ${branch}.\n` +
+    `This is a PR-scoped dispatch (prNumber supplied -- see agents/ci-watcher.md Inputs);\n` +
+    `the branch+expectedHeadSha form does not apply here.\n` +
     `Run: gh run list --pr ${prNumber} --limit 3 --json status,conclusion,databaseId\n` +
     `If runs exist and are in_progress: poll with gh run watch <id> (timeout 10 min).\n` +
     `If runs exist and conclusion is "success": return status "green".\n` +
