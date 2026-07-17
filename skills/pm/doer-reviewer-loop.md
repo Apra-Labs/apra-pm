@@ -2,8 +2,9 @@
 
 The execute-phase loop for one track. Every dispatch is an inline subagent call (its
 result returns in the same turn). Beads is the task store; the reviewer's verdict is
-returned as structured output directly to the orchestrator. The doer finds work with
-`bd ready`, claims it with `bd update --claim`, and closes it with `bd close`. The
+returned as structured output directly to the orchestrator. The orchestrator finds
+ready work with `bd ready` and hands the doer explicit bead ids; the doer claims each
+with `bd update --claim` and closes it with `bd close`. The
 reviewer reads acceptance criteria with `bd show` and returns its verdict
 (`verdict`/`notes`/`reopenIds`/`newTasks`) as structured output -- it never touches
 beads. On CHANGES NEEDED the orchestrator reads that structured output and runs the

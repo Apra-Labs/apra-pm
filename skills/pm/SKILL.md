@@ -21,8 +21,10 @@ All sprint state is held in:
 
 - **beads (`bd`), the task DB -- the single source of truth and the message bus:**
   sprint root, tasks, dependencies, assignees, acceptance criteria, model-tier assignment,
-  review findings, backlog, PR link. The planner writes tasks here; the doer reads
-  `bd ready` and claims/closes them; the reviewer reads acceptance criteria with
+  review findings, backlog, PR link. The planner writes tasks here; the orchestrator
+  reads `bd ready` and hands the doer explicit bead ids, which the doer claims/closes
+  (the doer never discovers work via bare `bd ready` -- see `agents/doer.md` Step 1);
+  the reviewer reads acceptance criteria with
   `bd show` and returns `reopenIds` for the orchestrator to reopen -- the reviewer never
   mutates beads directly. There is no PLAN.md and no progress.json --
   beads holds all task state. See `beads.md`.
@@ -100,7 +102,8 @@ track's branch.
 - `plan-reviewer` -- inspects the beads DAG (`bd graph`, `bd ready`, `bd show`),
   returns structured output ONLY (`verdict`: `APPROVED` / `CHANGES_NEEDED`, `notes`,
   `taskAssignments`); never writes `feedback.md` or `PLAN.md`.
-- `doer` -- finds work via `bd ready`, reads the task's acceptance + model tier with
+- `doer` -- works the explicit bead ids the orchestrator hands it (never bare
+  `bd ready` discovery), reads each task's acceptance + model tier with
   `bd show`, claims it (`bd update --claim`), implements one task at a time, commits
   after each, closes it (`bd close`), STOPS at every VERIFY checkpoint.
 - `reviewer` -- reads each worked task's acceptance criteria (`bd show`) + the diff,

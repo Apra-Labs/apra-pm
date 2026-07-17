@@ -3,8 +3,8 @@
 beads (`bd`) is pm's task store and message bus. It holds what is in flight, what
 is blocked, what was deferred, what each task must satisfy, and what each review
 found. There is no PLAN.md and no progress.json: the planner writes tasks into
-beads, the doer reads `bd ready` and claims/closes tasks, and the reviewer reads
-each task's acceptance criteria with `bd show`. git holds only the code, the branch
+beads, the orchestrator reads `bd ready` and hands the doer explicit bead ids to
+claim/close, and the reviewer reads each task's acceptance criteria with `bd show`. git holds only the code, the branch
 history, and the requirements/design narrative; **beads holds all task state.**
 
 ## One project, one DB
@@ -12,10 +12,11 @@ history, and the requirements/design narrative; **beads holds all task state.**
 An orchestrator manages one project, so there is one beads DB for that project and
 one **sprint root** per sprint. The DB is a local `.beads/` at the **base checkout** (the
 orchestrator's repo root) -- not inside any track worktree. The orchestrator runs
-every `bd` command from there. Doers run `bd ready` / `bd update --claim` /
+every `bd` command from there. Doers run `bd show` / `bd update --claim` /
 `bd close` against that same DB; reviewers run `bd show` only -- they never write to
-beads. On CHANGES NEEDED the reviewer writes `reopenIds` and `newTasks` to
-`feedback.md`; the orchestrator reads that and runs the beads updates.
+beads. On CHANGES NEEDED the reviewer returns `reopenIds` and `newTasks` as structured
+output (it never writes feedback.md); the orchestrator reads that output and runs the
+beads updates.
 The DB persists on disk across sessions, so it survives without being committed.
 Committing it is optional and only shares issue history across machines; if you do,
 commit it on the base or integration branch -- keeping it off the track feature
@@ -52,15 +53,18 @@ doer's dispatch tier. Both live on the task -- nothing is written to a plan file
 bd show <task-id>                          # read description + acceptance + model tier metadata
 bd update <task-id> --claim                # claim (open -> in_progress, assigns self)
 bd close <task-id>                         # when the work is complete
-bd ready                                   # confirm what is unblocked next
 ```
-The doer finds work with `bd ready` (tasks with no open blockers) and picks the
-highest-priority ready task. Never steal a task already `in_progress`.
+The ORCHESTRATOR finds ready work (`bd ready` -- tasks with no open blockers, scoped to
+the sprint root) and hands the doer an explicit list of bead ids in the dispatch prompt.
+The doer works exactly that list and never runs bare `bd ready` to discover work itself
+(it would see other sprints' concurrent tasks with no way to tell which are its own --
+see `agents/doer.md` Step 1). Never steal a task already `in_progress`.
 
-**Reviewer returns CHANGES NEEDED** (orchestrator, after reading feedback.md) -- the
-reviewer writes its verdict, human notes, and two machine-readable lines to
-`feedback.md` (see `doer-reviewer-loop.md` reviewer template). The orchestrator
-parses those lines and runs:
+**Reviewer returns CHANGES NEEDED** (orchestrator, after reading the reviewer's
+structured output) -- the reviewer returns its verdict, human notes, and the
+machine-readable `reopenIds` / `newTasks` arrays as structured output (see
+`doer-reviewer-loop.md` reviewer template); it never writes feedback.md. The
+orchestrator reads those fields and runs:
 ```
 # for each id in reopenIds:
 bd update <task-id> --status=open --notes="review: <finding from notes section>"
@@ -87,9 +91,10 @@ durable and visible in the PR.
 
 ## Findings are never lost
 
-A review finding against the reviewed task goes into `reopenIds` in feedback.md; the
-orchestrator runs `bd update --status=open` so the doer picks it up next loop. A
-finding outside the reviewed scope goes into `newTasks`; the orchestrator creates it.
+A review finding against the reviewed task goes into `reopenIds` in the reviewer's
+structured output; the orchestrator runs `bd update --status=open` so the doer picks it
+up next loop. A finding outside the reviewed scope goes into `newTasks`; the
+orchestrator creates it.
 MEDIUM/LOW findings and any scope deferred mid-sprint become low-priority backlog
 tasks. Every finding either gets fixed (`bd close`) or is explicitly carried as
 backlog -- it is never dropped silently.
