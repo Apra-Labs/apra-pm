@@ -17,8 +17,9 @@ export const meta = {
 //   plan-reviewer     -- validates DAG: coverage, task size, acceptance criteria
 //   doer              -- works bd-ready tasks (impl and test-dev), VERIFY checkpoint
 //   reviewer          -- reviews doer output, can reopen tasks
-//   deployer          -- follows deploy.md + integ-test-playbook.md (setup/reset/teardown)
-//   integ-test-runner -- executes tests, closes features, files bugs/enhancements
+//   deployer          -- follows deploy.md ONLY (deploy + smoke test); never the playbook
+//   integ-test-runner -- owns integ-test-playbook.md end to end (setup/reset/teardown),
+//                        executes tests, closes features, files bugs/enhancements
 //   ci-watcher        -- polls CI; creates beads task if not configured
 //   harvester         -- docs, CHANGELOG, token summary, PR
 //
@@ -1179,6 +1180,7 @@ function loadRoleSchema(role) {
 const REVIEW_SCHEMA      = loadRoleSchema('reviewer');
 const PLAN_REVIEW_SCHEMA = loadRoleSchema('plan-reviewer');
 const DOER_STATUS_SCHEMA = loadRoleSchema('doer');
+const DEPLOYER_SCHEMA    = loadRoleSchema('deployer');
 const INTEG_RUN_SCHEMA   = loadRoleSchema('integ-test-runner');
 const CI_SCHEMA          = loadRoleSchema('ci-watcher');
 const HARVEST_SCHEMA     = loadRoleSchema('harvester');
@@ -2346,79 +2348,71 @@ while (cycleCount < maxCycles) {
     await stamp(`test-c${cycleCount}`);
 
     // -- Deploy --
+    // Role split (agents/deployer.md, agents/integ-test-runner.md): the deployer follows
+    // deploy.md ONLY (deploy + smoke test) -- the playbook's Setup/Reset/Teardown belong
+    // to integ-test-runner, which owns integ-test-playbook.md end to end. The deployer
+    // refuses playbook operations by contract, so never dispatch them to it.
     const deployLabel = `deployer-c${cycleCount}`;
     const deployResult = await dispatch(
-      `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n\n` +
-      `Follow the integration test playbook and deploy.md:\n` +
-      (cycleCount === 1
-        ? `1. Run the Setup section of integ-test-playbook.md to bring up the test environment.\n`
-        : `1. Run the Reset section of integ-test-playbook.md to restore pristine state.\n`) +
-      `2. Follow all steps in deploy.md to deploy the build.\n` +
-      `3. Run the smoke test defined in deploy.md.\n` +
-      `4. Return deployed: true if the smoke test passes, false otherwise.\n` +
+      `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
+      `operation: deploy\n\n` +
+      `Follow your runbook (agents/deployer.md) -- deploy.md ONLY; you do not touch\n` +
+      `integ-test-playbook.md (its Setup/Reset/Teardown belong to integ-test-runner):\n` +
+      `1. Read deploy.md (Deploy, Smoke test, and CI sections).\n` +
+      `2. Execute every command in the '## Deploy' section in order.\n` +
+      `3. Run the command in '## Smoke test'.\n` +
+      `4. Return deployed: true if the smoke test exits 0, false otherwise.\n` +
       `5. If deployed is false, include the error output in notes.`,
       { model: MODEL_SONNET, label: deployLabel, phase: 'Test', agentType: 'deployer',
-        schema: { type: 'object', required: ['deployed'], properties: {
-          deployed: { type: 'boolean' }, notes: { type: 'string' } } } }
+        schema: DEPLOYER_SCHEMA }
     );
 
     if (!deployResult || !deployResult.deployed) {
       const msg = (deployResult && deployResult.notes) || 'no details';
       log(`Deploy failed on cycle ${cycleCount}: ${msg.slice(0, 200)}`);
-      log('Skipping integration tests this cycle -- teardown and continue');
-      // Teardown before next cycle
-      await dispatch(
-        `Run the Teardown section of integ-test-playbook.md to clean up the test environment.`,
-        { model: MODEL_SONNET, label: `teardown-c${cycleCount}-fail`, phase: 'Test', agentType: 'deployer' }
-      );
+      log('Skipping integration tests this cycle -- the test sandbox was never brought up (integ-test-runner owns it), nothing to tear down');
     } else {
       // -- Integration test run (scoped to THIS sprint's open features) --
       // Scope the tester to the sprint subtree's open features. Do NOT let it `bd list
       // --type=feature --status=open` (every open feature in the whole DB) -- that would
       // test/close/file-bugs against unrelated features from other epics/sprints.
+      // An EMPTY feature list still dispatches the runner: the playbook's two parts are
+      // the sprint's standing confidence check (integ-test-runner.md Step 1).
       const _sprintFeatures = await getSprintOpenFeatures(rootIds);
-      if (_sprintFeatures.length === 0) {
-        log('No open features in the sprint subtree -- skipping integration tests this cycle.');
-      } else {
-        const integLabel = `integ-runner-c${cycleCount}`;
-        const _featList = _sprintFeatures.map(f => `  ${f.id} -- ${f.title}`).join('\n');
-        log(`Integration scope: ${_sprintFeatures.length} sprint feature(s) [${labelTaskIds(_sprintFeatures.map(f => f.id))}]`);
+      const integLabel = `integ-runner-c${cycleCount}`;
+      const _featList = _sprintFeatures.length > 0
+        ? _sprintFeatures.map(f => `  ${f.id} -- ${f.title}`).join('\n')
+        : `  (none -- zero open features this cycle; a normal outcome, run the playbook parts only)`;
+      log(`Integration scope: ${_sprintFeatures.length} sprint feature(s)${_sprintFeatures.length ? ` [${labelTaskIds(_sprintFeatures.map(f => f.id))}]` : ''}`);
 
-        const integResult = await dispatch(
-          `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
-          `Sprint goals: ${rootSummary}\n\n` +
-          `Integration-test ONLY these open features from THIS sprint. Do NOT list, test, close, ` +
-          `or file bugs against any beads issue that is not in this list (do NOT run ` +
-          `"bd list --type=feature"):\n${_featList}\n\n` +
-          `For each feature above:\n` +
-          `  Run "bd show <feature-id>" to read its acceptance criteria, then execute its integration tests.\n` +
-          `  PASS: all tests pass -> bd close <feature-id>\n` +
-          `  FAIL: tests fail -> bd create --title="[integ] <description>" ` +
-          `--description="Feature: <id>\\nExpected: <what>\\nActual: <what>\\nTest: <which>" ` +
-          `--type=bug --priority=<1=core requirement unmet, 2=partial, 3=quality>\n` +
-          `  Keep feature open on failure or if inconclusive.\n\n` +
-          `Priority rules:\n` +
-          `  P0: system won't start or core path completely broken\n` +
-          `  P1: requirement from sprint goal explicitly not met\n` +
-          `  P2: requirement partially met, degraded behaviour\n` +
-          `  P3: quality, performance, or UX issue not blocking core function\n\n` +
-          `Before creating a new bug, check bd search "[integ]" -- update existing if duplicate.\n\n` +
-          `Return featuresClosed (count), issuesCreated (count), summary (one paragraph).`,
-          { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
-        );
-        if (integResult) {
-          log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created`);
-          log(`Summary: ${integResult.summary}`);
-        }
+      const integResult = await dispatch(
+        `Repo: ${repo}\nBranch: ${branch}\nCycle: ${cycleCount}\n` +
+        `Sprint goals: ${rootSummary}\n\n` +
+        `Follow your runbook (agents/integ-test-runner.md). You own integ-test-playbook.md\n` +
+        `end to end: run part 1 (the real functional suite), bring the sandbox up with the\n` +
+        `playbook's ${cycleCount === 1 ? '## Setup' : '## Reset'} section, run the smoke scenario and the per-feature\n` +
+        `tests inside it, and ALWAYS run the playbook's ## Teardown before returning --\n` +
+        `pass or fail. The product deploy (deploy.md) has already been done by the deployer.\n\n` +
+        `Integration-test ONLY these open features from THIS sprint. Do NOT list, test, close, ` +
+        `or file bugs against any beads issue that is not in this list (do NOT run ` +
+        `"bd list --type=feature"):\n${_featList}\n\n` +
+        `Per-feature testing (bd show -> run its tests -> bd close on pass, keep open on ` +
+        `failure/inconclusive), [integ] bug filing, priority rules, and duplicate checks ` +
+        `(bd search "[integ]") are all in your runbook -- follow it. Parent every new ` +
+        `[integ] bug under sprint root ${rootIds[0]} (the scope for this dispatch).\n\n` +
+        `Return the full contract: featuresClosed (count), issuesCreated (count), ` +
+        `passed (boolean), bugsFiled (array of created bug ids, [] if none), ` +
+        `summary (one paragraph, including the part 1 result line).`,
+        { model: MODEL_SONNET, label: integLabel, phase: 'Test', schema: INTEG_RUN_SCHEMA, agentType: 'integ-test-runner' }
+      );
+      if (integResult) {
+        log(`Integration: ${integResult.featuresClosed} features closed, ${integResult.issuesCreated} issues created, passed=${integResult.passed}`);
+        log(`Summary: ${integResult.summary}`);
       }
 
-      // -- Teardown --
-      await dispatch(
-        `Run the Teardown section of integ-test-playbook.md to fully clean up the test environment.`,
-        { model: MODEL_SONNET, label: `teardown-c${cycleCount}`, phase: 'Test', agentType: 'deployer' }
-      );
-
-      // JIT flush: append test-phase entries (deployer, integ-runner, teardown) immediately.
+      // JIT flush: append test-phase entries (deployer, integ-runner) immediately.
+      // No separate teardown dispatch: the runner runs the playbook's Teardown itself,
+      // always, before returning (agents/integ-test-runner.md Step 4).
       await appendNewEntries(`test-c${cycleCount}`, 'Test');
     }
   }
