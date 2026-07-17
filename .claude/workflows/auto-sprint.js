@@ -2264,7 +2264,9 @@ while (cycleCount < maxCycles) {
       `Run: git -C "${repo}" diff ${base_branch}...${branch} to see the changes.\n` +
       `Do NOT comment on code or issues outside the listed tasks.\n` +
       `Check: code correctness, test coverage, adherence to each task's acceptance criteria.\n` +
-      `If a task needs rework, reopen it: bd update <id> --status=open\n` +
+      `Follow your runbook (agents/reviewer.md): run NO bd mutations yourself. If a task\n` +
+      `needs rework, list its id in reopenIds in your structured output -- the workflow\n` +
+      `applies the reopen transitions for you.\n` +
       `CHANGES_NEEDED verdict must include specific actionable feedback tied to a task ID.\n` +
       `APPROVED means all committed work meets acceptance criteria.`,
       { model: reviewerModel, label: reviewerLabel, phase: 'Develop', schema: REVIEW_SCHEMA, agentType: 'reviewer',
@@ -2275,6 +2277,34 @@ while (cycleCount < maxCycles) {
     if (!approved(review)) {
       devFeedback = (review && review.notes) || '';
       log(`Reviewer feedback: ${devFeedback.slice(0, 120)}`);
+
+      // Apply the reviewer's structured verdict. The reviewer is a pure reader of
+      // beads (agents/reviewer.md: never bd update/close/create) -- the WORKFLOW owns
+      // the reopen/create transitions, otherwise CHANGES_NEEDED tasks stay closed and
+      // the next iteration exits Develop as if the review had passed.
+      const _reopenAll = Array.isArray(review && review.reopenIds) ? review.reopenIds : [];
+      const _reopenIds = _reopenAll.filter(id => workedIds.includes(id));
+      if (_reopenAll.length > _reopenIds.length) {
+        log(`Reviewer listed ${_reopenAll.length - _reopenIds.length} reopenId(s) outside this iteration's worked tasks -- ignored`);
+      }
+      const _newTasks = Array.isArray(review && review.newTasks) ? review.newTasks : [];
+      const _shQuote = s => String(s || '').replace(/"/g, "'");
+      const _prioNum = p => { const m = String(p || '').match(/[0-4]/); return m ? m[0] : '2'; };
+      const applyCmds = [
+        ..._reopenIds.map(id => `bd update ${id} --status=open`),
+        ..._newTasks.map(t =>
+          `bd create --title="${_shQuote(t.title || 'review follow-up').slice(0, 120)}" ` +
+          `--description="${_shQuote(t.description).slice(0, 500)}" ` +
+          `--type=task --priority=${_prioNum(t.priority)} --parent=${rootIds[0]}`
+        ),
+      ];
+      if (applyCmds.length > 0) {
+        await dispatchShell(applyCmds, {
+          model: MODEL_HAIKU, label: `review-apply-c${cycleCount}-i${devIter}`, phase: 'Develop',
+          maxTurns: applyCmds.length + 2,
+        });
+        log(`Applied review verdict: ${_reopenIds.length} task(s) reopened, ${_newTasks.length} follow-up task(s) created`);
+      }
       // Fire-and-forget: write feedback.md to disk only -- next doer's 'git add -A' picks it up.
       // The plan-reviewer commitFeedback (below) MUST remain awaited and commit+push so the
       // planner can read it from remote. Dev-path feedback is local-only.
