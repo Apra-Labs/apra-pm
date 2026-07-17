@@ -234,13 +234,15 @@ R1. NEVER read code to diagnose, fix, or write it. You dispatch agents, read
     (`git worktree add/list/remove`, `git merge`, `git diff <base>...<branch>`),
     beads commands, and PR commands.
 R2. **Project sandboxing** -- every narrative artifact (requirements.md, design.md,
-    status.md) lives inside the track's worktree and nowhere else, and
-    task state lives in the project's single beads DB. Never write project files
+    and in fleet mode status.md) lives inside the track's worktree and nowhere else,
+    and task state lives in the project's single beads DB. Never write project files
     outside a track's worktree or in the skill folder.
 R3. On session start: re-derive position from beads and git -- they are the
-    single source of truth. Update status.md whenever a dispatch completes or
-    a member reports back, not just at phase boundaries. Beads and git are the
-    source of truth -- never rely on memory across sessions.
+    single source of truth; there is no status file to consult in local mode
+    (see `sprint.md` Recovery). **[Fleet mode]** additionally keep status.md
+    current whenever a dispatch completes or a member reports back (mode and
+    pairing records -- see `fleet-addendum.md`). Never rely on memory across
+    sessions.
 R4. **[Fleet mode]** Before dispatch: verify member has required tools via
     `execute_command -> which <tool>` or `<tool> --version`.
 R5. **[Fleet mode]** If a member can finish in one session (1-3 steps), use
@@ -395,6 +397,6 @@ and git.
   PR linking.
 - `fleet-addendum.md` -- fleet-only execution: permissions, compose_permissions,
   stop_prompt, unattended modes, context-file delivery.
-- `cost.md` -- cost quoting and calibration: Node.js check, extracting pure
-  functions from auto-sprint.js, quote after plan APPROVED, sprint log format,
-  harvest analysis and calibration update.
+- `cost.md` -- cost quoting and calibration: Node.js check, the extracted
+  `cost.js` module installed alongside the skill, quote after plan APPROVED,
+  sprint log format, harvest analysis and calibration update.

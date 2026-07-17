@@ -121,7 +121,8 @@ back to beads notes. See `cost.md` Phase 3.
 
 Run the doer-review loop in `doer-reviewer-loop.md`. Each iteration: read the ready
 tasks (`bd ready`), group them into model streaks (consecutive tasks sharing a model
-tier, read from each task's notes via `bd show <id>`), dispatch one `doer` per streak
+tier, read from each task's beads metadata -- the `model` key in `bd show <id>`,
+never `--notes`), dispatch one `doer` per streak
 on that tier, then one `reviewer` over all worked tasks. The doer claims each task
 (`bd update <id> --claim`), implements, commits, and closes it (`bd close <id>`); the
 orchestrator does not touch beads between doer and reviewer. The reviewer runs
@@ -207,7 +208,8 @@ MANDATORY CHECKLIST -- verify each before exiting:
    output to the branch.
 4. **Cost analysis and calibration update** (if Node.js available) -- run
    `computeSprintAnalysis`, `buildSprintSummary`, and `computeUpdatedCalibration`
-   from auto-sprint.js to produce `sprint-logs/<branch>-<startedAt>.analysis.md` and
+   from `<skillDir>/cost.js` (the extracted module installed alongside this skill on
+   every provider -- see `cost.md`) to produce `sprint-logs/<branch>-<startedAt>.analysis.md` and
    update `sprint-logs/calibration.json` with actual token data from this sprint.
    Commit both. See `cost.md` Harvest.
 5. **Close the sprint root and the delivered issues** -- `bd close <sprint-id>`; also close
@@ -287,7 +289,7 @@ For 1-3 tasks completable in one sitting, skip the full harness:
 3. Dispatch the `doer` (model sized to the work) for the task(s); it commits.
 4. Dispatch the `reviewer` (premium-tier); read the verdict. `CHANGES NEEDED` ->
    doer fixes -> re-review. `APPROVED` -> close the beads tasks and the delivered
-   source issues, clean the sprint scaffolding from the PR (see Completion step 3 --
+   source issues, clean the sprint scaffolding from the PR (see Completion step 7 --
    `git rm` sprint-created tracking files, restore any the repo already shipped, then
    verify the net diff is product only) and commit as `pm`, raise the PR (or
    report the diff for local-only), remove the worktree.

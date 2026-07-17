@@ -25,7 +25,7 @@ out bigger than expected, promote to a full sprint.
    criteria (`bd show <id>`) + the diff and outputs a verdict: APPROVED or
    CHANGES NEEDED.
 5. On APPROVED: close the delivered source issues, clean sprint scaffolding from the
-   PR (see sprint.md Completion step 5 -- git rm sprint-created narrative files,
+   PR (see sprint.md Completion step 7 -- git rm sprint-created narrative files,
    restore any the repo already shipped, then verify the net diff is product only),
    commit as pm, raise the PR (or report the diff for local-only), remove the
    worktree.

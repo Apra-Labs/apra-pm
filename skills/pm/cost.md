@@ -133,7 +133,7 @@ The orchestrator appends after each dispatch using a cheap-tier agent (same
 `appendNewEntries` pattern as auto-sprint). The `label` format `<role>-c<N>-i<M>`
 is required -- `computeSprintAnalysis` strips the suffix to recover the role name.
 
-If the Claude Code harness does not expose per-subagent token counts, record
+If the harness/CLI does not expose per-subagent token counts, record
 `outTokens: 0` and `costUsd: 0` -- the analysis will show actuals as zero but the
 estimate side still works and calibration is not corrupted.
 

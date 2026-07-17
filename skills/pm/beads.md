@@ -69,8 +69,8 @@ orchestrator reads those fields and runs:
 # for each id in reopenIds:
 bd update <task-id> --status=open --notes="review: <finding from notes section>"
 
-# for each entry in newTasks:
-bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --acceptance="<notes>"
+# for each entry in newTasks ({title, description, priority}):
+bd create "<title>" -p <priority> --parent <sprint-id> --assignee <track> --description="<description>"
 ```
 Reopened tasks return to `bd ready` as work for the next iteration. On APPROVED
 neither command is needed -- tasks stay closed.
