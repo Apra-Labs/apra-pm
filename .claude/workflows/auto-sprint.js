@@ -578,18 +578,34 @@ function parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds) {
   return { count: ids.length, ids };
 }
 
-// parseReadyStreaks: contract {totalCount, streaks[]} grouping ready tasks in the
-// subtree by model, ordered by min priority.
+// parseReadyStreaks: contract {totalCount, streaks[], extractFailed} grouping ready
+// tasks in the subtree by model, ordered by min priority.
 // readyListIdx is the explicit index of the ready-tasks JSON command in outputs[].
 // rootIds (optional): sprint-root ids to exclude from dispatchable leaf work.
+//
+// extractFailed distinguishes "the extractor genuinely found zero ready tasks" from
+// "the extraction itself failed" (JSON.parse threw, or the dispatch agent returned
+// something that isn't the extracted array at all). Both used to collapse to the same
+// {totalCount: 0}, which let a transient dispatch/parse hiccup masquerade as a
+// confirmed deadlock and hard-abort the whole sprint (apra-fleet e2e s10, 2026-07-17,
+// run 29605783512) -- see the caller in the Develop loop, which now retries once on
+// extractFailed instead of trusting a single failed read as proof of zero ready work.
+// The extractor emits the string 'null' (not '[]') on its own catch precisely so this
+// function can tell the two cases apart; see getReadyStreaks/countBeadsBlockers.
 function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel, rootIds) {
-  if (!Array.isArray(outputs) || outputs.length < readyListIdx + 1) return { totalCount: 0, streaks: [] };
+  if (!Array.isArray(outputs) || outputs.length < readyListIdx + 1) return { totalCount: 0, streaks: [], extractFailed: true };
   const subtree = collectSubtreeIds(outputs, rootCount);
   let readyTasks = [];
+  let extractFailed = false;
   try {
     const all = JSON.parse(outputs[readyListIdx]);
-    readyTasks = Array.isArray(all) ? all.filter(t => subtree.has(t.id)) : [];
-  } catch { readyTasks = []; }
+    if (Array.isArray(all)) {
+      readyTasks = all.filter(t => subtree.has(t.id));
+    } else {
+      readyTasks = [];
+      extractFailed = true; // valid JSON but not the expected array shape (e.g. the 'null' failure sentinel)
+    }
+  } catch { readyTasks = []; extractFailed = true; }
 
   // Dispatch-time leaf filter (GRAPH-SEMANTICS.md): decomposed items are GROUPED via
   // --parent, never dep-blocked by their own children, so a sprint root or a bead with
@@ -633,7 +649,7 @@ function parseReadyStreaks(outputs, rootCount, readyListIdx, defaultModel, rootI
     _min: Math.min(...tasks.map(x => x.priority)),
   })).sort((a, b) => a._min - b._min).map(({ model, ids }) => ({ model, ids }));
 
-  return { totalCount: readyTasks.length, streaks };
+  return { totalCount: readyTasks.length, streaks, extractFailed };
 }
 
 // parseCycleState: contract {planDone, inProgressIds}. planDone is true for a
@@ -1141,61 +1157,256 @@ function worktreeNamesFor(sprintBranch, taskId, worktreeRoot) {
 
 // PURE_FUNCTIONS_END
 
-// ------------------------------------------------------------- role schemas
+// ROLE_SCHEMAS_GENERATED_BEGIN -- do not hand-edit; run `node scripts/gen-auto-sprint-schemas.mjs` to regenerate from agents/schemas/*.json
 //
-// apra-fleet-unw.21: the role-contract schemas (REVIEW_SCHEMA,
-// PLAN_REVIEW_SCHEMA, DOER_STATUS_SCHEMA, INTEG_RUN_SCHEMA, CI_SCHEMA,
-// HARVEST_SCHEMA) are loaded from vendor/apra-pm's own canonical,
-// machine-readable role contracts at agents/schemas/<role>.json, instead of
-// being hand-copied inline literals. This closes the drift this file itself
-// used to have from the vendored agents/*.md prose and from
-// packages/apra-fleet-se/auto-sprint/contracts.mjs -- most concretely, the
-// legacy 'CHANGES NEEDED' (space) enum value is now 'CHANGES_NEEDED'
-// (underscore), matching every other reader of a reviewer/plan-reviewer
-// verdict. See docs/agent-schema-layering-proposal.md section 2.4/4/5.
+// apra-fleet-unw.21 / apra-fleet e2e s10 (2026-07-17): the role-contract schemas
+// below are generated from vendor/apra-pm's own canonical, machine-readable role
+// contracts at agents/schemas/<role>-output.json, instead of being hand-copied
+// inline literals -- this closes the drift this file used to have from the
+// vendored agents/*.md prose and from packages/apra-fleet-se/auto-sprint/contracts.mjs.
+// The "version" key present in each source file is dropped: it is a non-standard
+// JSON-Schema keyword the agent tool's strict schema validator rejects.
 //
-// This section is placed AFTER PURE_FUNCTIONS_END deliberately: it performs
-// real I/O (require('fs') / require('path') / fs.readFileSync), which must
-// not live inside the PURE_FUNCTIONS_BEGIN/END block -- that block is
-// extracted verbatim via `new Function(...)` by test/sprint-cost.test.mjs and
-// by install.mjs's cost.js generation step, both of which require it to stay
-// self-contained pure data/functions with no require() and no filesystem
-// access.
-
-const fs = require('fs');
-const path = require('path');
-
-// Loads a role's canonical output-contract JSON Schema from
-// agents/schemas/<role>-output.json, resolved relative to this file so it
-// works both from a dev checkout of apra-pm (this file lives at
-// .claude/workflows/auto-sprint.js, agents/ is two levels up at the repo
-// root) and once install.mjs has copied this file to
-// <configDir>/workflows/auto-sprint.js (agents/schemas/ is then one level up,
-// a sibling of workflows/, installed alongside agents/*.md -- see
-// install.mjs step [2/4]).
-function loadRoleSchema(role) {
-  const candidates = [
-    path.join(__dirname, '..', 'agents', 'schemas', `${role}-output.json`),
-    path.join(__dirname, '..', '..', 'agents', 'schemas', `${role}-output.json`),
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return JSON.parse(fs.readFileSync(candidate, 'utf-8'));
+// Inlined at BUILD TIME (not loaded via require('fs') at runtime) because this file
+// runs inside Claude's Workflow tool sandbox, which has no filesystem/require access
+// -- a prior runtime-load revision crashed on every invocation with "require is not
+// defined". See scripts/gen-auto-sprint-schemas.mjs, which generates this block.
+const REVIEW_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "apra-pm/reviewer-output@1",
+  "title": "reviewer output",
+  "description": "Canonical machine-readable output contract for the reviewer role. See agents/reviewer.md Step 5 for the prose contract this mirrors.",
+  "type": "object",
+  "required": [
+    "verdict",
+    "notes",
+    "reopenIds",
+    "newTasks"
+  ],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "APPROVED",
+        "CHANGES_NEEDED"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "reopenIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "newTasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "title",
+          "description",
+          "priority"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
-  throw new Error(
-    `[auto-sprint] Could not locate the "${role}" role schema. Tried:\n` +
-    candidates.map((c) => `  - ${c}`).join('\n')
-  );
-}
-
-const REVIEW_SCHEMA      = loadRoleSchema('reviewer');
-const PLAN_REVIEW_SCHEMA = loadRoleSchema('plan-reviewer');
-const DOER_STATUS_SCHEMA = loadRoleSchema('doer');
-const DEPLOYER_SCHEMA    = loadRoleSchema('deployer');
-const INTEG_RUN_SCHEMA   = loadRoleSchema('integ-test-runner');
-const CI_SCHEMA          = loadRoleSchema('ci-watcher');
-const HARVEST_SCHEMA     = loadRoleSchema('harvester');
+};
+const PLAN_REVIEW_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "apra-pm/plan-reviewer-output@1",
+  "title": "plan-reviewer output",
+  "description": "Canonical machine-readable output contract for the plan-reviewer role. See agents/plan-reviewer.md Step 4 for the prose contract this mirrors.",
+  "type": "object",
+  "required": [
+    "verdict",
+    "notes",
+    "taskAssignments"
+  ],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "APPROVED",
+        "CHANGES_NEEDED"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "taskAssignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "bucket",
+          "model"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ]
+          },
+          "model": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+};
+const DOER_STATUS_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "apra-pm/doer-output@1",
+  "title": "doer output",
+  "description": "Canonical machine-readable output contract for the doer role. See agents/doer.md Step 3 (VERIFY checkpoint) and Branch and secrets rules (BLOCKED) for the prose contract this mirrors.",
+  "type": "object",
+  "required": [
+    "status",
+    "closedIds",
+    "notes"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "VERIFY",
+        "BLOCKED"
+      ]
+    },
+    "closedIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+};
+const DEPLOYER_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "apra-pm/deployer-output@1",
+  "title": "deployer output",
+  "description": "Canonical machine-readable output contract for the deployer role. See agents/deployer.md Output schema for the prose contract this mirrors.",
+  "type": "object",
+  "required": [
+    "deployed",
+    "notes"
+  ],
+  "properties": {
+    "deployed": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+};
+const INTEG_RUN_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "apra-pm/integ-test-runner-output@1",
+  "title": "integ-test-runner output",
+  "description": "Canonical machine-readable output contract for the integ-test-runner role. See agents/integ-test-runner.md Step 4 for the prose contract this mirrors.",
+  "type": "object",
+  "required": [
+    "featuresClosed",
+    "issuesCreated",
+    "passed",
+    "bugsFiled",
+    "summary"
+  ],
+  "properties": {
+    "featuresClosed": {
+      "type": "number"
+    },
+    "issuesCreated": {
+      "type": "number"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "bugsFiled": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  }
+};
+const CI_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "apra-pm/ci-watcher-output@1",
+  "title": "ci-watcher output",
+  "description": "Canonical machine-readable output contract for the ci-watcher role. See agents/ci-watcher.md Step 2 for the prose contract this mirrors.",
+  "type": "object",
+  "required": [
+    "status",
+    "notes"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "green",
+        "red",
+        "not_configured",
+        "pending"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+};
+const HARVEST_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "apra-pm/harvester-output@1",
+  "title": "harvester output",
+  "description": "Canonical machine-readable output contract for the harvester role. See agents/harvester.md Step 7 for the prose contract this mirrors.",
+  "type": "object",
+  "required": [
+    "status",
+    "notes"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "OK",
+        "FAILED"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+};
+// ROLE_SCHEMAS_GENERATED_END
 
 function outputCostUsd(tier, tokens) {
   const rate = OUTPUT_PRICE_PER_M[tier] || OUTPUT_PRICE_PER_M[TIER_STANDARD];
@@ -1347,7 +1558,11 @@ async function countBeadsBlockers(thr, roots) {
 async function getReadyStreaks(rootIds) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
-  const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
+  // Catch fallback emits 'null' (not '[]'): parseReadyStreaks must be able to tell
+  // "extraction failed" apart from "genuinely zero ready tasks" -- see its extractFailed
+  // contract note above. 'null' is valid JSON but not an array, so JSON.parse(...) still
+  // succeeds while the array-shape check flags extractFailed.
+  const taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('null')}"`;
   const cmds = [
     ...rootIds.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --ready --type=task --json | ${taskExtract}`,
@@ -2022,7 +2237,23 @@ while (cycleCount < maxCycles) {
       'Develop',
       `heartbeat-c${cycleCount}-i${devIter}`,
     );
-    const streakResult = await getReadyStreaks(rootIds);
+    let streakResult = await getReadyStreaks(rootIds);
+    if (streakResult.extractFailed) {
+      // A single failed/garbled extraction must never look identical to a confirmed
+      // zero-ready result -- that ambiguity is what let one transient dispatch/parse
+      // hiccup hard-abort an entire sprint on cycle 1 (apra-fleet e2e s10, 2026-07-17,
+      // run 29605783512: the workflow itself ran fine, but a bad read made it look like
+      // a dependency deadlock). Retry once, bounded, before trusting the result at all.
+      log(`WARN: ready-task extraction failed at c${cycleCount} i${devIter} -- retrying once before treating as zero-ready`);
+      streakResult = await getReadyStreaks(rootIds);
+    }
+    if (streakResult.totalCount === 0 && streakResult.extractFailed) {
+      // Both reads failed -- we genuinely cannot tell if there's ready work. Do NOT
+      // hard-abort on unreliable data; log loudly and let the next iteration/cycle
+      // (or exit-check) retry with a fresh read instead of losing the whole sprint.
+      log(`WARN: ready-task extraction failed twice at c${cycleCount} i${devIter} -- treating as inconclusive, not a deadlock`);
+      break;
+    }
     if (streakResult.totalCount === 0) {
       // Distinguish genuine completion from a dependency DEADLOCK. If the sprint subtree
       // still has open issues at/above the goal threshold but NONE are ready on the FIRST
