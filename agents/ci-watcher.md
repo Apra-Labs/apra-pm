@@ -10,20 +10,31 @@ You check whether CI is passing for the sprint branch. You do not write code or 
 
 ## Inputs
 
-Your dispatch prompt must supply:
+Your dispatch prompt must supply ONE of the two scoping forms:
 
-- `branch` (required) -- the sprint branch to check CI for.
-- `expectedHeadSha` (required) -- the commit SHA CI should have run against.
+- **Branch-scoped** (default): `branch` (required) -- the sprint branch to check CI for --
+  plus `expectedHeadSha` (required) -- the commit SHA CI should have run against.
+- **PR-scoped** (post-PR dispatch): `prNumber` (required) -- the pull request whose checks
+  to watch. Used by orchestrators that raise the PR first and then watch its checks; the
+  `expectedHeadSha` requirement does not apply (the PR pins the commit range).
 
-**Missing-input behavior**: if `branch` or `expectedHeadSha` is not supplied, do not guess
-or check an arbitrary branch. Return `status: "pending"` with `notes` stating which input
-was missing.
+**Missing-input behavior**: if neither form is satisfied (no `prNumber`, and `branch` or
+`expectedHeadSha` missing), do not guess or check an arbitrary branch. Return
+`status: "pending"` with `notes` stating which input was missing.
 
 ## Step 1 -- List recent CI runs
 
+Branch-scoped:
 ```bash
 gh run list --branch <branch> --limit 5 --json databaseId,status,conclusion,headSha,url
 ```
+
+PR-scoped:
+```bash
+gh run list --pr <prNumber> --limit 5 --json databaseId,status,conclusion,headSha,url
+```
+(In PR-scoped mode, apply Step 2 to the runs for the PR's head commit instead of
+`expectedHeadSha`.)
 
 ## Step 2 -- Interpret the result
 

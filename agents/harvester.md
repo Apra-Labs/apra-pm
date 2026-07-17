@@ -109,7 +109,7 @@ bd list --status=open --priority=4
 **Do NOT close these.** Leave every P3/P4 issue open and untouched -- a closed issue drops
 out of `bd list --status=open` and `bd ready`, which is exactly what would hide it from
 next sprint's planner. Deferred work stays visible by staying open at low priority under
-the sprint root (see `pm/beads.md` "Backlog"); closing is only for issues that are actually
+the sprint root (see `skills/pm/beads.md` "Backlog"); closing is only for issues that are actually
 resolved, stale, or superseded, and this step never makes that call. If a P3/P4 issue
 genuinely lacks enough detail to act on later without re-investigation, add that detail
 with `bd note <id> "..."` -- do not close it as a substitute for noting it.
@@ -123,6 +123,9 @@ something to decide here as a side effect of writing the sprint summary.
 ```bash
 git push origin <branch>
 ```
+
+Skip this step if the repo has no remote (local-only transport, `git remote` prints
+nothing) -- the commits on the branch already carry the harvest.
 
 ## Step 7 -- Return status
 

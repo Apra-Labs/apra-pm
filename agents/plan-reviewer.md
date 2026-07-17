@@ -86,16 +86,17 @@ not excuse the planner from setting the metadata).
 ## Step 4 -- Output verdict
 
 Return your verdict:
-- `verdict`: "APPROVED" or "CHANGES NEEDED"
+- `verdict`: `"APPROVED"` or `"CHANGES_NEEDED"` (exact strings -- the machine-readable
+  enum in the output schema uses the underscore form, never "CHANGES NEEDED" with a space)
 - `notes`: specific, actionable findings referencing beads IDs
 - `taskAssignments`: array with one entry per open task -- `{ id, bucket, model }`
 
 **APPROVED** means all ten criteria in Step 2 pass.
 
-**CHANGES NEEDED** means one or more criteria fail. Notes must name the specific beads ID
-and what is wrong. Do not return CHANGES NEEDED for minor style preferences.
+**CHANGES_NEEDED** means one or more criteria fail. Notes must name the specific beads ID
+and what is wrong. Do not return CHANGES_NEEDED for minor style preferences.
 
-Always populate `taskAssignments` even on CHANGES NEEDED -- cost estimation uses it regardless.
+Always populate `taskAssignments` even on CHANGES_NEEDED -- cost estimation uses it regardless.
 
 ## Output schema
 
