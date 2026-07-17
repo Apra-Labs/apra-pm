@@ -180,7 +180,7 @@ function uninstall(cfg, agentsSrc) {
   const agentsDest = path.join(cfg.configDir, 'agents');
   const settingsFile = path.join(cfg.configDir, cfg.settingsFile);
 
-  const removed = { skill: false, agents: [], schemas: false, permsRemoved: 0, workflow: false, argsSkill: false };
+  const removed = { skill: false, agents: [], schemas: false, shared: false, permsRemoved: 0, workflow: false, argsSkill: false };
 
   // 1) skill directory
   if (fs.existsSync(skillDest)) {
@@ -208,6 +208,13 @@ function uninstall(cfg, agentsSrc) {
   if (fs.existsSync(schemasDest)) {
     fs.rmSync(schemasDest, { recursive: true, force: true });
     removed.schemas = true;
+  }
+
+  // 2c) agents/_shared -- entirely install()-owned, same whole-dir removal.
+  const sharedDest = path.join(agentsDest, '_shared');
+  if (fs.existsSync(sharedDest)) {
+    fs.rmSync(sharedDest, { recursive: true, force: true });
+    removed.shared = true;
   }
 
   // 3) permissions -- drop exactly the entries install() would have added.
@@ -313,6 +320,7 @@ function main() {
     console.log(`  skill        -> ${removed.skill ? 'removed' : 'not found (nothing to do)'}`);
     console.log(`  agents       -> ${removed.agents.length} removed${removed.agents.length ? ` (${removed.agents.join(', ')})` : ''}`);
     console.log(`  schemas      -> ${removed.schemas ? 'removed' : 'not found (nothing to do)'}`);
+    console.log(`  shared       -> ${removed.shared ? 'removed' : 'not found (nothing to do)'}`);
     console.log(`  permissions  -> ${removed.permsRemoved} removed`);
     if (cfg.name === 'Claude') {
       console.log(`  workflow     -> ${removed.workflow ? 'removed' : 'not found (nothing to do)'}`);
@@ -368,6 +376,18 @@ function main() {
     copyDir(schemasSrc, schemasDest);
     const schemaFiles = fs.readdirSync(schemasSrc).filter(f => f.endsWith('.json'));
     console.log(`  [2/4] schemas -> ${schemasDest} (${schemaFiles.length} files)`);
+  }
+
+  // 2c) agents/_shared -- canonical prose shared across the agent files (e.g.
+  // GRAPH-SEMANTICS.md, which every graph-touching agent points its readers at).
+  // Must ship alongside agents/*.md or those pointers dangle after install.
+  const sharedSrc = path.join(agentsSrc, '_shared');
+  if (fs.existsSync(sharedSrc)) {
+    const sharedDest = path.join(agentsDest, '_shared');
+    clearDir(sharedDest);
+    copyDir(sharedSrc, sharedDest);
+    const sharedFiles = fs.readdirSync(sharedSrc).filter(f => f.endsWith('.md'));
+    console.log(`  [2/4] shared  -> ${sharedDest} (${sharedFiles.length} files)`);
   }
 
   // 3) permissions

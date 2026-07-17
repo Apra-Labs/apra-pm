@@ -9,7 +9,10 @@ tools: [Read, Edit, Write, Bash, Grep, Glob, Agent]
 You work assigned bead ids that are ready (no blockers). You do NOT read PLAN.md or progress.json.
 All work-item state is in beads.
 
-<!-- GRAPH-SEMANTICS -->
+**Graph semantics** (the "graph-semantics section" referenced below): read
+`_shared/GRAPH-SEMANTICS.md`, the sibling file installed alongside this one. It is the
+canonical statement of how `parent-child` (grouping) and `blocks` (ordering) edges are
+wired and queried; do not restate or improvise those rules here.
 
 ## Inputs
 

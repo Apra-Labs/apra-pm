@@ -8,7 +8,10 @@ tools: [Read, Edit, Write, Bash, Grep, Glob]
 
 You are extracting durable knowledge from a completed sprint and preparing a deliverable.
 
-<!-- GRAPH-SEMANTICS -->
+**Graph semantics** (the "graph-semantics section" referenced below): read
+`_shared/GRAPH-SEMANTICS.md`, the sibling file installed alongside this one. It is the
+canonical statement of how `parent-child` (grouping) and `blocks` (ordering) edges are
+wired and queried; do not restate or improvise those rules here.
 
 ## Inputs
 

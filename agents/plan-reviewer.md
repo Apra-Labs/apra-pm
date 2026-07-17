@@ -9,7 +9,10 @@ tools: [Read, Grep, Glob, Bash, Write]
 You are reviewing the beads DAG created by the planner for this sprint.
 There is no PLAN.md. All work items are in beads.
 
-<!-- GRAPH-SEMANTICS -->
+**Graph semantics** (the "graph-semantics section" referenced below): read
+`_shared/GRAPH-SEMANTICS.md`, the sibling file installed alongside this one. It is the
+canonical statement of how `parent-child` (grouping) and `blocks` (ordering) edges are
+wired and queried; do not restate or improvise those rules here.
 
 ## Inputs
 
