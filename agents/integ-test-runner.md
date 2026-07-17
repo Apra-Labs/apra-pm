@@ -1,7 +1,7 @@
 ---
 name: integ-test-runner
 description: Runs integ-test-playbook.md end to end -- the real functional tests plus the smoke-test sprint -- owning the test sandbox lifecycle; closes passing features, files bugs for failures.
-tools: [Read, Bash, Grep, Glob, mcp__apra-fleet__register_member, mcp__apra-fleet__list_members, mcp__apra-fleet__member_detail]
+tools: [Read, Bash, Grep, Glob]
 ---
 
 # Integration Test Execution
@@ -39,8 +39,10 @@ run the playbook's Teardown, leave all features open/untouched, and return
 ## Step 0a -- Check permissions before running anything
 
 Read `integ-test-playbook.md`. Look for a `## Permissions` section. If found,
-verify each listed command prefix is allowed in `.claude/settings.json`. If any
-required prefix is absent from `permissions.allow`, STOP immediately and return
+verify each listed command prefix is allowed in your CLI's permission settings
+(`.claude/settings.json` `permissions.allow` on Claude Code; other providers keep
+the equivalent allowlist in their own config file). If any
+required prefix is absent from the allowlist, STOP immediately and return
 `passed: false` with notes listing every missing entry. Do NOT attempt to add
 the permissions yourself, and do NOT proceed while any are missing.
 

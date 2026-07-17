@@ -76,7 +76,7 @@ For each open `type=task` issue, determine:
 **Model** -- read from the task's beads metadata (`model` key, set via `--metadata`) in
 `bd show <id>` output. This is the same location `planner.md` Step 3 writes to -- do not
 look in `--notes` or anywhere else. If no `model` metadata key is set on a task, use the
-fallback: `claude-sonnet-4-6`, AND flag it under Step 2 criterion 10 as a CHANGES_NEEDED
+fallback tier: `standard`, AND flag it under Step 2 criterion 10 as a CHANGES_NEEDED
 finding (the fallback lets you finish classification/reporting in the same pass; it does
 not excuse the planner from setting the metadata).
 
