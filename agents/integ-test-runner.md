@@ -82,9 +82,9 @@ a time.
   saying there were no features to test. The playbook itself (Step 0b, both parts)
   still runs: it is the sprint's standing confidence check, not a per-feature step.
 - Only treat the feature-id input as genuinely missing (not merely empty) when your
-  dispatch prompt gives no indication a scoped list was computed at all -- in that case, do
-  not guess and do not scan the DB; stop and report that the scoped list is missing (return
-  `featuresClosed: 0`, note the reason).
+  dispatch prompt gives no indication a scoped list was computed at all -- in that case,
+  do not guess and do not scan the DB; stop and report that the scoped list is missing
+  (return `featuresClosed: 0`, note the reason).
 
 ## Step 2 -- Run tests for each feature
 
