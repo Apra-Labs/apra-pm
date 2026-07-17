@@ -50,10 +50,11 @@ order; a fourth phase runs once at sprint close.
   over the worked tasks. Repeat until `bd ready` is empty, no open task remains at
   the goal priority, and the last review verdict is APPROVED.
 - **Test** -- only when both `deploy.md` and `integ-test-playbook.md` are present:
-  `deployer` brings up / resets the environment and deploys, `integ-test-runner`
-  executes tests feature by feature (closes passing features, files bugs for
-  failures), then `deployer` tears down. Skip the whole phase if either file is
-  absent.
+  `deployer` deploys per `deploy.md` (deploy + smoke test), then
+  `integ-test-runner` runs `integ-test-playbook.md` end to end -- the real
+  functional suite, then the smoke-test sprint in a sandbox it brings up and
+  tears down itself -- plus each feature's tests (closes passing features,
+  files bugs for failures). Skip the whole phase if either file is absent.
 - **Harvest** -- runs once after the cycle loop exits (goal met or cycle ceiling
   hit): poll CI via `ci-watcher`, run a final reviewer pass, then `harvester`
   extracts durable knowledge into `docs/` and `CHANGELOG`, and raise the PR.
@@ -113,12 +114,13 @@ track's branch.
 Dispatch these only when their condition holds:
 
 - `deployer` -- in the Test phase, once the Develop exit condition is met (no open
-  tasks at the goal priority, last review APPROVED) and `deploy.md` is present; runs
-  the deploy/reset/teardown runbook.
+  tasks at the goal priority, last review APPROVED) and `deploy.md` is present;
+  follows `deploy.md` to deploy the build and run its smoke test. It does not
+  run `integ-test-playbook.md`.
 - `integ-test-runner` -- in the Test phase, after a successful deploy, when
-  `integ-test-playbook.md` is present; executes integration tests feature by
-  feature against the deployed environment, closing passing features and filing
-  bugs for failures.
+  `integ-test-playbook.md` is present; owns that playbook end to end (real
+  functional suite, then sandbox Setup/Reset, smoke scenario, feature tests,
+  Teardown always), closing passing features and filing bugs for failures.
 - `ci-watcher` -- in Harvest, to poll CI for the sprint HEAD SHA (green / red /
   not configured / pending). [Fleet mode] PM may run `gh` CLI directly instead of
   dispatching (R13).

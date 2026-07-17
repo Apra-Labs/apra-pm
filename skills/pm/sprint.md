@@ -141,24 +141,28 @@ Harvest) while open tasks remain at the goal priority.
 
 Run only when both `deploy.md` and `integ-test-playbook.md` are present in the
 worktree (or repo root / `docs/`); otherwise skip the phase and proceed to the goal
-check. The phase has three steps:
+check. The phase has two steps:
 
-1. **Deploy** -- dispatch `deployer` (standard-tier). On the first cycle it runs the
-   playbook's Setup section to bring up the environment; on later cycles it runs the
-   Reset section to restore pristine state. It then follows `deploy.md` to deploy the
-   build and runs the smoke test. On smoke-test failure, it tears down, and PM skips
-   integration tests this cycle and continues.
+1. **Deploy** -- dispatch `deployer` (standard-tier) with `operation: deploy`. It
+   follows `deploy.md` only: deploys the build and runs the smoke test. On
+   smoke-test failure, PM skips integration tests this cycle and continues. The
+   deployer does NOT touch `integ-test-playbook.md` -- that playbook belongs to
+   `integ-test-runner`.
 2. **Integration tests.** First **enumerate the open features in the sprint-root
    subtree** yourself -- the same subtree the goal-check uses (`bd graph --json
    <sprint-id>` or `bd list --tree <sprint-id>`, then keep `issue_type == feature`,
    `status != closed`). Then dispatch `integ-test-runner` (standard-tier), passing that
    **explicit feature-id list** in the prompt -- not the sprint id for it to re-derive,
    and never the whole DB. Scoping is the orchestrator's job (you have the full sprint
-   context); the runner only tests what it is handed. It runs each listed feature's
-   tests, closes passing features in beads, and files a priority-ranked bug for each
-   failure (see `beads.md`). If the list is empty, skip integration tests this cycle.
-3. **Teardown** -- dispatch `deployer` to run the playbook's Teardown section and
-   fully clean up.
+   context); the runner only tests what it is handed. The runner owns
+   `integ-test-playbook.md` end to end: it runs the playbook's real functional
+   suite (part 1), brings the test sandbox up itself (playbook Setup on the first
+   cycle, Reset on later cycles), runs the playbook's smoke scenario and each
+   listed feature's tests inside it, closes passing features in beads, files a
+   priority-ranked bug for each failure (see `beads.md`), and ALWAYS runs the
+   playbook's Teardown before returning. An empty feature list does not skip the
+   dispatch: the runner still executes the playbook's two parts as the sprint's
+   standing confidence check.
 
 If the project ships but has no runbook yet, write `deploy.md` capturing the exact
 execute / verify / rollback steps and `integ-test-playbook.md` capturing Setup /
