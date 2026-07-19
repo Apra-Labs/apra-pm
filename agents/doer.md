@@ -49,19 +49,41 @@ Do NOT run bare `bd ready` to discover work -- it returns ready beads from the e
 database, including other sprints/tracks that may be running concurrently, and you have no
 way to tell which ones are actually yours from that output alone. Work exactly the bead
 ids listed in your dispatch prompt's "Assigned bead ids," in the order given if any of them
-depend on each other, and no others. If an assigned id turns out not to be `issue_type=task`
-(e.g. it is a `bug`/`feature`-typed bead with children, assigned to you in error), skip it,
-note why in your final report, and do not claim or close it.
+depend on each other, and no others. If an assigned id turns out to HAVE OPEN CHILDREN
+(`bd list --parent <id> --json` -- no `--all` -- returns any bead; `bd show <id> --json`'s
+`dependent_count` alone is NOT this check, since it counts ALL children including closed
+ones) it is still a decomposed container being actively worked, not leaf work -- assigned
+to you in error. Skip it, note why in your final report, and do not claim or close it.
+**`issue_type` has no bearing on this** -- per the graph-semantics section, a leaf
+`bug`/`feature`/`chore` bead with zero OPEN children is exactly as workable as a leaf
+`task` bead; only the presence of OPEN children makes a bead non-leaf.
+
+A bead that has children which are ALL now closed is NOT the has-open-children case --
+see Step 2.2's wrap-up handling below; do not skip it on that basis alone.
 
 ## Step 2 -- Work each assigned bead id
 
 For each assigned bead id:
 
 1. **Claim it**: `bd update <id> --claim`
-2. **Read it**: `bd show <id>` -- read the full description and acceptance criteria, and
-   confirm `issue_type=task`. (If it turns out not to be `issue_type=task`, this is the
-   non-task case from Step 1 -- skip it, note why in your final report, and do not claim
-   or close it.)
+2. **Read it**: `bd show <id>` for its description and acceptance criteria, and
+   `bd list --parent <id> --json` (no `--all`) to check for open children.
+   - **Has open children**: this is the has-open-children case from Step 1 -- skip it, note
+     why in your final report, and do not claim or close it. `issue_type` is not the check
+     here -- see Step 1.
+   - **No open children, AND never had any children** (a genuine leaf bead): proceed as
+     normal leaf work below.
+   - **No open children, but DOES have closed children** (every child that was ever created
+     under it is now closed): do not assume the parent is already satisfied just because its
+     children are done. Read its acceptance criteria against what those children actually
+     delivered:
+     - If the completed children fully cover the parent's acceptance criteria, close the
+       parent directly (no new code needed) with a note citing which child ids satisfied it.
+     - If there is a genuine gap -- a loose end the decomposition didn't capture as its own
+       child task -- implement that remaining work, then close the parent.
+     - If you cannot tell from the acceptance criteria and the children's diffs/commit
+       messages whether the gap is real, do not guess: skip it, note the ambiguity in your
+       final report (naming which criterion is unclear), and do not close it.
 3. **Explore**: read the relevant source files; run `git log --oneline -10`
 4. **Implement**: write the code, tests, or config the task describes
 5. **Verify locally**:
@@ -110,16 +132,21 @@ Instead:
 
 ## Step 3 -- VERIFY checkpoint
 
-When every assigned bead id has been closed (or explicitly skipped per Step 1's non-task
-case or the missing-input behavior above), you MUST stop and return:
+When every assigned bead id has been closed (or explicitly skipped per Step 1's
+has-open-children case, Step 2.2's ambiguous-wrap-up case, or the missing-input behavior
+above), you MUST stop and return:
 ```json
 { "status": "VERIFY", "closedIds": ["<id>", "..."], "notes": "string" }
 ```
-`closedIds` lists every bead id you closed this run (via `bd close` in Step 2 -- always
-`issue_type=task`), so the orchestrator can verify your closes against beads instead of
-trusting the summary alone.
+`closedIds` lists every bead id you closed this run (via `bd close` in Step 2 -- either a
+childless leaf bead, or a bead whose children are all closed and whose acceptance criteria
+you confirmed are met, regardless of `issue_type`), so the orchestrator can verify your
+closes against beads instead of trusting the summary alone.
 
-Do NOT close features or bugs -- only `issue_type=task` beads.
+Do NOT close a bead that has OPEN children -- it's still being decomposed/worked, not leaf
+work. `issue_type` has no bearing on this: a leaf `bug`/`feature`/`chore` bead (or one whose
+children are all closed and confirmed to satisfy it) is yours to close once its acceptance
+criteria are met, exactly like a leaf `task` bead.
 Do NOT continue past VERIFY.
 
 ## Token tracking
@@ -162,9 +189,12 @@ or as prose if you are answering a human directly.
 
 - ONE bead id at a time; commit after each confirmed task
 - **Close each task immediately after commit, BEFORE claiming the next bead id** -- closed tasks persist even if the doer crashes
-- NEVER close type=feature or type=bug issues
+- NEVER close a bead that has OPEN children (`bd list --parent <id> --json`, no `--all`,
+  returns any bead) -- it's still being decomposed/worked, not leaf work. `issue_type` has
+  no bearing on this. A bead whose children are ALL closed is not covered by this rule --
+  see Step 2.2.
 - NEVER skip an assigned bead id for convenience -- work them in dependency order; skip
-  only for the explicit exceptions above (not `issue_type=task`, missing acceptance
-  criteria/context, or a missing secret)
+  only for the explicit exceptions above (has open children, an unresolved wrap-up
+  ambiguity, missing acceptance criteria/context, or a missing secret)
 - After every commit: run fast/unit tests; fix before moving to the next assigned bead id
 - No PLAN.md, no progress.json -- beads is the only work tracker
