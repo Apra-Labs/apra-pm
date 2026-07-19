@@ -49,9 +49,12 @@ Do NOT run bare `bd ready` to discover work -- it returns ready beads from the e
 database, including other sprints/tracks that may be running concurrently, and you have no
 way to tell which ones are actually yours from that output alone. Work exactly the bead
 ids listed in your dispatch prompt's "Assigned bead ids," in the order given if any of them
-depend on each other, and no others. If an assigned id turns out not to be `issue_type=task`
-(e.g. it is a `bug`/`feature`-typed bead with children, assigned to you in error), skip it,
-note why in your final report, and do not claim or close it.
+depend on each other, and no others. If an assigned id turns out to HAVE CHILDREN
+(`dependent_count > 0` in `bd show <id> --json`) it is a decomposed container, not leaf
+work -- assigned to you in error. Skip it, note why in your final report, and do not claim
+or close it. **`issue_type` has no bearing on this** -- per the graph-semantics section, a
+leaf `bug`/`feature`/`chore` bead with zero children is exactly as workable as a
+leaf `task` bead; only the presence of children makes a bead non-leaf.
 
 ## Step 2 -- Work each assigned bead id
 
@@ -59,9 +62,9 @@ For each assigned bead id:
 
 1. **Claim it**: `bd update <id> --claim`
 2. **Read it**: `bd show <id>` -- read the full description and acceptance criteria, and
-   confirm `issue_type=task`. (If it turns out not to be `issue_type=task`, this is the
-   non-task case from Step 1 -- skip it, note why in your final report, and do not claim
-   or close it.)
+   confirm it has no children (`dependent_count` is `0`). (If it has children, this is the
+   has-children case from Step 1 -- skip it, note why in your final report, and do not
+   claim or close it. `issue_type` is not the check here -- see Step 1.)
 3. **Explore**: read the relevant source files; run `git log --oneline -10`
 4. **Implement**: write the code, tests, or config the task describes
 5. **Verify locally**:
@@ -110,16 +113,18 @@ Instead:
 
 ## Step 3 -- VERIFY checkpoint
 
-When every assigned bead id has been closed (or explicitly skipped per Step 1's non-task
-case or the missing-input behavior above), you MUST stop and return:
+When every assigned bead id has been closed (or explicitly skipped per Step 1's
+has-children case or the missing-input behavior above), you MUST stop and return:
 ```json
 { "status": "VERIFY", "closedIds": ["<id>", "..."], "notes": "string" }
 ```
-`closedIds` lists every bead id you closed this run (via `bd close` in Step 2 -- always
-`issue_type=task`), so the orchestrator can verify your closes against beads instead of
-trusting the summary alone.
+`closedIds` lists every bead id you closed this run (via `bd close` in Step 2 -- always a
+childless leaf bead, regardless of `issue_type`), so the orchestrator can verify your
+closes against beads instead of trusting the summary alone.
 
-Do NOT close features or bugs -- only `issue_type=task` beads.
+Do NOT close a bead that has children -- it's a decomposed container, not leaf work.
+`issue_type` has no bearing on this: a leaf `bug`/`feature`/`chore` bead is yours to close
+once its acceptance criteria are met, exactly like a leaf `task` bead.
 Do NOT continue past VERIFY.
 
 ## Token tracking
@@ -162,9 +167,10 @@ or as prose if you are answering a human directly.
 
 - ONE bead id at a time; commit after each confirmed task
 - **Close each task immediately after commit, BEFORE claiming the next bead id** -- closed tasks persist even if the doer crashes
-- NEVER close type=feature or type=bug issues
+- NEVER close a bead that has children (`dependent_count > 0`) -- it's a decomposed
+  container, not leaf work. `issue_type` has no bearing on this.
 - NEVER skip an assigned bead id for convenience -- work them in dependency order; skip
-  only for the explicit exceptions above (not `issue_type=task`, missing acceptance
+  only for the explicit exceptions above (has children, missing acceptance
   criteria/context, or a missing secret)
 - After every commit: run fast/unit tests; fix before moving to the next assigned bead id
 - No PLAN.md, no progress.json -- beads is the only work tracker
