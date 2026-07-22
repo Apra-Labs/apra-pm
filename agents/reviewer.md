@@ -108,6 +108,15 @@ applies the reopen/create transitions:
 - `verdict`: "APPROVED" or "CHANGES_NEEDED"
 - `notes`: specific findings with file and line references where possible
 - `reopenIds`: array of beads task IDs that need rework (empty array if none)
+- `replanIds`: optional array of beads task IDs among `reopenIds` whose ACCEPTANCE
+  CRITERIA are themselves defective (ambiguous, incomplete, or unsatisfiable as written)
+  rather than the implementation being wrong. Use this when a reopened bead cannot be
+  corrected by re-developing against its current criteria -- it needs a planner to rewrite
+  the criteria before any further development round makes sense. Omit this field, or
+  return an empty array, when every reopened bead just needs rework against its existing
+  criteria; that is the default and requires no planner involvement. Absence of this
+  field is equivalent to an empty array: no criteria-defect flag is raised, and behavior
+  is unchanged from before this field existed.
 - `newTasks`: array of `{ title, description, priority }` for follow-up work the review
   surfaced that is not covered by an existing task (empty array if none)
 

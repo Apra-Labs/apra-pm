@@ -28,6 +28,9 @@ Your dispatch prompt must supply:
   deploy (via `deploy.md`) has already been done by `deployer` before you run.
 - An **explicit list of feature ids** -- the open features in this sprint's subtree,
   already scoped for you by the orchestrator. You do not derive this list yourself.
+- The **deployed SHA** (when supplied) -- the git commit the deployer verified on the
+  target before you were dispatched. Part 2 runs against exactly this deployment, and
+  your report must echo it back (see "Part-2 evidence freshness" below).
 
 Everything else (their `[test]` tasks) is read directly by you from beads in Step 1-2,
 not passed in the prompt.
@@ -65,6 +68,26 @@ The playbook has two parts; a full pass runs BOTH, in this order:
 
 Never abort part 1 early on a single failing test file (no fail-fast), and
 never skip Teardown because something upstream failed.
+
+### Part-2 evidence freshness (mandatory)
+
+Part 2 (the smoke test) must be **(re)run fresh in THIS cycle, against the
+deployment the deployer just verified** -- the deployed tip your dispatch
+prompt names. Evidence from any earlier cycle, an earlier session, or a
+resumed conversation is stale and must never be presented as this cycle's
+result, even if the earlier run looks identical: the point of part 2 is to
+test the code that was deployed THIS cycle.
+
+- Before running part 2, record the deployed commit (the SHA your dispatch
+  prompt supplied, cross-checked against the deployed checkout, e.g.
+  `git rev-parse HEAD` there). If the two differ, do not run part 2 against
+  the wrong build: report inconclusive with notes naming both SHAs.
+- Report that commit in the `deployedSha` output field (see Step 4 and the
+  output schema).
+- The orchestrator validates `deployedSha`. A missing value, or one that does
+  not match the cycle's deploy-verified SHA, causes the part-2 result to be
+  treated as INCONCLUSIVE -- it will never count as a pass. Reusing a prior
+  cycle's output therefore cannot succeed; always re-run.
 
 ## Step 1 -- Work the features you were handed
 
@@ -106,11 +129,13 @@ to the dispatch layer's inactivity watchdog, killing your whole run mid-work and
 discarding progress. Instead, send the test run to the background (or poll it in
 short, bounded checks), and between checks -- if it is not done yet -- say so explicitly
 before checking again, e.g. "Integration tests still running (checked at HH:MM:SS,
-N/M features done so far) -- checking again shortly." Do this at least once a minute
-while waiting. Backgrounding and polling are not two alternative techniques -- they are
-the same obligation. If you background the test run, you must then keep actively
-checking on it (a real tool call: re-reading its output, or a Monitor-style wait) at
-least once a minute until it finishes. Saying "I'll wait for it to complete" once and
+N/M features done so far) -- checking again shortly." Do this at least every two
+minutes while waiting (each check spends a turn from your budget, so do not poll
+much faster than that either: a blocking status call that waits ~90-120 seconds
+per check is the right shape for a long suite). Backgrounding and polling are not
+two alternative techniques -- they are the same obligation. If you background the
+test run, you must then keep actively checking on it (a real tool call: re-reading
+its output, or a Monitor-style wait) at least every two minutes until it finishes. Saying "I'll wait for it to complete" once and
 then issuing no further tool calls is exactly the failure this section exists to
 prevent. If your own tool infrastructure force-backgrounds a "foreground" command you
 issued (some sandboxes cap a single foreground command at roughly 1-2 minutes and hand
@@ -183,6 +208,9 @@ Step 0b). Then return:
 - `bugsFiled`: array of the beads IDs created in Step 3 "If any tests fail" (empty array if none)
 - `summary`: one paragraph describing what was tested, what passed, what failed --
   including the playbook part 1 (real functional suite) result line
+- `deployedSha`: the deploy-verified commit part 2 actually ran against (see
+  "Part-2 evidence freshness"; optional in the schema for backward
+  compatibility, required whenever your dispatch prompt supplied a deployed SHA)
 
 ## Output schema
 
@@ -196,7 +224,8 @@ placeholder):
   "issuesCreated": 1,
   "passed": false,
   "bugsFiled": ["BD-31"],
-  "summary": "Ran integration tests for 4 open features; 3 passed and were closed, 1 failed on the password reset email flow (BD-31 filed) and left open."
+  "summary": "Ran integration tests for 4 open features; 3 passed and were closed, 1 failed on the password reset email flow (BD-31 filed) and left open.",
+  "deployedSha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 }
 ```
 

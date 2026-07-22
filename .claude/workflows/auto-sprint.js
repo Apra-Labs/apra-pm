@@ -1200,6 +1200,12 @@ const REVIEW_SCHEMA = {
         "type": "string"
       }
     },
+    "replanIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "newTasks": {
       "type": "array",
       "items": {
@@ -1355,6 +1361,10 @@ const INTEG_RUN_SCHEMA = {
     },
     "summary": {
       "type": "string"
+    },
+    "deployedSha": {
+      "type": "string",
+      "description": "The deploy-verified git commit part 2 (smoke test) actually ran against. Optional for backward compatibility, but an orchestrator that supplied a deployed SHA in the dispatch prompt treats a missing or mismatching value as INCONCLUSIVE evidence (never a pass). See integ-test-runner.md 'Part-2 evidence freshness'."
     }
   }
 };

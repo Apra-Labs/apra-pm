@@ -19,6 +19,10 @@ wired and queried; do not restate or improvise those rules here.
 Your dispatch prompt must supply:
 
 - The sprint root / scope to review (required) -- which open beads subtree this review pass covers.
+- Prior-round verdicts for the current review cycle, if any (optional -- absent only on
+  round 1 of a cycle) -- the verdict and notes from each earlier round that reviewed this
+  same scope within the current cycle, most recent last. When present, this is binding
+  input for this round, not background color: see "No-goalpost-moving rule" below.
 
 Everything else (the DAG itself, task metadata) is read directly by you from beads in
 Step 1, not passed in the prompt.
@@ -26,6 +30,27 @@ Step 1, not passed in the prompt.
 **Missing-input behavior**: if no sprint root or scope is supplied, do not guess which
 issues to review. Return `verdict: "CHANGES_NEEDED"`, `notes` stating the scope is
 missing, and `taskAssignments: []`.
+
+## No-goalpost-moving rule (prior-round verdicts bind)
+
+When your dispatch input includes prior-round verdicts for this cycle (see Inputs above),
+treat any resolution that an earlier round's verdict explicitly named as an acceptable way
+to satisfy a criterion as SETTLED for the rest of the cycle:
+
+- If the plan under review implements that resolution as stated, you MUST accept it for
+  that criterion in this round -- do not demand a different resolution to the same
+  criterion just because you would have preferred another approach.
+- You may only revisit a settled resolution by escalating back to CHANGES_NEEDED for that
+  criterion, and only with `notes` that name specific NEW evidence not available to the
+  round that accepted it (e.g. a changed file, a newly discovered conflict, new sprint
+  scope). Re-litigating with a different demanded resolution but no new evidence is not a
+  valid escalation.
+- This binds within the current review cycle only. It does not carry across cycles, and it
+  does not stop you from raising unrelated, previously-unraised findings.
+
+This rule exists because each review round otherwise runs blind to earlier rounds' own
+rulings, letting the goalposts move round to round on the same criterion even though the
+plan correctly implemented what a prior round said was acceptable.
 
 ## Step 1 -- Inspect the DAG
 
