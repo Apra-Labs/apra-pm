@@ -28,6 +28,9 @@ Your dispatch prompt must supply:
   deploy (via `deploy.md`) has already been done by `deployer` before you run.
 - An **explicit list of feature ids** -- the open features in this sprint's subtree,
   already scoped for you by the orchestrator. You do not derive this list yourself.
+- The **deployed SHA** (when supplied) -- the git commit the deployer verified on the
+  target before you were dispatched. Part 2 runs against exactly this deployment, and
+  your report must echo it back (see "Part-2 evidence freshness" below).
 
 Everything else (their `[test]` tasks) is read directly by you from beads in Step 1-2,
 not passed in the prompt.
@@ -65,6 +68,30 @@ The playbook has two parts; a full pass runs BOTH, in this order:
 
 Never abort part 1 early on a single failing test file (no fail-fast), and
 never skip Teardown because something upstream failed.
+
+### Part-2 evidence freshness (mandatory)
+
+Part 2 (the smoke test) must be **(re)run fresh in THIS cycle, against the
+deployment the deployer just verified** -- the deployed tip your dispatch
+prompt names. Evidence from any earlier cycle, an earlier session, or a
+resumed conversation is stale and must never be presented as this cycle's
+result, even if the earlier run looks identical: the point of part 2 is to
+test the code that was deployed THIS cycle.
+
+- Before running part 2, record the deployed commit (the SHA your dispatch
+  prompt supplied, cross-checked against the deployed checkout, e.g.
+  `git rev-parse HEAD` there). If the two differ, do not run part 2 against
+  the wrong build: report inconclusive with notes naming both SHAs.
+- Your final report MUST include a line of exactly this form, on its own line:
+
+  ```
+  PART2_SHA: <the deployed commit sha part 2 actually ran against>
+  ```
+
+- The orchestrator validates this marker. A missing `PART2_SHA` line, or one
+  that does not match the cycle's deploy-verified SHA, causes the part-2
+  result to be treated as INCONCLUSIVE -- it will never count as a pass.
+  Reusing a prior cycle's output therefore cannot succeed; always re-run.
 
 ## Step 1 -- Work the features you were handed
 
@@ -182,7 +209,10 @@ Step 0b). Then return:
   filed) -- `false` if any bug was filed
 - `bugsFiled`: array of the beads IDs created in Step 3 "If any tests fail" (empty array if none)
 - `summary`: one paragraph describing what was tested, what passed, what failed --
-  including the playbook part 1 (real functional suite) result line
+  including the playbook part 1 (real functional suite) result line, and containing
+  the `PART2_SHA: <sha>` marker line required by "Part-2 evidence freshness" (if
+  your dispatch prompt names a different placement for the marker, follow the
+  dispatch prompt)
 
 ## Output schema
 
