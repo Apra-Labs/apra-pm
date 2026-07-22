@@ -129,11 +129,13 @@ to the dispatch layer's inactivity watchdog, killing your whole run mid-work and
 discarding progress. Instead, send the test run to the background (or poll it in
 short, bounded checks), and between checks -- if it is not done yet -- say so explicitly
 before checking again, e.g. "Integration tests still running (checked at HH:MM:SS,
-N/M features done so far) -- checking again shortly." Do this at least once a minute
-while waiting. Backgrounding and polling are not two alternative techniques -- they are
-the same obligation. If you background the test run, you must then keep actively
-checking on it (a real tool call: re-reading its output, or a Monitor-style wait) at
-least once a minute until it finishes. Saying "I'll wait for it to complete" once and
+N/M features done so far) -- checking again shortly." Do this at least every two
+minutes while waiting (each check spends a turn from your budget, so do not poll
+much faster than that either: a blocking status call that waits ~90-120 seconds
+per check is the right shape for a long suite). Backgrounding and polling are not
+two alternative techniques -- they are the same obligation. If you background the
+test run, you must then keep actively checking on it (a real tool call: re-reading
+its output, or a Monitor-style wait) at least every two minutes until it finishes. Saying "I'll wait for it to complete" once and
 then issuing no further tool calls is exactly the failure this section exists to
 prevent. If your own tool infrastructure force-backgrounds a "foreground" command you
 issued (some sandboxes cap a single foreground command at roughly 1-2 minutes and hand
