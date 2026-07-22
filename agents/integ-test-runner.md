@@ -82,16 +82,12 @@ test the code that was deployed THIS cycle.
   prompt supplied, cross-checked against the deployed checkout, e.g.
   `git rev-parse HEAD` there). If the two differ, do not run part 2 against
   the wrong build: report inconclusive with notes naming both SHAs.
-- Your final report MUST include a line of exactly this form, on its own line:
-
-  ```
-  PART2_SHA: <the deployed commit sha part 2 actually ran against>
-  ```
-
-- The orchestrator validates this marker. A missing `PART2_SHA` line, or one
-  that does not match the cycle's deploy-verified SHA, causes the part-2
-  result to be treated as INCONCLUSIVE -- it will never count as a pass.
-  Reusing a prior cycle's output therefore cannot succeed; always re-run.
+- Report that commit in the `deployedSha` output field (see Step 4 and the
+  output schema).
+- The orchestrator validates `deployedSha`. A missing value, or one that does
+  not match the cycle's deploy-verified SHA, causes the part-2 result to be
+  treated as INCONCLUSIVE -- it will never count as a pass. Reusing a prior
+  cycle's output therefore cannot succeed; always re-run.
 
 ## Step 1 -- Work the features you were handed
 
@@ -209,10 +205,10 @@ Step 0b). Then return:
   filed) -- `false` if any bug was filed
 - `bugsFiled`: array of the beads IDs created in Step 3 "If any tests fail" (empty array if none)
 - `summary`: one paragraph describing what was tested, what passed, what failed --
-  including the playbook part 1 (real functional suite) result line, and containing
-  the `PART2_SHA: <sha>` marker line required by "Part-2 evidence freshness" (if
-  your dispatch prompt names a different placement for the marker, follow the
-  dispatch prompt)
+  including the playbook part 1 (real functional suite) result line
+- `deployedSha`: the deploy-verified commit part 2 actually ran against (see
+  "Part-2 evidence freshness"; optional in the schema for backward
+  compatibility, required whenever your dispatch prompt supplied a deployed SHA)
 
 ## Output schema
 
@@ -226,7 +222,8 @@ placeholder):
   "issuesCreated": 1,
   "passed": false,
   "bugsFiled": ["BD-31"],
-  "summary": "Ran integration tests for 4 open features; 3 passed and were closed, 1 failed on the password reset email flow (BD-31 filed) and left open."
+  "summary": "Ran integration tests for 4 open features; 3 passed and were closed, 1 failed on the password reset email flow (BD-31 filed) and left open.",
+  "deployedSha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 }
 ```
 
