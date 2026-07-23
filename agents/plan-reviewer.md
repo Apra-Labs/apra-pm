@@ -91,6 +91,27 @@ For each open feature and its tasks, run `bd show <id>` to read the full descrip
     writes it here and nowhere else (not `--notes`, not free text). A task missing this
     metadata key is a Step 2 criterion-10 failure, not a fallback case for this step; see
     Step 3 for the read-time fallback used only when classifying/reporting.
+11. **Lane cohesion**: every task carries `streak` and `streakOrder` lane metadata via the
+    same `--metadata` channel as `model` (visible as the `streak`/`streakOrder` keys in `bd
+    show <id>`'s metadata output) -- a task missing either key is a criterion-11 finding.
+    Beyond presence, check:
+    - **Cohesive lanes**: the tasks sharing a `streak` id name overlapping files or the same
+      component/module in their descriptions -- a lane grouping unrelated work areas is a
+      finding.
+    - **No cross-lane edges among open members**: no `blocks` edge exists between an open
+      task in one lane and an open task in a different lane -- ordering across lanes must
+      come from lane sequencing, not a raw dependency edge spanning two streaks.
+    - **Mutex resources co-laned**: tasks that contend for the same mutual-exclusion
+      resource (a resource only one change may hold at a time -- e.g. the same submodule
+      pointer, a shared version/manifest field, or the same test fixture) share one `streak`
+      and are never split across lanes.
+    - **Effort under threshold**: for each lane, `effort = (sum of size points over the
+      lane's tasks, S=1/M=2/L=4) x (max model weight in the lane, cheap=1/standard=10/
+      premium=20)` stays at or under the effort threshold constant (default `200`). A lane
+      over threshold is a finding unless it was split at a `blocks`-edge boundary without
+      separating mutex-resource members (per `planner.md`'s splitting math).
+    A violation of any bullet above is CHANGES_NEEDED referencing "criterion 11" and the
+    specific lane/task IDs involved.
 
 ## Step 3 -- Classify each task
 
@@ -116,7 +137,7 @@ Return your verdict:
 - `notes`: specific, actionable findings referencing beads IDs
 - `taskAssignments`: array with one entry per open task -- `{ id, bucket, model }`
 
-**APPROVED** means all ten criteria in Step 2 pass.
+**APPROVED** means all eleven criteria in Step 2 pass.
 
 **CHANGES_NEEDED** means one or more criteria fail. Notes must name the specific beads ID
 and what is wrong. Do not return CHANGES_NEEDED for minor style preferences.
