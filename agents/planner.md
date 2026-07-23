@@ -89,6 +89,40 @@ Pick the tier using these criteria:
 Pick from the models actually available in the current environment. A user override
 always wins.
 
+**Streak lane metadata** (required on every task, both impl and test): in addition to
+`model`, record two lane fields through the SAME beads metadata channel at creation time --
+never in `--notes`, a METADATA-section comment, or anywhere else:
+```bash
+bd create ... --metadata '{"model": "<cheap|standard|premium>", "streak": "<lane-id>", "streakOrder": <n>}'
+```
+- `streak` -- a stable lane identifier (any short opaque string) shared by every task the
+  planner wants dispatched together, as one cohesive unit, to a single doer. Consumers --
+  including the orchestrator that assembles dispatch rounds -- read it back from this same
+  metadata field via `bd show <id>` (the `streak` key), exactly like `model`.
+- `streakOrder` -- an integer giving this task's intended position within its lane. Lower
+  runs first; ties fall back to the existing `blocks` edges (see the graph-semantics
+  section above).
+
+Group tasks into lanes for high cohesion, following these rules:
+- An `[impl]` task and its paired `[test]` task co-streak by default (they share one
+  `streak`), so the doer that writes the code also runs its test in the same session.
+- Tasks that contend for a **mutex resource** -- a resource only one change may hold at a
+  time, e.g. the same submodule pointer, a shared version/manifest field, or the same test
+  fixture -- MUST share a lane and MUST NOT be separated into different streaks.
+
+**Effort-point splitting math.** Before finalizing a lane, size it so a single streak stays
+within one doer's reach:
+- size points per task: `S=1`, `M=2`, `L=4`
+- model weight per tier: `cheap=1`, `standard=10`, `premium=20`
+- `effort = (sum of size points over the lane's tasks) x (max model weight in the lane)`
+
+If a lane's `effort` exceeds the effort threshold constant (default `200`), split it into
+two or more streaks. Split ONLY at a `blocks`-edge boundary -- so each resulting streak is a
+contiguous prefix/suffix of the dependency order, never an arbitrary mid-lane cut -- and
+NEVER separate mutex-resource members (above) across the split, even if honoring that leaves
+a streak over threshold. Give each split streak a fresh `streak` id and renumber
+`streakOrder` from the start within it.
+
 Wire dependencies (semantics: `bd dep add A B` means A is blocked by B -- B must finish before A can close):
 - `bd create ... --parent <feature-id>` for both impl and test tasks (grouping only --
   do NOT `bd dep add <feature-id> <impl-task>` or `<feature-id> <test-task>`; a feature's
@@ -131,6 +165,8 @@ Also check each open feature:
 - No task spans more than ~3 file changes?
 - Test tasks are downstream of implementation tasks?
 - Every task has a model tier set via `--metadata '{"model": "..."}'` (see Step 3)?
+- Every task carries `streak` and `streakOrder` lane metadata (see Step 3)? Impl/test
+  pairs and mutex-resource members co-laned, and no lane's effort exceeds the threshold?
 
 Fix any gaps, then confirm you are done.
 
@@ -157,3 +193,6 @@ evaluates against its own Output schema (see `plan-reviewer.md` and its sibling
 - Every task must be completable in one agent session
 - A task with no acceptance criteria is incomplete -- fix it before finishing
 - Every task must carry a model tier in `--metadata '{"model": "..."}'` -- fix before finishing
+- Every task must carry `streak`/`streakOrder` lane metadata alongside `model` in the same
+  `--metadata` channel; lanes must respect the effort threshold and never split
+  mutex-resource members apart -- fix before finishing
