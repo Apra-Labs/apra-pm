@@ -327,7 +327,9 @@ function computeSprintQuote(taskAssignments, calibration) {
 
   const tasks = (taskAssignments || []).map(t => {
     const model      = t.model || fallback;
-    const histToks   = (hist.bucket_avg_tokens || {})[t.bucket];
+    const tupleKey   = `doer|${t.bucket}|${model}`;
+    const tupleData  = (hist.tuple_averages || {})[tupleKey];
+    const histToks   = tupleData ? tupleData.avg_output_tokens : (hist.bucket_avg_tokens || {})[t.bucket];
     const doerTokens = (hist.sprints_sampled >= 1 && histToks != null)
       ? Math.round(histToks) : (buckets[t.bucket] || buckets.M).doer_tokens;
     const reviewerTokens = Math.round(doerTokens * revRatio);
