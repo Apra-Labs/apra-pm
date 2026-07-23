@@ -494,6 +494,56 @@ function accumulateBucketTokens(logEntries, taskAssignments) {
   return acc;
 }
 
+function accumulateTupleTokens(logEntries, taskAssignments) {
+  const bucketOf = {};
+  for (const t of (taskAssignments || [])) {
+    if (t && t.id != null && t.bucket != null) bucketOf[String(t.id)] = t.bucket;
+  }
+  const acc = {}; // key: "role|size|model"
+  for (const e of (logEntries || [])) {
+    let role = e.label || '';
+    role = role.replace(/-c\d.*$/, '');
+    
+    // Map tier names to actual model family names
+    let tier = (e.model || 'standard').toLowerCase();
+    let model = 'sonnet'; // default
+    if (tier === 'premium' || tier === 'opus') model = 'opus';
+    else if (tier === 'cheap' || tier === 'haiku') model = 'haiku';
+    
+    const tokens = e.outTokens || 0;
+    if (tokens <= 0) continue;
+    
+    let size = 'N/A';
+    let share = tokens;
+    
+    if (role === 'doer') {
+      const ctx = String(e.context || '');
+      const m   = ctx.match(/tasks\s+(.+)$/i);
+      if (m) {
+        const ids = m[1].split(',').map(s => s.trim()).filter(Boolean);
+        const buckets = ids.map(id => bucketOf[id]).filter(b => b != null);
+        if (buckets.length > 0) {
+          share = tokens / buckets.length;
+          for (const b of buckets) {
+            const key = `${role}|${b}|${model}`;
+            if (!acc[key]) acc[key] = { role, size: b, model, tokens: 0, n: 0 };
+            acc[key].tokens += share;
+            acc[key].n      += 1;
+          }
+          continue;
+        }
+      }
+    }
+    
+    // For non-doer or doer without bucket
+    const key = `${role}|${size}|${model}`;
+    if (!acc[key]) acc[key] = { role, size, model, tokens: 0, n: 0 };
+    acc[key].tokens += share;
+    acc[key].n      += 1;
+  }
+  return acc;
+}
+
 function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignments, logEntries) {
   const hist = JSON.parse(JSON.stringify(calibration.historical || {}));
   const max  = hist.max_samples_in_average || 50;
@@ -547,6 +597,23 @@ function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignm
     const b_bucket = blend_multi(prevAvg, prevN, data.tokens, data.n, max);
     hist.bucket_avg_tokens[bucket] = b_bucket.avg;
     hist.bucket_sample_n[bucket]   = b_bucket.n;
+  }
+
+  // tuple_averages join: track averages per (role, size, model)
+  hist.tuple_averages = hist.tuple_averages || {};
+  const tupleAcc = accumulateTupleTokens(logEntries, taskAssignments);
+  for (const [key, data] of Object.entries(tupleAcc)) {
+    if (data.n === 0) continue;
+    const prev = hist.tuple_averages[key] || { avg_output_tokens: null, sample_n: 0, role: data.role, size: data.size, model: data.model };
+    
+    const b_tuple = blend_multi(prev.avg_output_tokens, prev.sample_n, data.tokens, data.n, max);
+    hist.tuple_averages[key] = {
+      role: data.role,
+      size: data.size,
+      model: data.model,
+      avg_output_tokens: b_tuple.avg,
+      sample_n: b_tuple.n
+    };
   }
 
   return { ...calibration, historical: hist };
@@ -2877,8 +2944,7 @@ const updatedCalibration = computeUpdatedCalibration(calibration, sprintAnalysis
 const calibrationJson = JSON.stringify(updatedCalibration, null, 2);
 
 const tokenEstimates = {
-  roles: updatedCalibration.historical?.roles || {},
-  buckets: updatedCalibration.historical?.bucket_avg_tokens || {}
+  averages: Object.values(updatedCalibration.historical?.tuple_averages || {})
 };
 const tokenEstimatesJson = JSON.stringify(tokenEstimates).replace(/"/g, '\\"');
 
