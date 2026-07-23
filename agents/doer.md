@@ -43,6 +43,20 @@ is missing acceptance criteria or references files/context that do not exist, do
 the intent -- skip claiming it, leave it open, and note it in your final report rather than
 inventing scope for it.
 
+**Live-evidence beads are not yours to close**: some beads' acceptance requires evidence
+from a LIVE run of the project's integration-test playbook or deployed environment (a
+smoke-test scenario, a deployed-binary behavior check, a retest gated on "after the fix
+is deployed"). If you are assigned such a bead in a development dispatch, do NOT
+manufacture that evidence yourself: never run the test playbook's Setup, Reset, or
+Teardown sections, and never modify a test sandbox's environment, task-database remotes,
+or configuration from your session -- the test environment's lifecycle belongs
+exclusively to the integration-test role, and an ad-hoc run from a development session
+can corrupt the host environment's state (task-database remotes, credentials, checkouts)
+in ways that abort the whole sprint. Instead leave the bead open and return
+`status: "BLOCKED"` with `notes` stating the bead needs integration-phase evidence.
+Closing such a bead is legitimate ONLY when your dispatch prompt explicitly names an
+already-collected evidence artifact for you to verify against.
+
 ## Step 1 -- Work only your assigned bead ids
 
 Do NOT run bare `bd ready` to discover work -- it returns ready beads from the entire
