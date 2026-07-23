@@ -86,7 +86,9 @@ if (rootIds.length === 0) {
 }
 
 // Goal -> numeric priority threshold.
-// Exit when open issues in sprint-goal subtree at priority <= threshold reaches zero.
+// Exit when open LEAF work in the sprint-goal subtree at priority <= threshold reaches
+// zero -- open type=task (plus type=feature when integ tests run), excluding the roots
+// themselves (roots close only at Harvest, so counting them would make goalMet unreachable).
 const GOAL_THRESHOLD = { 'P1': 1, 'P1/P2': 2, 'P1/P2/P3': 3 };
 const threshold = GOAL_THRESHOLD[goal] || 2;
 
@@ -646,18 +648,38 @@ function collectSubtreeIds(outputs, rootCount) {
 // the sprint-goal subtree. Missing/short outputs => sentinel {count: 999, ids: []} so the
 // caller treats blockers as present (fail-safe, never exits the sprint early).
 // openListIdx is the explicit index of the open-issues JSON command in outputs[].
-// rootIds (optional): when provided, only open issues whose ID is in this array are counted
-// as blockers (exit-check is scoped to sprint roots, not the whole subtree).
-function parseBlockers(outputs, rootCount, openListIdx, threshold, rootIds) {
+//
+// opts (optional object) selects the counting mode:
+//   - omitted (4-arg form): counts EVERY open subtree issue at priority<=threshold
+//     (subtree-scoped; the historical default, exercised by shell-dispatch /
+//     merged-parser-index).
+//   - { leaf: true, rootIds, includeFeatures }: SUBTREE LEAF done-condition. Counts open
+//     type=task at priority<=threshold EXCLUDING rootIds, PLUS open type=feature EXCLUDING
+//     rootIds ONLY when includeFeatures is true. Roots close only at Harvest and features
+//     close in-loop only when integ tests run, so counting either otherwise would make the
+//     goalMet exit unreachable in-loop. Open issues missing an issue_type (t) are treated as
+//     neither task nor feature -> not counted (safe).
+//   - { rootIds } (no leaf): legacy roots-only scoping, kept for back-compat callers.
+function parseBlockers(outputs, rootCount, openListIdx, threshold, opts) {
   if (!Array.isArray(outputs) || outputs.length < openListIdx + 1) return { count: 999, ids: [] };
+  const { rootIds, leaf, includeFeatures } = (opts && typeof opts === 'object') ? opts : {};
   const subtree = collectSubtreeIds(outputs, rootCount);
-  const rootSet = Array.isArray(rootIds) && rootIds.length > 0 ? new Set(rootIds) : null;
+  const rootSet = new Set(Array.isArray(rootIds) ? rootIds : []);
   let ids = [];
   try {
     const open = JSON.parse(outputs[openListIdx]);
-    ids = Array.isArray(open)
-      ? open.filter(x => subtree.has(x.id) && (!rootSet || rootSet.has(x.id)) && x.p <= threshold).map(x => x.id)
-      : [];
+    if (!Array.isArray(open)) {
+      ids = [];
+    } else if (leaf) {
+      ids = open.filter(x =>
+        subtree.has(x.id) && !rootSet.has(x.id) && x.p <= threshold &&
+        (x.t === 'task' || (includeFeatures && x.t === 'feature'))
+      ).map(x => x.id);
+    } else {
+      ids = open.filter(x =>
+        subtree.has(x.id) && (rootSet.size === 0 || rootSet.has(x.id)) && x.p <= threshold
+      ).map(x => x.id);
+    }
   } catch { ids = []; }
   return { count: ids.length, ids };
 }
@@ -1637,16 +1659,18 @@ function bdSubtreeSnippet(rootsArr) {
     `while(_q.length>0){const _c=_q.shift();const _n=_nodes[_c];if(_n&&_n.DependsOn){for(const _dd of _n.DependsOn){if(!subtree.has(_dd)){subtree.add(_dd);_q.push(_dd);}}}}`;
 }
 
-async function countBeadsBlockers(thr, roots) {
+async function countBeadsBlockers(thr, roots, includeFeatures) {
   // Extract only IDs from bd graph to keep output small (avoids $(cat ...) file-reference issue).
   const idExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(roots)}console.log(Array.from(subtree).join(' '))}catch{}"`;
-  const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+  const openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,t:i.issue_type}))))}catch{console.log('[]')}"`;
   const cmds = [
     ...roots.map(id => `bd graph --json ${id} | ${idExtract}`),
     `bd list --status=open --json | ${openExtract}`,
   ];
   const r = await dispatchShell(cmds, { model: MODEL_HAIKU, label: 'check-blockers', phase: 'Develop' });
-  return parseBlockers(r?.outputs, roots.length, roots.length, thr, roots);
+  // Leaf-scoped done-condition: open non-root type=task at priority<=thr, plus type=feature
+  // only when includeFeatures (integ tests close features in-loop). See parseBlockers opts.
+  return parseBlockers(r?.outputs, roots.length, roots.length, thr, { rootIds: roots, leaf: true, includeFeatures });
 }
 
 async function getReadyStreaks(rootIds) {
@@ -2148,18 +2172,28 @@ while (cycleCount < maxCycles) {
 
   // ---------------------------------------------------------------- PLAN
 
-  let planApproved = cycleState.planDone;
+  let planApproved = false;
   let planFeedback = '';
+  const priorVerdicts = [];
   const MAX_PLAN_ITER = 3;
 
-  if (planApproved) {
-    log(`Plan already complete -- skipping plan loop for cycle ${cycleCount}`);
+  if (cycleState.planDone) {
+    // F6: a planDone/resumed cycle still runs one plan-reviewer pass -- we only skip the
+    // expensive PLANNER dispatch on round 0. The reviewer still routes through
+    // approved(planReview), so taskAssignments/sprintQuote populate and the quality gate
+    // is enforced; a CHANGES_NEEDED verdict re-enables the planner on later rounds.
+    log(`Plan already complete for cycle ${cycleCount} -- skipping the planner dispatch on round 0, still running the plan-reviewer`);
   }
 
   for (let pi = 0; pi < MAX_PLAN_ITER && !planApproved; pi++) {
     const plannerLabel = `planner-c${cycleCount}-r${pi}`;
 
-    const plannerResult = await dispatch(
+    // F6: skip the planner only on the first round of a planDone cycle; always run it on
+    // later rounds (a rejection re-enables planning). Fall straight through to the reviewer.
+    const skipPlanner = pi === 0 && cycleState.planDone;
+    let plannerResult = null;
+    if (!skipPlanner) {
+      plannerResult = await dispatch(
       `Repo: ${repo}\nBranch: ${branch}\nBase branch: ${base_branch}\n` +
       `Sprint goals: ${rootSummary}\n` +
       (requirementsFile ? `Additional context: ${requirementsFile}\n` : '') +
@@ -2191,10 +2225,14 @@ while (cycleCount < maxCycles) {
       `    until the impl task closes -- correct: they are siblings). Same pattern for any\n` +
       `    later sibling task that depends on an earlier one.\n` +
       `\n` +
-      `  VERIFY after wiring: run "bd list --parent <goal-id> --ready --json" for each sprint\n` +
-      `  goal -- it must be non-empty while open work exists under that goal. If it is empty,\n` +
-      `  there is a cycle: find the blocks edge pointing at a --parent ancestor/descendant\n` +
-      `  and remove it with bd dep remove.\n` +
+      `  VERIFY after wiring: run "bd list --parent <goal-id> --ready --type=task --json" for\n` +
+      `  EACH sprint goal and reason over the COMBINED result. The union of ready work across\n` +
+      `  all goals must be non-empty while open work remains anywhere in scope. A single goal\n` +
+      `  with an empty ready-list is FINE when its tasks are legitimately blocked by an open\n` +
+      `  task in ANOTHER goal (a cross-goal ordering edge) -- do NOT remove that edge. Only if\n` +
+      `  the UNION is empty while open work remains, or a goal's task blocks via an edge to its\n` +
+      `  own --parent ancestor/descendant, is there a real cycle: find that parent/descendant\n` +
+      `  blocks edge and remove it with bd dep remove.\n` +
       `\n` +
       `  IMPORTANT: Each task belongs to exactly ONE feature. Never share a task across features.\n` +
       `\n` +
@@ -2223,9 +2261,10 @@ while (cycleCount < maxCycles) {
         context: `planning sprint goals ${rootSummary}` }
     );
 
-    if (!plannerResult) {
-      log(`Planner returned null on cycle ${cycleCount} round ${pi} -- retrying`);
-      continue;
+      if (!plannerResult) {
+        log(`Planner returned null on cycle ${cycleCount} round ${pi} -- retrying`);
+        continue;
+      }
     }
 
     const planReviewerLabel = `plan-reviewer-c${cycleCount}-r${pi}`;
@@ -2233,10 +2272,19 @@ while (cycleCount < maxCycles) {
       `Repo: ${repo}\nBranch: ${branch}\nSprint goals: ${rootSummary}\n` +
       `Calibration file: ${repo}/sprint-logs/calibration.json (read this first if it exists)\n\n` +
       `Review the beads DAG for these sprint goals ONLY: ${rootSummary}\n` +
+      (priorVerdicts.length > 0
+        ? `Prior-round verdicts for THIS review cycle (most recent last) -- these BIND per your ` +
+          `No-goalpost-moving rule; do not re-litigate a criterion an earlier round already ` +
+          `accepted unless you cite NEW evidence:\n` +
+          priorVerdicts.map(v => `  Round ${v.round}: ${v.verdict} -- ${v.notes}\n`).join('') +
+          `\n`
+        : '') +
       `Run: ${rootIds.map(id => `bd show ${id}`).join(' && ')} to inspect each sprint goal.\n` +
       `Run: ${rootIds.map(id => `bd graph --compact ${id}`).join(' && ')} for the full dependency subtree.\n` +
       `Run: bd show <id> to inspect individual issues in depth.\n` +
-      `Run: bd ready -- this is your FIRST correctness check.\n` +
+      `Ready-work check (your FIRST correctness check, per runbook Criterion 9): run\n` +
+      `"bd list --parent <root> --ready --type=task --json" for EACH sprint goal and reason\n` +
+      `over the UNION -- do NOT use bare "bd ready" (project-wide, not a signal about this DAG).\n` +
       `Do NOT review or comment on issues outside these sprint goals.\n\n` +
       `Follow your runbook (agents/plan-reviewer.md) step by step:\n` +
       `  Steps 1-2: inspect the DAG and check all quality criteria.\n` +
@@ -2250,6 +2298,15 @@ while (cycleCount < maxCycles) {
       { model: MODEL_SONNET, label: planReviewerLabel, phase: 'Plan', schema: PLAN_REVIEW_SCHEMA, agentType: 'plan-reviewer',
         context: `reviewing plan for sprint goals ${rootSummary}` }
     );
+
+    // F2: record this round's verdict so the NEXT round's plan-reviewer receives it as a
+    // binding prior-round input (No-goalpost-moving rule). Null-guarded: a null planReview
+    // records a CHANGES_NEEDED entry rather than crashing.
+    priorVerdicts.push({
+      round: pi,
+      verdict: (planReview && planReview.verdict) || 'CHANGES_NEEDED',
+      notes: (planReview && planReview.notes) || '',
+    });
 
     if (approved(planReview)) {
       planApproved = true;
@@ -2778,7 +2835,7 @@ while (cycleCount < maxCycles) {
   let blockers;
   {
     const _idExtract   = `node -e "const d=require('fs').readFileSync(0,'utf8');try{const g=JSON.parse(${BD_JSON});${bdSubtreeSnippet(rootIds)}console.log(Array.from(subtree).join(' '))}catch{}"`;
-    const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority}))))}catch{console.log('[]')}"`;
+    const _openExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,t:i.issue_type}))))}catch{console.log('[]')}"`;
     const _taskExtract = `node -e "const d=require('fs').readFileSync(0,'utf8');try{console.log(JSON.stringify(JSON.parse(${BD_JSON}).map(i=>({id:i.id,p:i.priority,m:(i.metadata||{}).model}))))}catch{console.log('[]')}"`;
     const exitCmds = [
       ...rootIds.map(id => `bd graph --json ${id} | ${_idExtract}`),
@@ -2787,14 +2844,14 @@ while (cycleCount < maxCycles) {
     ];
     const exitResult = await dispatchShell(exitCmds, { model: MODEL_HAIKU, label: 'exit-check', phase: 'Develop' });
     if (exitResult?.outputs && exitResult.outputs.length >= rootIds.length + 2) {
-      blockers = parseBlockers(exitResult.outputs, rootIds.length, rootIds.length, threshold, rootIds);
+      blockers = parseBlockers(exitResult.outputs, rootIds.length, rootIds.length, threshold, { rootIds, leaf: true, includeFeatures: integTestEnabled });
       // Ready streaks prefetched but not used: develop loop already determined no ready tasks.
       // Parsed here to validate the merged output; result discarded at cycle end.
       parseReadyStreaks(exitResult.outputs, rootIds.length, rootIds.length + 1, TIER_STANDARD, rootIds);
     } else {
       // Fallback: outputs too short (agent returned partial results) -- use separate dispatches.
       log('exit-check: outputs.length < rootCount+2 -- falling back to separate dispatches');
-      blockers = await countBeadsBlockers(threshold, rootIds);
+      blockers = await countBeadsBlockers(threshold, rootIds, integTestEnabled);
     }
   }
   const currentOpenIds = (blockers.ids || []).slice().sort();
