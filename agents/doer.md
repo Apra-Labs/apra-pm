@@ -48,11 +48,12 @@ from a LIVE run of the project's integration-test playbook or deployed environme
 smoke-test scenario, a deployed-binary behavior check, a retest gated on "after the fix
 is deployed"). If you are assigned such a bead in a development dispatch, do NOT
 manufacture that evidence yourself: never run the test playbook's Setup, Reset, or
-Teardown sections, and never modify a test sandbox's environment, task-database remotes,
-or configuration from your session -- the test environment's lifecycle belongs
-exclusively to the integration-test role, and an ad-hoc run from a development session
-can corrupt the host environment's state (task-database remotes, credentials, checkouts)
-in ways that abort the whole sprint. Instead leave the bead open and return
+Teardown sections. Your write scope is the working copy on your feature branch --
+state that outlives your dispatch (environment or sandbox configuration, any tool's or
+data store's remote/sync settings, credentials, long-running services) is not yours to
+mutate; the test environment's lifecycle belongs exclusively to the integration-test
+role. An ad-hoc playbook run from a development session can silently corrupt such
+persistent state in ways that abort the whole sprint. Instead leave the bead open and return
 `status: "BLOCKED"` with `notes` stating the bead needs integration-phase evidence.
 Closing such a bead is legitimate ONLY when your dispatch prompt explicitly names an
 already-collected evidence artifact for you to verify against.
