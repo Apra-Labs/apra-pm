@@ -2892,7 +2892,7 @@ await parallel([
     `  git -C "${repo}" add sprint-logs/calibration.json\n` +
     `  git -C "${repo}" commit -m "chore: update sprint calibration after ${cycleCount} cycle(s) on ${branch}"\n\n` +
     `Step 4: Update token estimates memory:\n` +
-    `  bd remember "token estimates: ${tokenEstimatesJson}"\n\n` +
+    `  bd remember "${tokenEstimatesJson}" --key token-estimates-json\n\n` +
     `If the file content is unchanged, the commit may be a no-op -- that is fine.\n` +
     `Return "OK" when done.`,
     { model: MODEL_HAIKU, label: 'calibration-update', phase: 'Harvest' }
@@ -2977,7 +2977,7 @@ const harvestPr = await dispatch(
   `  - Cycles run: ${cycleCount}\n` +
   `  - Open items carried forward (if any): bd list --status=open and summarise\n` +
   `  - Final review notes: ${(finalReview && finalReview.notes) || '(none)'}\n` +
-  `  - Token cost summary from: bd memories "token estimates"\n\n` +
+  `  - Token cost summary from: bd recall token-estimates-json\n\n` +
   `After creating the PR, return its number as prNumber (integer).`,
   { model: MODEL_SONNET, label: 'harvest-pr', phase: 'Harvest',
     schema: { type: 'object', required: ['prNumber'], properties: { prNumber: { type: 'number' }, prUrl: { type: 'string' } } } }
