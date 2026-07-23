@@ -496,42 +496,57 @@ function accumulateBucketTokens(logEntries, taskAssignments) {
 
 function computeUpdatedCalibration(calibration, analysis, startedAt, taskAssignments, logEntries) {
   const hist = JSON.parse(JSON.stringify(calibration.historical || {}));
-  const max  = hist.max_sprints_in_sample || 5;
-  const prev = Math.min(hist.sprints_sampled || 0, max - 1);
-  const n    = prev + 1;
-  const blend = (old, val) => old == null ? val : (old * prev + val) / n;
+  const max  = hist.max_samples_in_average || 50;
+  
+  const blend_multi = (oldAvg, oldN, sumM, m, maxN) => {
+    if (oldAvg == null || oldN == null || oldN === 0) return { avg: sumM / m, n: Math.min(m, maxN) };
+    const nextN = oldN + m;
+    const avg = (oldN * oldAvg + sumM) / nextN;
+    return { avg, n: Math.min(nextN, maxN) };
+  };
 
-  hist.sprints_sampled = n;
+  hist.sprints_sampled = (hist.sprints_sampled || 0) + 1;
   hist.last_updated    = startedAt.replace(/^(\d{4})(\d{2})(\d{2}).*/, '$1-$2-$3');
-  hist.cycle_avg       = blend(hist.cycle_avg, analysis.actualCycles);
-  hist.roles           = hist.roles || {};
+  
+  const b_cycle = blend_multi(hist.cycle_avg, hist.cycle_sample_n || 0, analysis.actualCycles, 1, max);
+  hist.cycle_avg = b_cycle.avg;
+  hist.cycle_sample_n = b_cycle.n;
+  
+  hist.roles = hist.roles || {};
 
   for (const [role, data] of Object.entries(analysis.byRole)) {
     if (data.tokens === 0) continue;
-    const avg    = data.tokens / data.dispatches;
     const prev_r = hist.roles[role] || { avg_output_tokens: null, sample_n: 0 };
+    const b = blend_multi(prev_r.avg_output_tokens, prev_r.sample_n, data.tokens, data.dispatches, max);
     hist.roles[role] = {
-      avg_output_tokens: blend(prev_r.avg_output_tokens, avg),
-      sample_n: prev_r.sample_n + data.dispatches,
+      avg_output_tokens: b.avg,
+      sample_n: b.n,
     };
   }
 
   const doerTok = analysis.byRole['doer']?.tokens     || 0;
   const revTok  = analysis.byRole['reviewer']?.tokens || 0;
-  if (doerTok > 0) hist.reviewer_ratio_avg = blend(hist.reviewer_ratio_avg, revTok / doerTok);
+  if (doerTok > 0) {
+    const b_ratio = blend_multi(hist.reviewer_ratio_avg, hist.reviewer_ratio_sample_n || 0, revTok / doerTok, 1, max);
+    hist.reviewer_ratio_avg = b_ratio.avg;
+    hist.reviewer_ratio_sample_n = b_ratio.n;
+  }
 
   // bucket_avg_tokens join: attribute each doer log entry's outTokens to the
   // S/M/L bucket(s) of the task IDs in its context string, then blend the
-  // per-bucket average into hist.bucket_avg_tokens using the same sprints_sampled
-  // accounting as roles above. Buckets with no data this sprint keep their prior
-  // value untouched (and unexercised buckets stay absent), so computeSprintQuote
-  // defaults still apply where we have no history.
+  // per-bucket average into hist.bucket_avg_tokens using the sample count.
   hist.bucket_avg_tokens = hist.bucket_avg_tokens || {};
+  hist.bucket_sample_n   = hist.bucket_sample_n || {};
+  
   const bucketAcc = accumulateBucketTokens(logEntries, taskAssignments);
   for (const [bucket, data] of Object.entries(bucketAcc)) {
     if (data.n === 0) continue;
-    const avg = data.tokens / data.n;
-    hist.bucket_avg_tokens[bucket] = blend(hist.bucket_avg_tokens[bucket], avg);
+    const prevAvg = hist.bucket_avg_tokens[bucket];
+    const prevN   = hist.bucket_sample_n[bucket] || 0;
+    
+    const b_bucket = blend_multi(prevAvg, prevN, data.tokens, data.n, max);
+    hist.bucket_avg_tokens[bucket] = b_bucket.avg;
+    hist.bucket_sample_n[bucket]   = b_bucket.n;
   }
 
   return { ...calibration, historical: hist };
